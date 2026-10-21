@@ -1500,17 +1500,18 @@ test('Chat: selecting the conclusion opens the whole answer, tables and code inc
   await ui.unmount()
 })
 
-test('Now: Elsewhere lists other windows waiting on the person; a press selects that window', async ($, on) => {
-  // tmux list-windows answers with one window that needs action.
-  const runs = baseStubs(on, { pane: '%42', windows: 'main|5|cco|waiting|action|review the plan|100|other-sid\n' })
+test('Now: Elsewhere lists other windows waiting on the person; a press brings that window in front, by its id, even in another tmux session', async ($, on) => {
+  // tmux list-windows answers with one window that needs action, in another session.
+  const runs = baseStubs(on, { pane: '%42', windows: 'side|5|cco|waiting|action|review the plan|100|other-sid|@12\n' })
   const clock = mock.clock(on)
   on('store.keys', () => ({ value: [] }))
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await clock.advance(61_000)
   const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
   expect(JSON.stringify(await ui.drawn())).toMatch(/review the plan/)
-  await ui.press({ key: 'win-main:5' })
-  expect(runs.some((a) => a.join(' ') === 'tmux select-window -t main:5')).toBe(true)
+  await ui.press({ key: 'win-@12' })
+  const focus = runs.find((a) => a[0] === 'sh' && /switch-client/.test(a[2] ?? ''))
+  expect(focus?.slice(3)).toEqual(['%42', '@12'])
   await ui.unmount()
 })
 

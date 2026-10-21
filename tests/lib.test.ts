@@ -907,6 +907,10 @@ test('elsewhere: windows waiting on the person ranked, this session left out; da
   const w = parseTmuxWindows(out, 'me')
   expect(w.map((x) => [x.window, x.attention])).toEqual([['5:cco', 'action'], ['3:vpn', 'ask'], ['2:daily', 'idle'], ['9:x', 'working']])
   expect(w[3]!.session).toBe('s-x')
+  // With window ids the target follows the window across sessions; the label stays session:index.
+  const moved = parseTmuxWindows('side|4|cco|waiting|action||300|s-cco|@12', 'me')[0]!
+  expect([moved.target, moved.where]).toEqual(['@12', 'side:4'])
+  expect(w[0]!.target).toBe('main:5')
   expect(w[1]!.title).toBe('slack 다시 체크')
   const brief = '# dayx brief\n\n## 한눈에\n- 열림 177 = 내 것 1\n\n## 오늘 due\n- 없음\n\n## 열어 둔 일 (어제 마감 정리)\n- fix the band\n\n## 내 차례 (상위 5)\n- Review acme/core-k8s#1121\n\n---\n## 기타\n- ignored'
   expect(parseBrief(brief)).toEqual([
