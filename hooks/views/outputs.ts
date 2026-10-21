@@ -10,9 +10,10 @@ import { needLabel, needsAttention, prIacDetail, prLine } from '../lib/prs'
 import type { SlackFollow, SlackThreadState } from '../lib/slack'
 import { IN_ANSWER, isMade, type Output, type OutputKind } from '../lib/record'
 import { ago, clip, pad } from '../lib/text'
+import { expStatus, type ExpCheck } from '../lib/exp'
 import { C, col, empty, field, header, keys, prTone, row, section, tabRow, type Els, type Node } from './common'
 
-export type OutTab = 'all' | 'pr' | 'artifact' | 'scratch' | 'ticket' | 'slack' | 'link' | 'bg'
+export type OutTab = 'all' | 'pr' | 'artifact' | 'scratch' | 'ticket' | 'slack' | 'link' | 'bg' | 'exp'
 // Outputs: what the session made. Inputs: what it was handed, read or
 // mentioned (lib/record.ts isMade). The kind tabs filter either side.
 export type OutSide = 'out' | 'in'
@@ -50,6 +51,7 @@ export type OutputsView = {
   onSelect: (id: string) => void
   onOpen: (o: Output) => void
   onReveal?: (o: Output) => void // its folder in Finder, the file selected
+  exp?: Readonly<Record<string, ExpCheck>> // archive folders' checks, by path (lib/exp.ts)
   onCopy: (o: Output) => void
   onContext: (o: Output) => void
   // Slack threads: run sb:slack-followup now, or on each new batch of replies.
@@ -71,6 +73,7 @@ const KIND: Record<OutputKind, string> = {
   bg: '⚙ task   ',
   commit: '● commit ',
   file: '✎ edit   ',
+  exp: '▣ archive',
 }
 
 const TABS: { id: OutTab; label: string; hotkey: string }[] = [
@@ -82,6 +85,7 @@ const TABS: { id: OutTab; label: string; hotkey: string }[] = [
   { id: 'slack', label: 'Slack', hotkey: 's' },
   { id: 'link', label: 'Links', hotkey: 'l' },
   { id: 'bg', label: 'Tasks', hotkey: 'b' },
+  { id: 'exp', label: 'Archive', hotkey: 'e' },
 ]
 
 const SIDES: { id: OutSide; label: string; hint: string; hotkey: string }[] = [
@@ -105,6 +109,7 @@ const KIND_WORDS: Record<OutputKind, string> = {
   bg: 'task tasks bg background monitor',
   commit: 'commit',
   file: 'file files edit',
+  exp: 'exp archive folder vendor ticket',
 }
 
 // The filter field: every word must appear somewhere in the item — its kind
@@ -135,9 +140,10 @@ export function filterOutputs<T extends Output>(list: readonly T[], tab: OutTab,
 // Fixed width so the age column lines up whether or not a row has a status.
 const STATUS_CELLS = 28
 
-function status(els: Els, o: Output, pr: PrStatus | undefined, slack?: SlackThreadState, note?: string): Node {
+function status(els: Els, o: Output, pr: PrStatus | undefined, slack?: SlackThreadState, note?: string, exp?: ExpCheck): Node {
   const { Text } = els
   const cell = (t: string) => pad(clip(t, STATUS_CELLS), STATUS_CELLS)
+  if (o.kind === 'exp' && exp) return Text({ color: exp.sums?.failed.length || exp.sums?.unlisted.length ? C.bad : exp.open.length ? C.warn : C.muted, children: [cell(expStatus(exp) || o.detail || '')] })
   if (o.kind === 'pr' && !pr && note) return Text({ color: C.warn, children: [cell(note)] })
   if (slack) return Text({ color: slack.unseen ? C.warn : C.muted, children: [cell(slack.unseen ? slack.unseen + ' new · ' + (slack.lastFrom ?? '') : slack.replies + ' replies')] })
   if (pr) {
@@ -230,7 +236,7 @@ export function renderOutputs(els: Els, v: OutputsView): Node {
         Text({ color: on ? C.accent : C.faint, children: [on ? '▸ ' : '  '] }),
         Text({ color: C.muted, children: [KIND[o.kind]] }),
         Text({ bold: on, children: [pad(clip(o.title, titleWidth), titleWidth) + '  '] }),
-        status(els, o, o.kind === 'pr' ? v.prs[o.title] : undefined, o.kind === 'slack' ? v.slack?.[o.id] : undefined, v.prNote),
+        status(els, o, o.kind === 'pr' ? v.prs[o.title] : undefined, o.kind === 'slack' ? v.slack?.[o.id] : undefined, v.prNote, o.kind === 'exp' && o.path ? v.exp?.[o.path] : undefined),
         Text({ color: C.accent, children: [o.kind === 'slack' && v.follow?.[slackKey(o.id)]?.auto ? ' ⟳' : o.detail === IN_ANSWER ? ' ★' : '  '] }),
         Text({ color: C.faint, children: ['  ' + ago(o.at, v.now) + where] }),
       ],

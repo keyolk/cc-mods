@@ -276,6 +276,37 @@ test('outputs collected from a tool call show in the outputs pane', async ($, on
   await ui.unmount()
 })
 
+test('a folder the session archives into under ~/exp is linked: Needs you shows what it owes and a changed attachment; a press opens it in In/Out', async ($, on) => {
+  const dir = '/home/u/exp/2026-10-14_vendor_17043'
+  const runs = baseStubs(on, {
+    pane: '%42',
+    files: {
+      [dir + '/README.md']: '# Vendor ticket\n\n## Open\n- Attachments promised on 2026-10-21 — not delivered yet.\n',
+      [dir + '/correspondence.md']: '| time | dir | who | link | gist | files |\n|---|---|---|---|---|---|\n| 10-22 05:43 | in | Sam | l | asks for DEBUG logs | — |\n',
+    },
+    run: (argv) => (argv[0] === 'sh' && argv.at(-1) === dir + '/attachments' ? { code: 1, out: 'a.gz: OK\nb.csv: FAILED\n--ls\nSHA256SUMS\na.gz\nb.csv\n' } : undefined),
+  })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('tool.call', () => ({ result: {} }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Write', file_path: dir + '/attachments/b.csv', content: 'x' } as any)
+  await clock.advance(10)
+  const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
+  const row = 'home-exp-' + dir
+  expect(await ui.find({ key: row })).toBeDefined()
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('1 open · ⚠ 1 changed')
+  expect(drawn).toContain('Attachments promised')
+  expect(runs.some((a) => a[0] === 'sh' && a.at(-1) === dir + '/attachments')).toBe(true)
+  await ui.press({ key: row })
+  expect(await ui.find({ key: 'out-exp:' + dir })).toBeDefined()
+  const pane = JSON.stringify(await ui.drawn())
+  expect(pane).toContain('changed or missing')
+  expect(pane).toContain('asks for DEBUG logs')
+  await ui.unmount()
+})
+
 test('flow pane shows the prompt and the conclusion, not tool calls', async ($, on) => {
   baseStubs(on)
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))

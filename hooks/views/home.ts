@@ -23,6 +23,7 @@ import { share, shortModel, sparkline, type Usage } from '../lib/usage'
 import { goalChip, goalVisible, type Goal } from '../lib/goal'
 import type { RcaState } from '../lib/rca'
 import { forkAge, type ForkOffer } from '../lib/fork'
+import { expNeedsYou, expStatus, type ExpCheck } from '../lib/exp'
 import type { McpLogin } from '../lib/mcpauth'
 import { mcpLoginCard } from './auth'
 import { C, field, keys, prTone, rule, type Els, type Node } from './common'
@@ -112,9 +113,13 @@ export type HomeView = {
   login?: McpLogin | null
   onLogin?: (action: 'paste' | 'reopen' | 'copy' | 'retry' | 'cancel', value?: string) => void
   onGoal?: (action: 'clear') => void
+  // Archive folders this session is linked to (lib/exp.ts): what each still
+  // owes and whether its attachments match their sums; a press opens it in In/Out.
+  exp?: Readonly<Record<string, ExpCheck>>
+  onExp?: (o: Output) => void
 }
 
-const KIND_GLYPH: Record<OutputKind, string> = { pr: '⇄', artifact: '◰', scratch: '✎', ticket: '◇', slack: '#', link: '↗', bg: '⚙', commit: '●', file: '✎' }
+const KIND_GLYPH: Record<OutputKind, string> = { pr: '⇄', artifact: '◰', scratch: '✎', ticket: '◇', slack: '#', link: '↗', bg: '⚙', commit: '●', file: '✎', exp: '▣' }
 
 const isRunning = (a: AgentNode) => a.status === 'running' || a.status === 'background'
 
@@ -191,7 +196,9 @@ function needsCard(els: Els, v: HomeView, w: number): Node | undefined {
   // (and marks it seen).
   const slackNew = v.outputs.filter((o) => o.kind === 'slack' && o.url && (v.slack?.[o.id]?.unseen ?? 0) > 0)
   const nw = v.narwhal ?? []
-  if (!authBad.length && !prNeed.length && !watch.length && !slackNew.length && !nw.length && !v.resume && !v.fork) return undefined
+  // Archive folders that still owe something or whose sums no longer hold.
+  const expNeed = v.outputs.filter((o) => o.kind === 'exp' && o.path && expNeedsYou(v.exp?.[o.path]))
+  if (!authBad.length && !prNeed.length && !watch.length && !slackNew.length && !nw.length && !expNeed.length && !v.resume && !v.fork) return undefined
   const rows: Node[] = [
     ...(v.fork && v.onFork
       ? [
@@ -261,6 +268,22 @@ function needsCard(els: Els, v: HomeView, w: number): Node | undefined {
           Text({ color: C.warn, children: ['# '] }),
           Text({ bold: true, children: [clip(o.title, Math.max(16, w - 34))] }),
           Text({ color: C.warn, children: ['  ' + st.unseen + ' new' + (st.lastFrom ? ' · ' + clip(st.lastFrom, 18) : '')] }),
+        ],
+      })
+    }),
+    ...expNeed.map((o) => {
+      const c = v.exp![o.path!]!
+      const bad = !!(c.sums?.failed.length || c.sums?.unlisted.length)
+      return Button({
+        key: 'home-exp-' + o.path,
+        label: o.title,
+        plain: true,
+        onPress: () => v.onExp?.(o),
+        children: [
+          Text({ color: bad ? C.bad : C.warn, children: ['▣ '] }),
+          Text({ bold: true, children: [clip(o.title, Math.max(16, w - 40))] }),
+          Text({ color: bad ? C.bad : C.warn, children: ['  ' + expStatus(c)] }),
+          ...(c.open[0] ? [Text({ color: C.muted, children: ['  ' + clip(c.open[0], Math.max(10, w - o.title.length - 30))] })] : []),
         ],
       })
     }),

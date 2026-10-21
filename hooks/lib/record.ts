@@ -8,7 +8,7 @@
 import { clip, words } from './text'
 import { jiraKeyPattern, org } from './org'
 
-export type OutputKind = 'pr' | 'artifact' | 'scratch' | 'ticket' | 'slack' | 'link' | 'bg' | 'commit' | 'file'
+export type OutputKind = 'pr' | 'artifact' | 'scratch' | 'ticket' | 'slack' | 'link' | 'bg' | 'commit' | 'file' | 'exp'
 
 export type Output = {
   id: string // stable dedupe key: kind + url/path
