@@ -1,0 +1,17 @@
+{
+  "name": "cc-mods",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "devDependencies": {
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-formatter-compact": "^9.0.1",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "test": "claude plugin test",
+    "test:lib": "bun test lib.test.ts",
+    "check": "tsc -p . && claude plugin validate . && eslint hooks"
+  }
+}

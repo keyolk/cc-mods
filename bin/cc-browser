@@ -1,0 +1,505 @@
+#!/usr/bin/env python3
+"""cc-browser — a TWeb page drawn inside a region of a Claude Code pane.
+
+The page is found by the cockpit's address field (hooks/lib/web.ts WEB_ANCHOR):
+the line holding "│ go:" right of the cockpit's left edge (POST /region minCol). It starts two rows below
+(past the field's bottom border), at the column of that border; its size is what the mod last POSTed to
+/region. Nothing extra is drawn on screen for it.
+
+This bridge runs one TWeb engine in its hosted mode (one engine, one page),
+finds the marker in the Claude pane with `tmux capture-pane`, and anchors the
+engine's kitty graphics there. TWeb stdout remains a line protocol: only
+addressed FRAME payloads are decoded and written to the pane TTY while the
+marker is visible. Startup diagnostics and terminal queries can therefore
+never become bytes on Claude's terminal by accident. Kitty FRAME commands are
+also forced to q=2, the protocol's no-reply mode, because this bridge does not
+own the pane's input side and cannot route terminal replies back to TWeb.
+
+    mod  --HTTP over a unix socket-->  bridge  --addressed control lines--> engine
+    mod  <--JSON lines on stdout----  bridge  <--FRAME hex lines--------- engine
+
+The mod cannot hold a child's stdin open (`$.process.spawn` takes its input
+whole), hence the socket for requests; events come back on this process's
+stdout, which the mod streams.
+
+Requests (POST, JSON body):
+  /input     {"hex": "..."}           raw terminal bytes (SGR mouse, keys)
+  /cmd       {"argv": ["navigate", "https://..."]}  a `tweb` agent command
+  /repaint   {}                       force a full frame (after a redraw)
+  /quit      {}
+GET /status  where the region is, whether it shows, the page's url and title.
+"""
+
+import argparse
+import binascii
+import json
+import os
+import re
+import signal
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
+import unicodedata
+from http.server import BaseHTTPRequestHandler
+
+ESC = "\x1b"
+POLL_S = 0.4
+HOST_PROTOCOL = 2
+HOST_READY_TIMEOUT_S = 10
+# Agent commands the mod may run against this page. Anything else would let a
+# request reach the rest of `tweb` (split, float, devtools) through this socket.
+COMMANDS = {"navigate", "back", "forward", "reload", "status", "tabs", "tab", "devtools", "device", "float", "pin"}
+
+
+def emit(**event):
+    sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def tmux(*args):
+    return subprocess.run(["tmux", *args], capture_output=True, text=True, timeout=3).stdout
+
+
+ANCHOR = "│ go:"
+# Rows from the anchor line to the page: the field's bottom border, then it.
+ANCHOR_DROP = 2
+
+
+def anchor_column(text, min_col=0):
+    """Index in `text` of the address field's left border, or None when the line is not the field row.
+
+    Only text at or right of display cell `min_col` counts: the mod sends the
+    docked cockpit's left edge, so the transcript beside it (which may quote
+    the very same characters) can never be taken for the anchor."""
+    start = 0
+    n = 0
+    while start < len(text) and n < min_col:
+        n += cells(text[start])
+        start += 1
+    i = text.find(ANCHOR, start)
+    return i if i >= 0 else None
+
+
+def cells(s):
+    """Display width of `s` in terminal cells, as tmux lays it out."""
+    n = 0
+    for ch in s:
+        # Combining marks and format characters (the marker's own) take no cell.
+        if unicodedata.combining(ch) or unicodedata.category(ch) == "Cf":
+            continue
+        n += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return n
+
+
+def passthrough(seq):
+    return ESC + "Ptmux;" + seq.replace(ESC, ESC + ESC) + ESC + "\\"
+
+
+def silence_kitty_replies(frame):
+    """Set q=2 on complete Kitty APC commands without changing their payloads."""
+    marker = b"\x1b_G"
+    out = bytearray()
+    start = 0
+    while True:
+        command = frame.find(marker, start)
+        if command < 0:
+            out.extend(frame[start:])
+            return bytes(out)
+        out.extend(frame[start:command + len(marker)])
+        header_start = command + len(marker)
+        payload_start = frame.find(b";", header_start)
+        raw_end = frame.find(b"\x1b\\", header_start)
+        if raw_end < 0:
+            out.extend(frame[header_start:])
+            return bytes(out)
+        # tmux passthrough doubles the Kitty terminator's ESC. The first ESC
+        # belongs to the inner command and the second makes it pass through.
+        command_end = raw_end - 1 if raw_end > header_start and frame[raw_end - 1] == 0x1b else raw_end
+        end_after = raw_end + 2
+        header_end = command_end if payload_start < 0 or command_end < payload_start else payload_start
+        header = frame[header_start:header_end]
+        fields = header.split(b",") if header else []
+        fields = [b"q=2" if field.startswith(b"q=") else field for field in fields]
+        if not any(field == b"q=2" for field in fields):
+            fields.append(b"q=2")
+        out.extend(b",".join(fields))
+        out.extend(frame[header_end:end_after])
+        start = end_after
+
+
+class Bridge:
+    def __init__(self, a):
+        self.a = a
+        self.pane = a.pane
+        # cols, rows of the page, from the mod (POST /region); None until then.
+        self.size = None
+        # Display cell where the cockpit body starts (docked); 0 when inline.
+        self.min_col = 0
+        self.lock = threading.Lock()
+        self.region = None  # (left, top, cols, rows) in outer-terminal cells
+        self.shown = False
+        self.url = a.url
+        self.title = ""
+        self.tty = open(tmux("display-message", "-p", "-t", self.pane, "#{pane_tty}").strip(), "wb", buffering=0)
+        self.image_id = a.image_id
+        self.engine = None
+        self.stopping = False
+        self.host_ready = threading.Event()
+        self.host_error = ""
+        self.attached = False
+        self.last_visibility = None
+        # A control line the engine reads before it is up stalls it for good
+        # (measured: RESIZE written at spawn, then not one log line, no agent
+        # socket). Lines wait here until its first frame or load says it is up;
+        # only the newest RESIZE matters, so a later one replaces an earlier.
+        self.up = False
+        self.pending = []
+
+    # ---- engine ----
+
+    def start_engine(self):
+        env = dict(os.environ)
+        env.update({
+            # Hosted mode makes stdout a line protocol. Raw terminal bytes are
+            # returned only in addressed FRAME events for this bridge to route.
+            "TWEB_MULTIPANE": "1",
+            "TWEB_SUPERVISOR_PID": str(os.getpid()),
+        })
+        for key in ("TWEB_FRONTEND_PID", "TWEB_URL", "TWEB_VIEWPORT", "TWEB_PANE_ORIGIN", "TWEB_IMAGE_ID"):
+            env.pop(key, None)
+        # chrome: the user's managed Chrome over CDP; webkit: macOS WKWebViews in the
+        # tweb-webkit host, which the engine finds beside tweb or on PATH.
+        if self.a.engine in ("chrome", "webkit"):
+            env["TWEB_BROWSER"] = self.a.engine
+        self.engine = subprocess.Popen(
+            [self.a.electron, ".", "--tweb-frame-rate", str(self.a.frame_rate), "--tweb-adaptive-frame-rate", "1"],
+            cwd=self.a.app, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        threading.Thread(target=self.pump_frames, daemon=True).start()
+        threading.Thread(target=self.pump_log, daemon=True).start()
+        if not self.host_ready.wait(HOST_READY_TIMEOUT_S):
+            raise RuntimeError("TWeb did not declare hosted protocol readiness")
+        if self.host_error:
+            raise RuntimeError(self.host_error)
+        self.send(self.attach_line())
+        self.attached = True
+        self.push_visibility()
+
+    def attach_line(self):
+        tmux_server = ",".join(os.environ.get("TMUX", "").split(",")[:2]) or "-"
+        tty = self.tty.name or "-"
+        # The initial 1x1 viewport never reaches the pane. The first real
+        # region is queued until TWeb reports its page ready.
+        url = self.url.replace("\r", "%0D").replace("\n", "%0A")
+        return (f"ATTACH {tmux_server} 1 {self.image_id} {self.a.frame_rate} 1 0 "
+                f"1 1 8 16 0 0 {tty} {url}")
+
+    def control(self, line):
+        with self.lock:
+            if not self.up:
+                if line.startswith("RESIZE "):
+                    self.pending = [x for x in self.pending if not x.startswith("RESIZE ")]
+                self.pending.append(line)
+                return
+        self.send(line)
+
+    def send(self, line, addressed=True):
+        if addressed:
+            line = f"@{self.pane} {line}"
+        try:
+            self.engine.stdin.write((line + "\n").encode())
+            self.engine.stdin.flush()
+        except (BrokenPipeError, ValueError, AttributeError):
+            pass
+
+    def pump_frames(self):
+        prefix = f"@{self.pane} FRAME ".encode()
+        out = self.engine.stdout
+        for raw in out:
+            line = raw.rstrip(b"\r\n")
+            if line.startswith(b"READY "):
+                try:
+                    protocol = int(line[6:])
+                except ValueError:
+                    protocol = -1
+                if protocol != HOST_PROTOCOL:
+                    self.host_error = f"TWeb hosted protocol {protocol}, expected {HOST_PROTOCOL}"
+                self.host_ready.set()
+                continue
+            if not line.startswith(prefix):
+                continue
+            try:
+                frame = binascii.unhexlify(line[len(prefix):])
+            except (binascii.Error, ValueError):
+                continue
+            # TWeb owns only the output half of this route. q=2 is the Kitty
+            # protocol's explicit no-reply mode; arbitrary ANSI is preserved.
+            frame = silence_kitty_replies(frame)
+            with self.lock:
+                if self.shown and self.up:
+                    try:
+                        self.tty.write(frame)
+                    except OSError:
+                        return
+        self.host_ready.set()
+
+    def pump_log(self):
+        loaded = re.compile(r"^tweb: loaded (\S+) \((.*)\)$")
+        up = re.compile(r"^tweb: (loaded|frame )")
+        for raw in self.engine.stderr:
+            line = raw.decode(errors="replace").rstrip("\n")
+            if not self.up and up.match(line):
+                with self.lock:
+                    self.up, queued, self.pending = True, self.pending, []
+                for q in queued:
+                    self.send(q)
+            m = loaded.match(line)
+            if m:
+                self.url, self.title = m.group(1), m.group(2)
+                emit(event="loaded", url=self.url, title=self.title)
+            if self.a.log:
+                with open(self.a.log, "a") as f:
+                    f.write(line + "\n")
+
+    # ---- placement ----
+
+    def find_region(self):
+        """The marker's outer-terminal cell and the region size it names."""
+        out = tmux("display-message", "-p", "-t", self.pane, "#{pane_left}\t#{pane_top}\t#{pane_in_mode}")
+        try:
+            left, top, in_mode = out.strip().split("\t")
+        except ValueError:
+            return None
+        # Copy mode shows a scrolled-back screen; what is drawn there is not
+        # where the live region is.
+        if in_mode == "1":
+            return None
+        if self.size is None:
+            return None
+        for row, text in enumerate(tmux("capture-pane", "-p", "-t", self.pane).split("\n")):
+            col = anchor_column(text, self.min_col)
+            if col is not None:
+                return (int(left) + cells(text[:col]), int(top) + row + ANCHOR_DROP, *self.size)
+        return None
+
+    def place(self, region):
+        cw, ch = (int(x) for x in tmux("display-message", "-p", "-t", self.pane, "#{client_cell_width}\t#{client_cell_height}").split())
+        left, top, cols, rows = region
+        self.control(f"RESIZE {cols} {rows} {cols * cw} {rows * ch} {left} {top}")
+
+    def push_visibility(self):
+        if not self.attached:
+            return
+        placement = tmux("display-message", "-p", "-t", self.pane,
+                         "#{session_name}\t#{window_id}\t#{pane_id}").strip()
+        if not placement:
+            return
+        clients = tmux("list-clients", "-F",
+                       "#{client_tty}\t#{client_session}\t#{window_id}\t#{window_zoomed_flag}\t#{pane_id}\t#{client_key_table}").rstrip("\n")
+        payload = placement + (("\n" + clients) if clients else "")
+        if payload == self.last_visibility:
+            return
+        self.last_visibility = payload
+        self.send("VIS " + payload.encode().hex())
+
+    def delete_images(self):
+        ids = range(self.image_id, self.image_id + 9)
+        seq = "".join(f"{ESC}_Ga=d,d=I,i={i},q=2{ESC}\\" for i in ids)
+        try:
+            self.tty.write(passthrough(seq).encode())
+        except OSError:
+            pass
+
+    def watch(self):
+        while not self.stopping:
+            region = self.find_region()
+            self.push_visibility()
+            with self.lock:
+                was = self.shown
+                moved = region != self.region
+                if region is None and was:
+                    self.shown = False
+                    self.delete_images()
+                elif region is not None and (moved or not was):
+                    if was:
+                        self.delete_images()
+                    self.shown = True
+                self.region = region
+            if region is not None and (moved or not was):
+                self.place(region)
+                emit(event="shown", left=region[0], top=region[1], cols=region[2], rows=region[3])
+            elif region is None and was:
+                emit(event="hidden")
+            if self.engine.poll() is not None:
+                emit(event="exit", code=self.engine.returncode)
+                self.stop()
+                return
+            time.sleep(POLL_S)
+
+    def repaint(self):
+        if self.region:
+            # The same geometry again makes the engine send a whole frame,
+            # which is what restores a picture the terminal dropped.
+            self.place(self.region)
+
+    def stop(self):
+        if self.stopping:
+            return
+        self.stopping = True
+        with self.lock:
+            self.shown = False
+            self.delete_images()
+        if self.engine and self.engine.poll() is None:
+            self.engine.terminate()
+            try:
+                self.engine.wait(5)
+            except subprocess.TimeoutExpired:
+                self.engine.kill()
+
+
+def serve(bridge, path):
+    class Handler(BaseHTTPRequestHandler):
+        def address_string(self):
+            return "unix"
+
+        def log_message(self, *args):
+            pass
+
+        def reply(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path != "/status":
+                return self.reply(404, {"error": "no such path"})
+            r = bridge.region
+            self.reply(200, {"shown": bridge.shown, "region": list(r) if r else None, "url": bridge.url, "title": bridge.title, "pane": bridge.pane})
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except ValueError:
+                return self.reply(400, {"error": "body is not JSON"})
+            if self.path == "/input":
+                hexs = str(body.get("hex", ""))
+                if not re.fullmatch(r"[0-9a-fA-F]*", hexs):
+                    return self.reply(400, {"error": "hex only"})
+                bridge.control("INPUT " + hexs.lower())
+                return self.reply(200, {})
+            if self.path == "/region":
+                try:
+                    cols, rows = int(body["cols"]), int(body["rows"])
+                except (KeyError, TypeError, ValueError):
+                    return self.reply(400, {"error": "cols and rows"})
+                if not (1 <= cols <= 1000 and 1 <= rows <= 1000):
+                    return self.reply(400, {"error": "cols and rows out of range"})
+                bridge.size = (cols, rows)
+                try:
+                    bridge.min_col = max(0, int(body.get("minCol", 0)))
+                except (TypeError, ValueError):
+                    bridge.min_col = 0
+                return self.reply(200, {})
+            if self.path == "/repaint":
+                bridge.repaint()
+                return self.reply(200, {})
+            if self.path == "/cmd":
+                argv = [str(x) for x in body.get("argv", [])]
+                if not argv or argv[0] not in COMMANDS:
+                    return self.reply(400, {"error": "allowed: " + ", ".join(sorted(COMMANDS))})
+                r = subprocess.run([bridge.a.tweb, argv[0], "--pane", bridge.pane, *argv[1:]], capture_output=True, text=True, timeout=30)
+                return self.reply(200, {"code": r.returncode, "stdout": r.stdout[-4000:], "stderr": r.stderr[-2000:]})
+            if self.path == "/leave":
+                # tmux took the keyboard back from the page (alt+w / alt+tab in
+                # Page mode, ~/.tmux.conf): tell the mod, which owns the mode.
+                emit(event="leave")
+                return self.reply(200, {})
+            if self.path == "/quit":
+                self.reply(200, {})
+                threading.Thread(target=lambda: (bridge.stop(), os._exit(0)), daemon=True).start()
+                return None
+            return self.reply(404, {"error": "no such path"})
+
+    class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+
+    if os.path.exists(path):
+        os.unlink(path)
+    srv = Server(path, Handler)
+    os.chmod(path, 0o600)
+    return srv
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--pane", required=True, help="the Claude Code pane, %%N")
+    p.add_argument("--token", default="", help="unused; kept so an older mod's argv still parses")
+    p.add_argument("--socket", required=True)
+    p.add_argument("--engine", choices=["electron", "chrome", "webkit"], default="electron")
+    p.add_argument("--url", default="about:blank")
+    p.add_argument("--size", default="", help="COLSxROWS of the page until the mod POSTs /region")
+    p.add_argument("--image-id", type=int, default=0)
+    p.add_argument("--frame-rate", type=int, default=30)
+    p.add_argument("--electron", default="")
+    p.add_argument("--app", default="")
+    p.add_argument("--tweb", default=os.path.expanduser("~/.local/bin/tweb"))
+    p.add_argument("--log", default="")
+    a = p.parse_args()
+    if not re.fullmatch(r"%\d+", a.pane):
+        sys.exit("--pane must look like %N")
+    cache = os.environ.get("TWEB_CACHE_DIR", os.path.expanduser("~/.cache/tweb"))
+    if not a.electron or not a.app:
+        # The installed tweb knows its own engine (and unpacks it if needed); the cache
+        # does not, since an older install's app-<hash> stays the newest until the new
+        # binary runs once. Older tweb has no engine-paths: guess as before.
+        try:
+            r = subprocess.run([a.tweb, "engine-paths", "--json"], capture_output=True, text=True, timeout=30)
+            paths = json.loads(r.stdout) if r.returncode == 0 else {}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            paths = {}
+        a.electron = a.electron or paths.get("electron", "")
+        a.app = a.app or paths.get("app", "")
+    if not a.electron:
+        runtimes = sorted(d for d in os.listdir(cache) if d.startswith("electron-"))
+        if not runtimes:
+            sys.exit("no Electron runtime in " + cache + "; run `tweb` once")
+        a.electron = os.path.join(cache, runtimes[-1], "dist/Electron.app/Contents/MacOS/Electron")
+    if not a.app:
+        apps = [os.path.join(cache, d) for d in os.listdir(cache) if d.startswith("app-")]
+        if not apps:
+            sys.exit("no TWeb app in " + cache + "; run `tweb` once")
+        # The newest unpack is the installed binary's: the name is a content
+        # hash, so an older one is an older tweb's main.cjs.
+        a.app = max(apps, key=os.path.getmtime)
+    if not a.image_id:
+        # Kitty image ids are terminal-wide; TWeb derives a pane's from its pid,
+        # so derive ours the same way, well clear of the low ids.
+        a.image_id = 700_000_000 + (os.getpid() % 1_000_000) * 16
+
+    bridge = Bridge(a)
+    if re.fullmatch(r"\d+x\d+", a.size):
+        bridge.size = tuple(int(x) for x in a.size.split("x"))
+    srv = serve(bridge, a.socket)
+    bridge.start_engine()
+    signal.signal(signal.SIGTERM, lambda *_: (bridge.stop(), os._exit(0)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    emit(event="ready", pid=os.getpid(), engine_pid=bridge.engine.pid, socket=a.socket, image_id=a.image_id)
+    try:
+        bridge.watch()
+    finally:
+        bridge.stop()
+        try:
+            os.unlink(a.socket)
+        except OSError:
+            pass
+
+
+if __name__ == "__main__":
+    main()

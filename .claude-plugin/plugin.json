@@ -1,0 +1,47 @@
+{
+  "name": "cc-mods",
+  "version": "0.1.0",
+  "description": "Session cockpit: tmux state, policy, auth radar, PR band, flow/graph/side/outputs panes",
+  "author": {
+    "name": "keyolk"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "browser": {
+      "type": "string",
+      "title": "Browser for links",
+      "description": "Where links this session opens go: inherit (tmux @browser / tmux-chrome default), tweb (TWeb, Electron), tweb-chrome (TWeb on your Chrome), chrome (this window's Chrome tab group). /browser changes it for the session.",
+      "options": [
+        "inherit",
+        "tweb",
+        "tweb-chrome",
+        "chrome"
+      ],
+      "default": "inherit"
+    },
+    "browserEmbed": {
+      "type": "boolean",
+      "title": "Draw TWeb pages in the cockpit",
+      "description": "Off (default): pages open in a TWeb pane right of this session, and the Web tab (6) shows that pane's tabs and controls (back, reload, float, focus, close). On: with browser set to tweb or tweb-chrome, pages are drawn inside the Web tab itself.",
+      "default": false
+    },
+    "browserFrameRate": {
+      "type": "number",
+      "title": "Web tab frame rate",
+      "description": "Most frames a second the Web tab draws while the page moves; it drops to 4 at rest.",
+      "default": 30
+    },
+    "cockpitOnStart": {
+      "type": "boolean",
+      "title": "Open the cockpit at start",
+      "description": "Every interactive session opens the cockpit on its own, docked to the right of a fullscreen transcript (above the prompt otherwise), without taking the keyboard. /cockpit closes it for the session.",
+      "default": true
+    },
+    "browserEngineRules": {
+      "type": "string",
+      "title": "Web tab engine by URL",
+      "description": "Pages whose URL matches open on that engine in the Web tab: pattern=engine, comma separated (claude.ai=chrome, *.okta.com=chrome, github.com/acme=webkit). A host matches its subdomains, * any run of characters; first match wins. The Settings tab's list, once edited, replaces this.",
+      "default": "claude.ai=chrome"
+    }
+  }
+}

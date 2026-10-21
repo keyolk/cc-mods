@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Switch ~/.claude/settings.json between the settings hooks and cc-mods.
+
+cc-mods replaces some settings hooks with in-process versions. Running both
+double-fires (measured: flow_fork_hint asked via AskUserQuestion *and* the mod's
+band offered the same fork). This script moves exactly those entries out of
+settings.json into a sidecar file, and back.
+
+    cc-mods-migrate status     which replaced hooks are active, mod rollout state
+    cc-mods-migrate apply      move them aside (only if mods can load)
+    cc-mods-migrate revert     put them back
+
+`apply` refuses while Claude Code's hooks-modules rollout is cached off: the
+hooks would be gone and nothing would replace them.
+
+Not replaced, so never touched: the guards (secret/kubectl/ecr/git/gh-pr/...),
+session_policy.py guard (kept as a second line of defence behind the mod),
+kmd/brd/dayx hooks, linters.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import sys
+import time
+from pathlib import Path
+
+SETTINGS = Path.home() / ".claude" / "settings.json"
+SIDECAR = Path.home() / ".claude" / "state" / "cc-mods-replaced-hooks.json"
+CLAUDE_JSON = Path.home() / ".claude.json"
+
+# command substring -> what in cc-mods replaces it
+REPLACED = {
+    "tmux_window_status_start.py": "turn.start publishes @cc_state=working",
+    "tmux_window_status_stop.py": "turn.complete + Jev publishes @cc_state/@cc_attention",
+    "flow_fork_hint.py": "prompt.submit judges, band offers the fork",
+    "tmux_neighbors.py": "band shows neighbors (no per-prompt context)",
+    "session_policy.py inject": "prompt.compose adds policy once to the system prompt",
+}
+
+
+def rollout_on() -> bool | None:
+    try:
+        feats = json.loads(CLAUDE_JSON.read_text()).get("cachedGrowthBookFeatures", {})
+    except (OSError, json.JSONDecodeError):
+        return None
+    v = feats.get("tengu_plugin_hooks_modules")
+    return None if v is None else bool(v)
+
+
+def load() -> dict:
+    return json.loads(SETTINGS.read_text())
+
+
+def matches(cmd: str) -> str | None:
+    return next((k for k in REPLACED if k in cmd), None)
+
+
+def status() -> int:
+    s = load()
+    print(f"hooks-modules rollout (cached): {rollout_on()}")
+    for event, groups in s.get("hooks", {}).items():
+        for g in groups:
+            for h in g.get("hooks", []):
+                k = matches(h.get("command", ""))
+                if k:
+                    print(f"  active  {event:18} {k:32} -> {REPLACED[k]}")
+    if SIDECAR.exists():
+        moved = json.loads(SIDECAR.read_text())
+        for m in moved["entries"]:
+            print(f"  moved   {m['event']:18} {matches(m['hook']['command'])}")
+    return 0
+
+
+def apply(force: bool) -> int:
+    if rollout_on() is not True and not force:
+        print("refusing: hooks-modules rollout is not on, so cc-mods cannot load and "
+              "nothing would replace these hooks. Re-run when `claude --debug` no longer "
+              "logs 'rollout flag (tengu_plugin_hooks_modules) is off', or pass --force.")
+        return 1
+    s = load()
+    backup = SETTINGS.with_name(f"settings.json.bak.cc-mods-{int(time.time())}")
+    shutil.copy2(SETTINGS, backup)
+    moved = json.loads(SIDECAR.read_text())["entries"] if SIDECAR.exists() else []
+    for event, groups in s.get("hooks", {}).items():
+        for g in groups:
+            keep = []
+            for h in g.get("hooks", []):
+                if matches(h.get("command", "")):
+                    moved.append({"event": event, "matcher": g.get("matcher"), "hook": h})
+                else:
+                    keep.append(h)
+            g["hooks"] = keep
+        s["hooks"][event] = [g for g in groups if g.get("hooks")]
+    SIDECAR.parent.mkdir(parents=True, exist_ok=True)
+    SIDECAR.write_text(json.dumps({"entries": moved}, indent=2))
+    SETTINGS.write_text(json.dumps(s, indent=2) + "\n")
+    print(f"moved {len(moved)} hook(s) to {SIDECAR}; backup at {backup}")
+    return 0
+
+
+def revert() -> int:
+    if not SIDECAR.exists():
+        print("nothing to revert")
+        return 0
+    s = load()
+    for m in json.loads(SIDECAR.read_text())["entries"]:
+        groups = s.setdefault("hooks", {}).setdefault(m["event"], [])
+        target = next((g for g in groups if g.get("matcher") == m["matcher"]), None)
+        if target is None:
+            target = {"hooks": []} if m["matcher"] is None else {"matcher": m["matcher"], "hooks": []}
+            groups.append(target)
+        if m["hook"] not in target["hooks"]:
+            target["hooks"].append(m["hook"])
+    SETTINGS.write_text(json.dumps(s, indent=2) + "\n")
+    SIDECAR.unlink()
+    print("restored")
+    return 0
+
+
+def main() -> int:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "status":
+        return status()
+    if cmd == "apply":
+        return apply("--force" in sys.argv)
+    if cmd == "revert":
+        return revert()
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

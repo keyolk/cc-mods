@@ -1,0 +1,4 @@
+{
+  "description": "cc-mods hooks module",
+  "modules": ["./register.ts"]
+}
