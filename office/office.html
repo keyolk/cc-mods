@@ -1112,9 +1112,12 @@ function floorAt(mx, my) {
   return [(a + b) / 2, (b - a) / 2]
 }
 const tmuxOf = (w) => w.label.split(':')[0]
-function dropAt(w, mx, my) {
+function dropAt(w0, mx, my) {
+  // By window id, not by object: the pods are rebuilt on every refresh, so
+  // the one being dragged may by now be a new object for the same window.
+  const w = windows.find((o) => o.wid === w0.wid) || w0
   const [x, y] = floorAt(mx, my)
-  const pod = windows.find((o) => o !== w && x >= o.px && x <= o.px + POD_W && y >= o.py + 0.2 && y <= o.py + o.pd)
+  const pod = windows.find((o) => o.wid !== w.wid && x >= o.px && x <= o.px + POD_W && y >= o.py + 0.2 && y <= o.py + o.pd)
   if (pod) return { kind: 'merge', w, into: pod, text: '🔀 ' + w.name + ' 창을 ' + pod.name + ' 창에 합치기' }
   const sec = sections.find((sc) => y >= sc.y0 && y <= sc.y1 && x >= 0 && x <= W)
   if (sec && sec.name !== tmuxOf(w)) return { kind: 'send', w, to: sec.name, text: '📦 ' + w.name + ' 창을 tmux ' + sec.name + ' 세션으로 보내기' }
@@ -1145,7 +1148,7 @@ function askMove(d) {
 function cancelMove() { pendingMove = null; moveBar.style.display = 'none' }
 async function doMove() {
   const d = pendingMove; cancelMove()
-  if (!d) return
+  if (!d || (d.kind === 'merge' && d.into.wid === d.w.wid)) return
   const body = d.kind === 'send' ? { sid: d.w.sessions[0].id, kind: 'send', value: d.to } : { sid: d.w.sessions[0].id, kind: 'merge', value: d.into.sessions[0].id }
   try {
     const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify(body) })
