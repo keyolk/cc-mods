@@ -613,13 +613,23 @@ def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
     return 200, body, kind, {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
 
 
+# Where a pane's links go now (tmux-chrome's answer for it), for the card's
+# "open outside" menu to say what its default is.
+def route_of(pane: str) -> str:
+    try:
+        out = subprocess.run(["tmux-chrome", "browser"], capture_output=True, text=True, timeout=3, env={**os.environ, "TMUX_PANE": pane}).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        out = ""
+    return out if out in ("tweb", "tweb-chrome", "tweb-webkit", "chrome") else "default"
+
+
 def detail(sid: str, kind: str | None = None) -> dict:
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "route": route_of(me["pane"]), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -654,19 +664,34 @@ def act(body: dict) -> tuple[int, dict]:
         # artifacts open signed in) or the window's Chrome tab group, the same
         # place a link it opens itself lands. Without tmux-chrome, the default
         # browser.
-        v = str(value or "")
-        if re.match(r"^https?://", v):
-            opener = os.path.expanduser("~/.local/bin/tmux-chrome-open")
-            if os.access(opener, os.X_OK):
-                subprocess.Popen([opener, v], env={**os.environ, "TMUX_PANE": pane}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return 200, {"ok": True, "sent": "opened where " + me["name"] + "'s links go"}
-            subprocess.Popen(["open", v])
-            return 200, {"ok": True, "sent": "opened"}
-        p = os.path.expanduser(v)
-        if p.startswith("/") and os.path.exists(p):
-            subprocess.Popen(["open", "-R", p])
+        # `via` picks the place instead: one of tmux-chrome's (tweb,
+        # tweb-chrome, tweb-webkit, chrome: TMUX_CHROME_BROWSER, which wins
+        # over the pane options), the default browser or app, or Finder.
+        v, via = str(value or ""), str(body.get("via") or "")
+        if via not in ("", "session", "tweb", "tweb-chrome", "tweb-webkit", "chrome", "default", "finder"):
+            return 400, {"error": "unknown place to open"}
+        url = v if re.match(r"^https?://", v) else None
+        p = os.path.realpath(os.path.expanduser(v)) if not url else ""
+        if not url and not (p.startswith("/") and os.path.exists(p)):
+            return 400, {"error": "not a link or an existing path"}
+        if not url and via in ("", "session"):
+            via = "finder"
+        if via == "finder":
+            subprocess.Popen(["open", "-R", p or v])
             return 200, {"ok": True, "sent": "revealed"}
-        return 400, {"error": "not a link or an existing path"}
+        target = url or ("file://" + p)
+        if via == "default":
+            subprocess.Popen(["open", url or p])
+            return 200, {"ok": True, "sent": "opened in the default app"}
+        opener = os.path.expanduser("~/.local/bin/tmux-chrome-open")
+        if not os.access(opener, os.X_OK):
+            subprocess.Popen(["open", target])
+            return 200, {"ok": True, "sent": "opened"}
+        env = {**os.environ, "TMUX_PANE": pane}
+        if via not in ("", "session"):
+            env["TMUX_CHROME_BROWSER"] = via
+        subprocess.Popen([opener, target], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return 200, {"ok": True, "sent": "opened in " + (via if via not in ("", "session") else route_of(pane))}
     if kind == "stop":
         if me["state"] != "working":
             return 409, {"error": "it is not working"}

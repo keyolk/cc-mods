@@ -301,9 +301,15 @@ else the first name of your account's full name, else your login name.
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
   paths in that session's outputs are served (`/file`), in a sandbox with no
   reach into the office page. claude.ai artifacts and GitHub refuse to be
-  framed, so links open outside, where that session's own links go:
-  `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
+  framed, so links open outside, by default where that session's own links
+  go: `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
   Chrome (signed in) or the tab group.
+- **Where things open is yours to pick**: `⚙` (or `,`) in the top row sets
+  where web links and files open outside (that session's setting, TWeb on
+  your Chrome / Electron / WebKit, the Chrome tab group, the default browser
+  or app, Finder) and whether a viewable file opens inside first. A chip's
+  right click (or `⇧O` in the viewer) asks once and remembers the pick; kept
+  in this browser.
 - **Answers read as Markdown**: headings, nested lists, tables, code blocks,
   quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row

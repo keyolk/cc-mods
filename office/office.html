@@ -71,6 +71,20 @@ canvas.drag { cursor: grabbing; }
 #viewer pre { margin: 0; padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
 #viewer .said { max-height: none; margin: 0; border-radius: 0; font-size: 13px; padding: 12px 16px; }
 #card .rel a.view::after { content: ' 👁'; }
+#gear { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
+#settings { position: fixed; left: 14px; top: 52px; width: 340px; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 13px; }
+#settings h3 { margin: 0 0 8px; font-weight: 400; font-family: Jua, sans-serif; }
+#settings .row { margin: 8px 0; }
+#settings .row > div:first-child { margin-bottom: 4px; }
+#settings .m { color: #6b6280; font-size: 11px; }
+#settings select { font: inherit; width: 100%; padding: 3px 6px; border: 2px solid var(--line); border-radius: 8px; background: #fff; }
+#settings label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+#placemenu { position: fixed; display: none; z-index: 9; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; box-shadow: 0 4px 0 var(--line); padding: 6px; min-width: 220px; }
+#placemenu .h { font-size: 12px; color: #6b6280; padding: 2px 6px 4px; }
+#placemenu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 13px; border: 0; background: none; padding: 4px 8px; border-radius: 8px; cursor: pointer; color: inherit; }
+#placemenu button:hover, #placemenu button.on { background: #efe7f7; }
+#placemenu button.on::after { content: ' ✓'; }
+#placemenu .m { color: #6b6280; font-size: 11px; }
 #movebar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 10px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 8px 14px; font-size: 14px; }
 #movebar button { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 2px 10px; cursor: pointer; }
 #movebar button.ok { background: #9ff0b5; }
@@ -102,6 +116,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <h1>🏢 __OFFICE_OWNER__네 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
+  <button id="gear" class="chip" title="설정 (,)">⚙</button>
 </header>
 <div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
 <canvas id="c"></canvas>
@@ -119,6 +134,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>책상 서랍 탭 이동 (받은 것 · 보낸 것 · 스크래치 …)</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
+    <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
+    <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
     <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>이 agent를 30분 미루기 (Tab·N에서 빠짐, 다시 누르면 +30분)</td></tr>
@@ -577,7 +594,12 @@ addEventListener('keydown', (e) => {
   const open = card.style.display === 'block'
   const hit = (fn) => { e.preventDefault(); fn() }
   if (viewer.path && k === 'Escape') return hit(closeViewer)
-  if (viewer.path && (k === 'o' || k === 'O' || k === 'ㅐ')) return hit(() => openLink(viewer.path))
+  if (k === ',' ) return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
+  if (settings.style.display === 'block' && k === 'Escape') return hit(closeSettings)
+  if (placeMenu.v && /^[1-7]$/.test(k)) { const b = placeMenu.querySelectorAll('button')[+k - 1]; if (b) return hit(() => pickPlace(b.dataset.k)) }
+  if (placeMenu.v && k === 'Escape') return hit(hidePlaces)
+  if (viewer.path && (k === 'O' || (e.shiftKey && k === 'ㅒ'))) return hit(() => showPlaces(viewer.path, viewer.querySelector('.place')))
+  if (viewer.path && (k === 'o' || k === 'ㅐ')) return hit(() => openLink(viewer.path))
   if (pendingMove && k === 'Enter') return hit(doMove)
   if (pendingMove && k === 'Escape') return hit(cancelMove)
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
@@ -629,8 +651,9 @@ function chip(o) {
   const a = document.createElement('a'), b = o.url && brandOf(o.url)
   if (b) { a.className = 'brand'; a.style.setProperty('--bc', BRAND_ICON[b.icon][0]); a.innerHTML = brandSvg(b.icon) + '<b>' + b.label + '</b><span>' + esc(o.title && o.title !== o.url ? o.title : b.short) + '</span>' }
   else a.textContent = (CHIP_ICON[o.kind] || '•') + ' ' + o.title
-  a.title = o.url || o.path; a.onclick = () => (o.path && canView(o.path) ? viewFile(o.path) : openLink(o.url || o.path))
-  if (o.path && canView(o.path)) a.classList.add('view')
+  a.title = (o.url || o.path) + ' — 우클릭: 어디서 열지 고르기'; a.onclick = (ev) => (ev.altKey ? showPlaces(o.url || o.path, a) : o.path && canView(o.path) && viewInside() ? viewFile(o.path) : openLink(o.url || o.path))
+  a.oncontextmenu = (ev) => { ev.preventDefault(); showPlaces(o.url || o.path, a) }
+  if (o.path && canView(o.path) && viewInside()) a.classList.add('view')
   return a
 }
 async function openCard(sid, kind = null) {
@@ -644,6 +667,7 @@ async function openCard(sid, kind = null) {
   if (cardSid !== sid) return
   if (d.error) { card.innerHTML = '<div class="sub">' + esc(d.error) + '</div>'; return }
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
+  cardRoute = d.route || 'default'
   card.innerHTML = ''
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; card.appendChild(e); return e }
   const close = add('button', 'x', '✕'); close.onclick = closeCard
@@ -677,7 +701,7 @@ async function openCard(sid, kind = null) {
   } else card.shelfTab = null
   card.said = null
   if (d.text) {
-    const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v)) viewFile(v); else openLink(v) } }
+    const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
     // Opens at the end, where the question usually is; the keys scroll it.
     said.style.scrollBehavior = 'auto'; said.scrollTop = 1e9; said.style.scrollBehavior = ''
     card.said = said
@@ -900,10 +924,11 @@ const viewer = document.createElement('div'); viewer.id = 'viewer'; document.bod
 async function viewFile(path) {
   const url = '/file?sid=' + encodeURIComponent(cardSid) + '&path=' + encodeURIComponent(path)
   const name = path.split('/').filter(Boolean).pop()
-  viewer.innerHTML = '<div class="bar"><b>👁 ' + esc(name) + '</b><span class="m">' + esc(path) + '</span><button class="out"><kbd>O</kbd> ↗ 밖으로</button><button class="x">✕</button></div><div class="body"></div>'
+  viewer.innerHTML = '<div class="bar"><b>👁 ' + esc(name) + '</b><span class="m">' + esc(path) + '</span><button class="out"><kbd>O</kbd> ↗ 밖으로</button><button class="place" title="어디서 열지 고르기 (⇧O)">▾</button><button class="x">✕</button></div><div class="body"></div>'
   viewer.style.display = 'flex'
   viewer.querySelector('.x').onclick = closeViewer
   viewer.querySelector('.out').onclick = () => openLink(path)
+  viewer.querySelector('.place').onclick = (ev) => showPlaces(path, ev.currentTarget)
   viewer.path = path
   const body = viewer.querySelector('.body')
   if (/\.(html?|pdf|svg)$/i.test(path)) { body.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="' + url + '"></iframe>'; return }
@@ -914,9 +939,62 @@ async function viewFile(path) {
   body.querySelector('.said') && (body.querySelector('.said').onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } })
 }
 function closeViewer() { viewer.style.display = 'none'; viewer.innerHTML = ''; viewer.path = null }
-async function openLink(v) {
-  try { await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v }) }) } catch {}
+// Where "open outside" goes: the session's own place by default (its
+// @browser), or one picked from the menu, remembered per kind (web links,
+// files) for next time.
+const PLACES = [['session', '이 세션 설정대로'], ['tweb-chrome', 'TWeb · 내 Chrome (로그인)'], ['tweb', 'TWeb · Electron'], ['tweb-webkit', 'TWeb · WebKit'], ['chrome', 'Chrome 탭 그룹'], ['default', '기본 브라우저·앱'], ['finder', 'Finder에서 보기']]
+const PLACE_NAME = Object.fromEntries(PLACES)
+let cardRoute = 'default'
+const placeKey = (v) => 'office.place.' + (/^https?:/.test(v) ? 'web' : 'file')
+function lastPlace(v) { try { return localStorage.getItem(placeKey(v)) || 'session' } catch { return 'session' } }
+async function openLink(v, via) {
+  via = via || lastPlace(v)
+  try {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v, via }) })
+    const j = await r.json(); toast(r.ok ? '↗ ' + (j.sent || '열었습니다') : '✕ ' + (j.error || r.status))
+  } catch {}
 }
+// The menu beside a ↗ button: each place, the current default marked.
+const placeMenu = document.createElement('div'); placeMenu.id = 'placemenu'; document.body.appendChild(placeMenu)
+function showPlaces(v, anchor) {
+  const cur = lastPlace(v), file = !/^https?:/.test(v)
+  placeMenu.innerHTML = '<div class="h">어디서 열까요?</div>' + PLACES.filter(([k]) => !(k === 'finder' && !file)).map(([k, name], i) =>
+    '<button data-k="' + k + '"' + (k === cur ? ' class="on"' : '') + '><kbd>' + (i + 1) + '</kbd> ' + name + (k === 'session' ? ' <span class="m">(' + (PLACE_NAME[cardRoute] ? cardRoute : cardRoute) + ')</span>' : '') + '</button>').join('')
+  const r = anchor.getBoundingClientRect()
+  placeMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - 260)) + 'px'; placeMenu.style.top = (r.bottom + 6) + 'px'; placeMenu.style.display = 'block'
+  placeMenu.v = v
+  placeMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => pickPlace(b.dataset.k) })
+}
+function pickPlace(k) {
+  const v = placeMenu.v; hidePlaces()
+  try { localStorage.setItem(placeKey(v), k) } catch {}
+  openLink(v, k)
+}
+function hidePlaces() { placeMenu.style.display = 'none'; placeMenu.v = null }
+addEventListener('mousedown', (e) => { if (placeMenu.v && !e.target.closest('#placemenu, .place')) hidePlaces() }, true)
+
+// ---------- settings (⚙) ----------
+// The office's own choices, kept in this browser: where links and files open
+// outside (the same choice the ▾ menu remembers), whether a file chip shows the
+// file inside first. The session default is its @browser, named beside it.
+function pref(k, d) { try { return localStorage.getItem('office.' + k) ?? d } catch { return d } }
+function setPref(k, v) { try { localStorage.setItem('office.' + k, v) } catch {} }
+const viewInside = () => pref('viewInside', '1') === '1'
+const settings = document.createElement('div'); settings.id = 'settings'; document.body.appendChild(settings)
+function openSettings() {
+  const opts = (cur, file) => PLACES.filter(([k]) => file || k !== 'finder').map(([k, name]) => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + name + '</option>').join('')
+  settings.innerHTML = '<h3>⚙ 설정</h3>'
+    + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div><select data-k="place.web">' + opts(pref('place.web', 'session'), false) + '</select></div>'
+    + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div><select data-k="place.file">' + opts(pref('place.file', 'session'), true) + '</select></div>'
+    + '<div class="row"><label><input type="checkbox" data-k="viewInside"' + (viewInside() ? ' checked' : '') + '> 볼 수 있는 파일은 먼저 안에서 보기 (👁)</label></div>'
+    + '<div class="m">"이 세션 설정대로"는 그 세션 pane의 @browser를 따릅니다 (tmux-chrome). 고른 곳은 이 브라우저에 저장되고, 칩의 ▾·우클릭 메뉴에서 고른 것도 여기에 반영됩니다. <kbd>,</kbd> 또는 <kbd>Esc</kbd>로 닫기.</div>'
+  settings.querySelectorAll('select').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.value); toast('⚙ 저장했습니다') } })
+  settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); toast('⚙ 저장했습니다') } })
+  settings.style.display = 'block'
+}
+const closeSettings = () => { settings.style.display = 'none' }
+document.getElementById('gear').onclick = () => (settings.style.display === 'block' ? closeSettings() : openSettings())
+addEventListener('mousedown', (e) => { if (settings.style.display === 'block' && !e.target.closest('#settings, #gear')) closeSettings() }, true)
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
 
 // ---------- rooms ----------
