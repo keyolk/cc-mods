@@ -266,8 +266,15 @@ runs `~/.local/bin/cc-web-leave`, which sends a real Escape to Claude Code
 bridge (`POST /leave`), so the header returns to Cockpit; alt+tab does the
 same and goes on to Claude's prompt. Elsewhere both pass through.
 
+The same Escape binding also switches macOS to the ABC input source in a
+Claude Code pane (`@cc_pane_session`, published by this mod), with
+[`macism`](https://github.com/laishulu/macism). With `editorMode: vim` and a
+Korean (or any composing) input source, normal-mode keys reach the IME
+first: `i` becomes `ㅑ`, held as an unfinished syllable, and vim never sees
+it. Leaving insert mode with Escape now leaves the IME on letters too.
+
 ```
-bind-key -n Escape if-shell -F '#{@cc_web_page}' 'run-shell -b "~/.local/bin/cc-web-esc \"#{@cc_web}\""' 'send-keys Escape'
+bind-key -n Escape if-shell -F '#{@cc_web_page}' 'run-shell -b "~/.local/bin/cc-web-esc \"#{@cc_web}\""' { if-shell -F '#{@cc_pane_session}' { run-shell -b '/opt/homebrew/bin/macism com.apple.keylayout.ABC >/dev/null 2>&1' } ; send-keys Escape }
 bind-key -n M-w if-shell -F '#{@cc_web_page}' 'run-shell -b "~/.local/bin/cc-web-leave \"#{pane_id}\" \"#{@cc_web}\""' 'send-keys M-w'
 bind-key -n M-Tab if-shell -F '#{@cc_web_page}' 'run-shell -b "~/.local/bin/cc-web-leave \"#{pane_id}\" \"#{@cc_web}\" prompt"' 'send-keys M-Tab'
 ```
