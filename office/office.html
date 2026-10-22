@@ -630,6 +630,95 @@ async function openLink(v) {
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
 
+// ---------- walls ----------
+// The back wall (the face at y = -0.3) and the left wall (x = -0.3): wainscot
+// and a skirting board, a window over the lounge sofa and a clock by the
+// lift; down the left wall the status board, then windows with blinds and a
+// radiator under each. The sky follows the clock: day, sunset, night.
+const WALL_H = 70
+const backQuad = (x0, x1, z0, z1) => [P(x0, -0.3, z0), P(x1, -0.3, z0), P(x1, -0.3, z1), P(x0, -0.3, z1)]
+const leftQuad = (y0, y1, z0, z1) => [P(-0.3, y0, z0), P(-0.3, y1, z0), P(-0.3, y1, z1), P(-0.3, y0, z1)]
+const leftWindows = () => { const out = []; for (let y = 4.9; y + 1.6 < D - 0.2; y += 2.7) out.push(y); return out }
+// Text painted on a wall: its baseline runs along the wall (dir 'x' for the
+// back wall, 'y' for the left one) and stays upright. On the left wall the
+// screen's left-to-right is toward -y, so that is the way it reads.
+function wallText(x, y, z, str, size, color, dir, align = 'left', weight = '') {
+  const [ox, oy] = P(x, y, z), [ax, ay] = dir === 'x' ? P(x + 1, y, z) : P(x, y - 1, z), l = Math.hypot(ax - ox, ay - oy) || 1
+  g.save(); g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
+  g.font = weight + ' ' + Math.max(6, size * cam.s) + 'px Jua, sans-serif'; g.textAlign = align; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(str, 0, 0)
+  g.restore()
+}
+function sky() {
+  const h = new Date().getHours() + new Date().getMinutes() / 60
+  if (h >= 7 && h < 17) return { top: '#8fcdf5', bot: '#d6efff', night: false }
+  if ((h >= 17 && h < 19.5) || (h >= 5.5 && h < 7)) return { top: '#f59a7a', bot: '#ffd59a', night: false }
+  return { top: '#1d2552', bot: '#3b3f78', night: true }
+}
+// One window: frame, sky, a drifting cloud or stars, the blind's slats down
+// to `drop` (0-1) and a sill. quad(a, b, z0, z1) maps along-wall a..b.
+function wallWindow(quad, at, a0, a1, z0, z1, drop, t, seed) {
+  const sk = sky()
+  poly(quad(a0 - 0.08, a1 + 0.08, z0 - 4, z1 + 4), '#fbf8f2')
+  const gl = quad(a0, a1, z0, z1), gr = g.createLinearGradient(0, gl[2][1], 0, gl[0][1]); gr.addColorStop(0, sk.top); gr.addColorStop(1, sk.bot)
+  poly(gl, gr, null)
+  if (sk.night) for (let k = 0; k < 5; k++) { const u = ((seed * 7 + k * 37) % 100) / 100, v = ((seed * 13 + k * 53) % 100) / 100; const [sx, sy] = at(a0 + (a1 - a0) * u, z0 + (z1 - z0) * (0.35 + v * 0.6)); g.globalAlpha = 0.5 + 0.5 * Math.sin(t * 2 + k); circle(sx, sy, 1.2 * cam.s, '#fff8d0', null); g.globalAlpha = 1 }
+  else { const u = ((t * 0.02 + seed * 0.37) % 1.4) - 0.2; if (u > 0 && u < 1) { const [cx, cy] = at(a0 + (a1 - a0) * u, z1 - (z1 - z0) * 0.3); g.globalAlpha = 0.9; circle(cx, cy, 6 * cam.s, '#fff', null); circle(cx + 6 * cam.s, cy + 1 * cam.s, 5 * cam.s, '#fff', null); circle(cx - 6 * cam.s, cy + 2 * cam.s, 4 * cam.s, '#fff', null); g.globalAlpha = 1 } }
+  const am = (a0 + a1) / 2, zm = (z0 + z1) / 2
+  poly([...quad(am - 0.025, am + 0.025, z0, z1)], '#fbf8f2', null); poly(quad(a0, a1, zm - 0.8, zm + 0.8), '#fbf8f2', null)
+  // The blind: slats from the top down to its drop, a bar and a pull cord.
+  const zb = z1 - (z1 - z0) * drop
+  for (let z = z1 - 2.2; z > zb; z -= 3.2) poly(quad(a0, a1, z - 2.2, z), '#f4ead8', 'rgba(120,100,80,.35)', 0.5)
+  poly(quad(a0 - 0.04, a1 + 0.04, zb - 1.6, zb), '#d8c9ae', null)
+  const [cx0, cy0] = at(a1 - 0.12, z1), [cx1, cy1] = at(a1 - 0.12, Math.max(z0 + 4, zb - 8))
+  g.strokeStyle = '#b8a888'; g.lineWidth = 1 * cam.s; g.beginPath(); g.moveTo(cx0, cy0); g.lineTo(cx1, cy1); g.stroke(); circle(cx1, cy1, 1.6 * cam.s, '#b8a888', null)
+  poly(quad(a0 - 0.12, a1 + 0.12, z0 - 6, z0 - 3), '#e9e1d2', LINE, 0.8)
+  poly(quad(a0 - 0.08, a1 + 0.08, z0 - 4, z1 + 4), null, LINE, 1.2)
+}
+// Drop by the hour: down against the noon and evening sun, up in the morning.
+function blindDrop(seed) { const h = new Date().getHours(); const base = h >= 11 && h < 15 ? 0.6 : h >= 17 || h < 7 ? 0.5 : 0.25; return Math.min(0.85, base + ((seed * 29) % 20) / 100) }
+function walls(t) {
+  box(-0.3, -0.55, W + 0.6, 0.25, WALL_H, '#d7cfe9')
+  box(-0.55, -0.55, 0.25, D + 0.85, WALL_H, '#c8bfe0')
+  // Wainscot below a chair rail, then the skirting board, on both walls.
+  poly(backQuad(-0.3, W + 0.3, 0, 24), '#c4b8dc', null); poly(backQuad(-0.3, W + 0.3, 23, 25), '#f4efe6', null); poly(backQuad(-0.3, W + 0.3, 0, 4), '#9c8fb8', null)
+  poly(leftQuad(-0.3, D + 0.3, 0, 24), '#b7aad2', null); poly(leftQuad(-0.3, D + 0.3, 23, 25), '#f4efe6', null); poly(leftQuad(-0.3, D + 0.3, 0, 4), '#9184ad', null)
+  for (let x = 0.5; x < W; x += 0.9) poly(backQuad(x, x + 0.7, 7, 20), null, 'rgba(255,255,255,.35)', 0.8)
+  for (let y = 0.5; y < D; y += 0.9) poly(leftQuad(y, y + 0.7, 7, 20), null, 'rgba(255,255,255,.3)', 0.8)
+  // Over the sofa, a window; by the lift, a clock.
+  wallWindow(backQuad, (a, z) => P(a, -0.3, z), 12.3, 14.4, 30, 62, blindDrop(1), t, 1)
+  const [kx, ky] = P(17.9, -0.3, 50), now = new Date()
+  circle(kx, ky, 11 * cam.s, '#fffdf6'); circle(kx, ky, 1.5 * cam.s, '#3b2a35', null)
+  const hand = (ang, len, w) => { g.strokeStyle = '#3b2a35'; g.lineWidth = w * cam.s; g.beginPath(); g.moveTo(kx, ky); g.lineTo(kx + Math.sin(ang) * len * cam.s, ky - Math.cos(ang) * len * cam.s); g.stroke() }
+  hand(((now.getHours() % 12) + now.getMinutes() / 60) / 12 * Math.PI * 2, 6, 2); hand(now.getMinutes() / 60 * Math.PI * 2, 9, 1.4)
+  g.strokeStyle = '#e86a5c'; hand(now.getSeconds() / 60 * Math.PI * 2, 9.5, 0.7)
+  statusBoard(t)
+  leftWindows().forEach((y0, k) => wallWindow(leftQuad, (a, z) => P(-0.3, a, z), y0, y0 + 1.6, 30, 62, blindDrop(k + 2), t, k + 2))
+}
+// The status board on the left wall over the library: the numbers in the top
+// bar, who is next, and the time.
+function statusBoard(t) {
+  const y0 = 0.35, y1 = 3.95, z0 = 12, z1 = 68
+  poly(leftQuad(y0 - 0.06, y1 + 0.06, z0 - 3, z1 + 3), '#8a6a52')
+  poly(leftQuad(y0, y1, z0, z1), '#2f4a3d', null)
+  // Reading order: the board's left edge on screen is y1, its right edge y0.
+  const L = (y, z, str, size, color, align, weight) => wallText(-0.3, y, z, str, size, color, 'y', align, weight)
+  L(y1 - 0.15, z1 - 6, '📋 상황판', 11, '#fff8e6', 'left', 'bold')
+  const now = new Date(), hh = String(now.getHours()).padStart(2, '0'), mm = String(now.getMinutes()).padStart(2, '0')
+  L(y0 + 0.15, z1 - 6, hh + (Math.floor(t * 2) % 2 ? ':' : ' ') + mm, 11, '#ffe08a', 'right')
+  const row = (i, label, n, color) => { const z = z1 - 19 - i * 10; L(y1 - 0.2, z, label, 9, '#d8eadf', 'left'); L(y0 + 0.2, z, String(n), 10, color, 'right', 'bold') }
+  const q = waiting()
+  row(0, '세션', stats.total, '#ffffff'); row(1, '일하는 중', stats.work, '#9ff0b5'); row(2, '나를 기다림', stats.wait, stats.wait ? '#ffb36b' : '#ffffff')
+  L(y1 - 0.2, z0 + 8, q.length ? '다음 ▶ ' + q[0].name : '모두 순항 중 ✓', 9, q.length ? '#ffcf5a' : '#9ff0b5', 'left')
+  poly(leftQuad(y0 + 0.1, y1 - 0.1, z0 - 2, z0 - 0.5), '#c9b28f', null)
+  circle(...P(-0.3, y0 + 0.9, z0 - 1.3), 1.6 * cam.s, '#f2f2f2', null); circle(...P(-0.3, y0 + 1.05, z0 - 1.3), 1.6 * cam.s, '#5c9de8', null)
+}
+// A radiator under a left-wall window: a low white box with fins.
+function radiator(y0, t) {
+  box(-0.3, y0, 0.14, 1.3, 20, '#eef0f4', 4)
+  for (let y = y0 + 0.1; y < y0 + 1.25; y += 0.12) { const [a, b] = P(-0.16, y, 7), [c, d] = P(-0.16, y, 22); g.strokeStyle = 'rgba(90,95,120,.45)'; g.lineWidth = 1 * cam.s; g.beginPath(); g.moveTo(a, b); g.lineTo(c, d); g.stroke() }
+  if (new Date().getMonth() >= 9 || new Date().getMonth() <= 2) for (let k = 0; k < 3; k++) { const ph = (t * 0.5 + k / 3) % 1, [hx, hy] = P(-0.1, y0 + 0.3 + k * 0.35, 26 + ph * 14); g.globalAlpha = 0.35 * (1 - ph); g.strokeStyle = '#ff9f80'; g.lineWidth = 1.2 * cam.s; g.beginPath(); g.moveTo(hx, hy); g.quadraticCurveTo(hx + 3 * cam.s, hy - 4 * cam.s, hx, hy - 8 * cam.s); g.stroke(); g.globalAlpha = 1 }
+}
+
 // ---------- furniture ----------
 const BOOKS = ['#e86a5c', '#5c9de8', '#f2c14e', '#6cc27a', '#a77de8', '#f28f4e', '#4ec2c2']
 function shelf(x, y) {
@@ -1057,9 +1146,7 @@ function frame(now) {
     rug(w, t)
     if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
   }
-  box(-0.3, -0.55, W + 0.6, 0.25, 70, '#cfc7e6')
-  box(-0.55, -0.55, 0.25, D + 0.85, 70, '#c2b9dc')
-  for (let wx = 1.2; wx < W - 3; wx += 3.4) { poly([P(wx, -0.3, 22), P(wx + 1.6, -0.3, 22), P(wx + 1.6, -0.3, 58), P(wx, -0.3, 58)], '#bfe4ff'); poly([P(wx + 0.8, -0.3, 22), P(wx + 0.8, -0.3, 58)], null, '#fff', 1.4) }
+  walls(t)
   for (const z of Object.values(ZONES)) { const [lx, ly] = P((z.x0 + z.x1) / 2, -0.3, 82); rrect(lx - 40 * cam.s, ly - 11 * cam.s, 80 * cam.s, 22 * cam.s, 10 * cam.s, '#fff8ee'); text(z.label, lx, ly, 13) }
   const items = []
   const add = (depth, fn) => items.push([depth, fn])
@@ -1069,6 +1156,7 @@ function frame(now) {
   add(13.6, () => sofa(12.1, 0.25))
   add(15.3, () => plant(14.95, 0.2))
   add(17.3, () => elevator(t))
+  for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))
   for (const w of windows) {
     if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t)) }
     w.sessions.forEach((p, k) => {

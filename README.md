@@ -257,6 +257,11 @@ answers there.
   arcade cabinet or a floor lamp (walkers go round it). What is on the desk
   follows the job: two screens for code, a laptop and a lamp for writing, a
   wide screen for watching, a little rack for ops, a book pile for reading.
+- **Walls** look like an office: wainscot and a skirting board, windows with
+  blinds and a radiator under each (warm in the cold months), a clock by the
+  lift and a status board over the library (sessions, working, waiting, who
+  is next, the time). The sky in the windows and how far the blinds are down
+  follow the local hour.
 - **No mouse needed**: when a card opens the keyboard is already in its
   reply box (TWeb passes keys to a focused text field), so: type, `Enter`
   (`⇧Enter` a new line); in an empty box `1`-`9` press a button; `Tab`/`⇧Tab`
