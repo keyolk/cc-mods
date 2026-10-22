@@ -237,12 +237,26 @@ answers there.
 - **Links and related work**: URLs in what a session said open in your
   browser, absolute paths show in Finder; the card lists its PRs, threads,
   tickets, artifacts and files (from cc-mods' `~/.claude/outputs` export,
-  what it made first), each one click away.
+  what it made first), each one click away. Well-known places are badges in
+  their own colour with their logo and a short name (`PR o/r#14`, `Jira
+  INF-123`, `Slack #channel`, Grafana, Google Docs/Sheets, Notion, Linear,
+  Figma, Sentry, PagerDuty, Datadog, Argo CD, …; `office/brands.js`, logos
+  from simple-icons, CC0).
 - **The waiting queue** along the bottom: everyone who needs you, a
   confirmation (❗) before a question (❓), then whoever has waited longest,
   each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
   previous): the camera glides and zooms to it and a ring and arrow mark it.
   A reply or a dialog pick moves on to the next one by itself.
+- **Snooze**: `Z` takes the open agent out of the queue for 30 minutes (again
+  adds 30 more); it shows as a muted `💤 name · N분` chip and a 💤 over its
+  head, and a click on the chip puts it back. Kept in
+  `~/.claude/state/office/snooze.json`, so a page reload keeps it.
+- **Desks differ** by window: wood, white, dark, pastel or standing desks; a
+  striped, checked or round rug; in a pod with a free seat a plant, a
+  bookshelf, a beanbag, a whiteboard, a sleeping cat, a water cooler, an
+  arcade cabinet or a floor lamp (walkers go round it). What is on the desk
+  follows the job: two screens for code, a laptop and a lamp for writing, a
+  wide screen for watching, a little rack for ops, a book pile for reading.
 - **No mouse needed**: when a card opens the keyboard is already in its
   reply box (TWeb passes keys to a focused text field), so: type, `Enter`
   (`⇧Enter` a new line); in an empty box `1`-`9` press a button; `Tab`/`⇧Tab`

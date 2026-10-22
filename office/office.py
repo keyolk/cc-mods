@@ -654,6 +654,9 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
+        if self.path == "/brands.js":
+            with open(os.path.join(HERE, "brands.js"), "rb") as f:
+                return self.send(200, f.read(), "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
                 return self.send(200, f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()), "text/html; charset=utf-8")

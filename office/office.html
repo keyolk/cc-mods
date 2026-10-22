@@ -39,6 +39,10 @@ canvas.drag { cursor: grabbing; }
 #card .grant .why { color: #7a6030; font-size: 12px; margin: 3px 0 6px; font-family: -apple-system, sans-serif; }
 #card button.grantb { background: #ffcf5a; }
 #card .rel { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+#card a.brand, #card .rel a.brand { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; background: var(--bc); color: #fff; text-decoration: none; border: 2px solid var(--line); border-radius: 999px; padding: 1px 9px 1px 6px; margin: 1px 0; font-size: 12px; line-height: 18px; box-shadow: 0 2px 0 var(--line); cursor: pointer; word-break: normal; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#card a.brand:hover, #card .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
+#card a.brand b { font-weight: 700; opacity: .85; }
+#card a.brand span { overflow: hidden; text-overflow: ellipsis; }
 #card .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
@@ -86,6 +90,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   </table>
   <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 처음 한 번 <kbd>i</kbd>(insert)로 키를 페이지에 넘기세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
 </div>
+<script src="brands.js"></script>
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
@@ -520,7 +525,12 @@ async function openCard(sid) {
   if (d.related && d.related.length) {
     const rel = add('div', 'rel')
     const icon = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
-    for (const o of d.related) { const a = document.createElement('a'); a.textContent = (icon[o.kind] || '•') + ' ' + o.title; a.title = o.url || o.path; a.onclick = () => openLink(o.url || o.path); rel.appendChild(a) }
+    for (const o of d.related) {
+      const a = document.createElement('a'), b = o.url && brandOf(o.url)
+      if (b) { a.className = 'brand'; a.style.setProperty('--bc', BRAND_ICON[b.icon][0]); a.innerHTML = brandSvg(b.icon) + '<b>' + b.label + '</b><span>' + esc(o.title && o.title !== o.url ? o.title : b.short) + '</span>' }
+      else a.textContent = (icon[o.kind] || '•') + ' ' + o.title
+      a.title = o.url || o.path; a.onclick = () => openLink(o.url || o.path); rel.appendChild(a)
+    }
   }
   const msg = document.createElement('div'); msg.className = 'msg'
   const send = async (body, label) => {
@@ -610,7 +620,7 @@ function persona(p) {
 // the person's browser, a path is shown in Finder (office.py /act open).
 function linkify(t) {
   return esc(t).replace(/(https?:\/\/[^\s<>"'`)\]]+)|((?:^|[\s`(])(?:~|\/)(?:Users|private|tmp|home|~)?[\w./@+~-]*\/[\w./@+-]+)/g, (m, url, path) => {
-    if (url) { const u = url.replace(/[.,;:]+$/, ''); return '<a data-open="' + u + '">' + u + '</a>' + url.slice(u.length) }
+    if (url) { const u = url.replace(/[.,;:]+$/, ''), b = brandOf(u.replace(/&amp;/g, '&')); return (b ? brandBadge(u, b) : '<a data-open="' + u + '">' + u + '</a>') + url.slice(u.length) }
     const lead = path.match(/^[\s`(]/) ? path[0] : '', p = path.slice(lead.length).replace(/[.,;:]+$/, '')
     return lead + '<a data-open="' + p + '">' + p + '</a>' + path.slice(lead.length + p.length)
   })
