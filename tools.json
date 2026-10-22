@@ -1,0 +1,22 @@
+{
+  "tools": [
+    {
+      "name": "tweb",
+      "repo": "keyolk/tweb",
+      "bins": ["tweb", "twebd", "tweb-webkit", "tweb-native-input"],
+      "why": "Web tab, /browser, browserEmbed (cc-browser drives it)"
+    },
+    {
+      "name": "narwhal",
+      "repo": "keyolk/narwhal",
+      "bins": ["narwhal"],
+      "why": "Needs you / Work tab narwhal runs, narwhal monitor"
+    },
+    {
+      "name": "ccproxy",
+      "repo": "sendbird/ccproxy",
+      "bins": ["ccproxy"],
+      "why": "Usage tab (ccproxy status --offline --json)"
+    }
+  ]
+}
