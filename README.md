@@ -289,6 +289,15 @@ else the first name of your account's full name, else your login name.
   pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
   cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
+- **Move windows by dragging**: drag a desk (its whole tmux window) onto
+  another pod to merge it into that window, or onto another tmux session's
+  block to send it there. The drop asks first (`⏎` moves, `Esc` drops it),
+  then the office runs tmc's own moves, `tmc window merge|send` (the TUI's `x
+  m` / `x s`; keyolk/tmc#18). The windows are resolved from tmux by the
+  sessions they hold, never taken from the page; `OFFICE_TMC` points at
+  another tmc.
+- **Answers read as Markdown**: headings, nested lists, tables, code blocks,
+  quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row
   (shown once you have zoomed or panned) glides back to the whole office.
 - **tmux sessions are blocks**: each tmux session's windows get their own

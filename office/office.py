@@ -637,7 +637,52 @@ def act(body: dict) -> tuple[int, dict]:
             json.dump({"text": text, "at": time.time()}, f)
         os.replace(tmp, os.path.join(INBOX, sid + ".json"))
         return 200, {"ok": True, "sent": "reply"}
+    if kind in ("send", "merge"):
+        return rearrange(kind, me, value)
     return 400, {"error": "unknown action"}
+
+
+# Dragging a pod moves its tmux window: onto another tmux session's block it is
+# sent there, onto another pod it is merged into that window. The moves are
+# tmc's (`tmc window send|merge`), the same as its TUI's `x s` and `x m`. The
+# windows come from tmux by the sessions they hold, never from the request.
+def tmc_bin() -> str | None:
+    import shutil
+
+    return os.environ.get("OFFICE_TMC") or shutil.which("tmc") or (os.path.expanduser("~/.local/bin/tmc") if os.access(os.path.expanduser("~/.local/bin/tmc"), os.X_OK) else None)
+
+
+def rearrange(kind: str, me: dict, value) -> tuple[int, dict]:
+    tmc = tmc_bin()
+    if not tmc:
+        return 409, {"error": "tmc is not installed"}
+    src = me["wid"]
+    if kind == "send":
+        dest = str(value or "")
+        try:
+            live = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True, timeout=3).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            live = []
+        if dest not in live:
+            return 400, {"error": "no such tmux session"}
+        argv = [tmc, "window", "send", src, "--to", dest]
+    else:
+        other = next((p for p in snapshot() if p["id"] == str(value or "")), None)
+        if not other:
+            return 404, {"error": "no such session to merge into"}
+        if other["wid"] == src:
+            return 400, {"error": "that is the same window"}
+        argv = [tmc, "window", "merge", src, "--into", other["wid"]]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 500, {"error": str(e)}
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout).strip()
+        if "unrecognized subcommand" in msg:
+            msg = "this tmc has no `window` command yet (keyolk/tmc#18)"
+        return 500, {"error": msg[:300]}
+    return 200, {"ok": True, "sent": r.stdout.strip()}
 
 
 # Agents the person set aside from the waiting queue, until when (epoch s).

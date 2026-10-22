@@ -26,7 +26,7 @@ canvas.drag { cursor: grabbing; }
 #card h2 { margin: 0 0 2px; font-size: 18px; font-weight: 400; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
 #card .x { position: absolute; right: 10px; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
-#card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; white-space: pre-wrap; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
+#card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
 #card .scrollhint { font-size: 11px; color: #9a90b0; text-align: right; margin-bottom: 8px; }
 #card .q { font-size: 14px; margin: 6px 0; }
 #card .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
@@ -34,6 +34,21 @@ canvas.drag { cursor: grabbing; }
 #card button.act:active { transform: translateY(2px); box-shadow: none; }
 #card button.pick { background: #ffe08a; } #card button.go { background: #a8e6b0; } #card button.stop { background: #ffb3b3; } #card button.nav { background: #cfe0ff; }
 #card textarea { width: 100%; min-height: 54px; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; resize: vertical; }
+#card .said p { margin: 0 0 6px; }
+#card .said h1, #card .said h2, #card .said h3, #card .said h4 { font-family: Jua, sans-serif; font-weight: 400; margin: 8px 0 4px; font-size: 14px; }
+#card .said h1 { font-size: 16px; } #card .said h2 { font-size: 15px; }
+#card .said ul, #card .said ol { margin: 0 0 6px; padding-left: 18px; }
+#card .said li { margin: 1px 0; }
+#card .said code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; }
+#card .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; margin: 4px 0 6px; white-space: pre; }
+#card .said pre code { background: none; padding: 0; color: inherit; }
+#card .said .tbl { overflow-x: auto; margin: 4px 0 8px; }
+#card .said table { border-collapse: collapse; font-size: 11.5px; }
+#card .said th, #card .said td { border: 1px solid rgba(59,42,53,.25); padding: 3px 7px; vertical-align: top; text-align: left; }
+#card .said th { background: rgba(59,42,53,.08); }
+#card .said tr:nth-child(even) td { background: rgba(255,255,255,.45); }
+#card .said blockquote { margin: 0 0 6px; padding-left: 8px; border-left: 3px solid rgba(59,42,53,.25); color: #5b4a5e; }
+#card .said hr { border: 0; border-top: 1px solid rgba(59,42,53,.2); margin: 8px 0; }
 #card .said a { color: #2f6fd6; text-decoration: underline; cursor: pointer; word-break: break-all; }
 #card .grant { background: #fff1c9; border: 2px solid #e0a52e; border-radius: 12px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
 #card .grant .why { color: #7a6030; font-size: 12px; margin: 3px 0 6px; font-family: -apple-system, sans-serif; }
@@ -46,6 +61,9 @@ canvas.drag { cursor: grabbing; }
 /* In the header row with the counts, so it never covers the office or the card. */
 #reset { display: none; font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #reset:hover { filter: brightness(1.05); transform: translateY(-1px); }
+#movebar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 10px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 8px 14px; font-size: 14px; }
+#movebar button { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 2px 10px; cursor: pointer; }
+#movebar button.ok { background: #9ff0b5; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .shelf .tabs button.on { background: #2a2033; color: #fff; }
@@ -90,6 +108,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>책상 서랍 탭 이동 (받은 것 · 보낸 것 · 스크래치 …)</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
+    <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>이 agent를 30분 미루기 (Tab·N에서 빠짐, 다시 누르면 +30분)</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
@@ -505,14 +524,24 @@ cv.addEventListener('wheel', (e) => {
   cam.ox = e.clientX - (e.clientX - cam.ox) * r; cam.oy = e.clientY - (e.clientY - cam.oy) * r; cam.s = ns
 }, { passive: false })
 let drag = null
-cv.addEventListener('mousedown', (e) => { drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false }; cv.classList.add('drag') })
+cv.addEventListener('mousedown', (e) => {
+  const st = hitStuff(e.clientX, e.clientY), w = st && windowOf(st.sid)
+  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: w || null }
+  cv.classList.add('drag')
+})
 addEventListener('mouseup', (e) => {
   cv.classList.remove('drag')
+  if (drag && drag.moved && drag.pod) { const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return }
   if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st) openCard(st.sid, st.kind) }
   drag = null
 })
 addEventListener('mousemove', (e) => {
-  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy } }
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y
+    if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true
+    if (drag.moved && drag.pod) { podDrag = { w: drag.pod, x: e.clientX, y: e.clientY, drop: dropAt(drag.pod, e.clientX, e.clientY) }; tip.style.display = 'none'; return }
+    if (drag.moved) { cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy }
+  }
   hover(e)
 })
 cv.addEventListener('dblclick', resetView)
@@ -536,6 +565,8 @@ addEventListener('keydown', (e) => {
   const k = e.key
   const open = card.style.display === 'block'
   const hit = (fn) => { e.preventDefault(); fn() }
+  if (pendingMove && k === 'Enter') return hit(doMove)
+  if (pendingMove && k === 'Escape') return hit(cancelMove)
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
@@ -632,7 +663,7 @@ async function openCard(sid, kind = null) {
   } else card.shelfTab = null
   card.said = null
   if (d.text) {
-    const said = add('div', 'said', linkify(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } }
+    const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } }
     // Opens at the end, where the question usually is; the keys scroll it.
     said.style.scrollBehavior = 'auto'; said.scrollTop = 1e9; said.style.scrollBehavior = ''
     card.said = said
@@ -782,6 +813,68 @@ function linkify(t) {
     const lead = path.match(/^[\s`(]/) ? path[0] : '', p = path.slice(lead.length).replace(/[.,;:]+$/, '')
     return lead + '<a data-open="' + p + '">' + p + '</a>' + path.slice(lead.length + p.length)
   })
+}
+// The Markdown an answer is written in: headings, lists, tables, code blocks,
+// quotes, rules, `code` and **bold**. Small on purpose: what Claude Code
+// writes, not all of CommonMark. Text is escaped and linkified first (links
+// and brand badges stay), code is escaped only.
+function mdInline(t) {
+  return t.split(/(`[^`\n]+`)/).map((seg) => /^`[^`]+`$/.test(seg) ? '<code>' + esc(seg.slice(1, -1)) + '</code>'
+    : linkify(seg).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,]|$)/g, '$1<i>$2</i>')).join('')
+}
+function md(src) {
+  const lines = String(src || '').replace(/\r/g, '').split('\n'), out = []
+  let para = []
+  const flush = () => { if (para.length) { out.push('<p>' + para.map(mdInline).join('<br>') + '</p>'); para = [] } }
+  const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim())
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]
+    if (/^\s*```/.test(l)) {
+      flush(); const body = []
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) body.push(lines[i])
+      out.push('<pre><code>' + esc(body.join('\n')) + '</code></pre>'); continue
+    }
+    if (/^\s*\|.*\|\s*$/.test(l) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      flush(); const head = cells(l); i++
+      const rows = []
+      for (i++; i < lines.length && /^\s*\|/.test(lines[i]); i++) rows.push(cells(lines[i]))
+      i--
+      out.push('<div class="tbl"><table><tr>' + head.map((c) => '<th>' + mdInline(c) + '</th>').join('') + '</tr>' + rows.map((r) => '<tr>' + r.map((c) => '<td>' + mdInline(c) + '</td>').join('') + '</tr>').join('') + '</table></div>')
+      continue
+    }
+    const h = /^(#{1,4})\s+(.*)$/.exec(l)
+    if (h) { flush(); out.push('<h' + h[1].length + '>' + mdInline(h[2]) + '</h' + h[1].length + '>'); continue }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { flush(); out.push('<hr>'); continue }
+    if (/^\s*>\s?/.test(l)) {
+      flush(); const q = []
+      for (; i < lines.length && /^\s*>\s?/.test(lines[i]); i++) q.push(lines[i].replace(/^\s*>\s?/, ''))
+      i--; out.push('<blockquote>' + q.map(mdInline).join('<br>') + '</blockquote>'); continue
+    }
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {
+      flush()
+      // A list, nested by indentation: each deeper indent opens a list
+      // inside the item before it.
+      const stack = []
+      for (; i < lines.length; i++) {
+        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i])
+        if (!m) {
+          if (/^\s{2,}\S/.test(lines[i]) && stack.length) { out.push('<br>' + mdInline(lines[i].trim())); continue }
+          break
+        }
+        const depth = Math.floor(m[1].replace(/\t/g, '    ').length / 2), tag = /\d/.test(m[2]) ? 'ol' : 'ul'
+        while (stack.length > depth + 1 || (stack.length === depth + 1 && stack[stack.length - 1] !== tag)) out.push('</li></' + stack.pop() + '>')
+        if (stack.length === depth + 1) out.push('</li>')
+        while (stack.length < depth + 1) { out.push('<' + tag + '>'); stack.push(tag) }
+        out.push('<li>' + mdInline(m[3]))
+      }
+      while (stack.length) out.push('</li></' + stack.pop() + '>')
+      i--; continue
+    }
+    if (!l.trim()) { flush(); continue }
+    para.push(l)
+  }
+  flush()
+  return out.join('')
 }
 async function openLink(v) {
   try { await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v }) }) } catch {}
@@ -1005,6 +1098,62 @@ function partition(x0, x1, y, hue) {
   box(x0, y, x1 - x0, 0.1, 2, '#f4efe6', 40)
 }
 // A standing sign at the section's left end: the tmux session and its count.
+
+// ---------- moving windows by dragging pods ----------
+// A desk dragged off its pod carries its whole tmux window: dropped on another
+// pod it merges into that window, dropped on another tmux session's block it
+// moves there. Nothing happens on the drop itself: a bar asks first (Enter /
+// Esc), then the office runs tmc's move (`tmc window merge|send`).
+let podDrag = null, pendingMove = null
+const windowOf = (sid) => windows.find((w) => w.sessions.some((p) => p.id === sid))
+// The floor point under the screen point (z = 0): P inverted.
+function floorAt(mx, my) {
+  const a = (mx - cam.ox) / ((TW / 2) * cam.s), b = (my - cam.oy) / ((TH / 2) * cam.s)
+  return [(a + b) / 2, (b - a) / 2]
+}
+const tmuxOf = (w) => w.label.split(':')[0]
+function dropAt(w, mx, my) {
+  const [x, y] = floorAt(mx, my)
+  const pod = windows.find((o) => o !== w && x >= o.px && x <= o.px + POD_W && y >= o.py + 0.2 && y <= o.py + o.pd)
+  if (pod) return { kind: 'merge', w, into: pod, text: '🔀 ' + w.name + ' 창을 ' + pod.name + ' 창에 합치기' }
+  const sec = sections.find((sc) => y >= sc.y0 && y <= sc.y1 && x >= 0 && x <= W)
+  if (sec && sec.name !== tmuxOf(w)) return { kind: 'send', w, to: sec.name, text: '📦 ' + w.name + ' 창을 tmux ' + sec.name + ' 세션으로 보내기' }
+  return null
+}
+function drawPodDrag() {
+  if (!podDrag) return
+  const { w, x, y, drop } = podDrag
+  const hl = (x0, y0, ww, dd, c) => { g.globalAlpha = 0.35; tile(x0, y0, ww, dd, c, '#ffffff'); g.globalAlpha = 1 }
+  if (drop && drop.kind === 'merge') hl(drop.into.px + 0.05, drop.into.py + 0.25, POD_W - 0.2, drop.into.pd - 0.3, '#7dd3fc')
+  if (drop && drop.kind === 'send') { const sc = sections.find((q) => q.name === drop.to); hl(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, '#9ff0b5') }
+  g.globalAlpha = 0.5; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', '#e08a2e'); g.globalAlpha = 1
+  const label = drop ? drop.text : '🗂 ' + w.name + ' (' + w.sessions.length + '명) — 다른 책상 묶음이나 다른 tmux 구획에 놓기'
+  g.font = '13px Jua, sans-serif'
+  const tw = g.measureText(label).width + 20
+  rrect(x + 14, y + 8, tw, 26, 8, drop ? '#2a2033' : '#fff8ee', LINE, 1.4 / cam.s)
+  g.fillStyle = drop ? '#fff8ee' : '#2a2033'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(label, x + 24, y + 21)
+}
+// The confirmation bar: what will happen, Enter to do it, Esc to drop it.
+const moveBar = document.createElement('div'); moveBar.id = 'movebar'; document.body.appendChild(moveBar)
+function askMove(d) {
+  pendingMove = d
+  moveBar.innerHTML = esc(d.text) + '? <button class="ok"><kbd>⏎</kbd> 옮기기</button><button class="no"><kbd>Esc</kbd> 그만두기</button>'
+  moveBar.style.display = 'flex'
+  moveBar.querySelector('.ok').onclick = doMove
+  moveBar.querySelector('.no').onclick = cancelMove
+}
+function cancelMove() { pendingMove = null; moveBar.style.display = 'none' }
+async function doMove() {
+  const d = pendingMove; cancelMove()
+  if (!d) return
+  const body = d.kind === 'send' ? { sid: d.w.sessions[0].id, kind: 'send', value: d.to } : { sid: d.w.sessions[0].id, kind: 'merge', value: d.into.sessions[0].id }
+  try {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify(body) })
+    const j = await r.json()
+    toast(r.ok ? '✓ ' + (j.sent || '옮겼습니다') : '✕ ' + (j.error || r.status))
+    tick()
+  } catch (err) { toast('✕ ' + err) }
+}
 
 // ---------- labels in the margin ----------
 // The building fills the middle of the screen; its names live outside it, in
@@ -1695,6 +1844,7 @@ function frame(now) {
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
   add(1e9, () => roomTags())
   add(1e9 + 1, () => marginLabels())
+  add(1e9 + 2, () => drawPodDrag())
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
   items.sort((a, b) => a[0] - b[0])
   for (const [, fn] of items) fn()
