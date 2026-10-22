@@ -412,14 +412,16 @@ def policy(req: dict) -> dict:
         if k not in seen:
             seen.add(k)
             uniq.append(c)
-    cands = uniq[:5]
+    # A capability already allowed is not what it waits on: proposing it again
+    # after the person approved it would ask the same thing forever.
+    cands = [c for c in uniq if caps.get(c["argv"][1]) != "allow"][:5]
     if not cands:
         return {"grant": None, "confidence": 1.0}
     # The answer itself says it is stuck on a guard ("막혀 있습니다", "할 수 없는
     # 작업", "blocked"): the newest refusal's grant is what it waits on, no need
     # to ask Jev (which reads "here is a command for you" as nothing to grant).
     if blocks and _re.search(r"막혀|막힌|막습니다|막혔|할 수 없|가드|guard|blocked|denied", answer[-1500:], _re.I):
-        from_blocks = _grants_from_blocks(blocks[-1:]) or _grants_from_blocks(blocks)
+        from_blocks = [c for c in (_grants_from_blocks(blocks[-1:]) or _grants_from_blocks(blocks)) if caps.get(c["argv"][1]) != "allow"]
         if from_blocks:
             return {"grant": from_blocks[0], "confidence": 1.0}
     try:

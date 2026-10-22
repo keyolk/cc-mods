@@ -501,7 +501,15 @@ def grant(sid: str) -> tuple[int, dict]:
     t.start()
     _reverts[key] = t
     _proposals.pop(sid, None)
-    return 200, {"ok": True, "sent": "granted " + g["label"] + " for " + str(g["minutes"]) + "m"}
+    # "Approve and go on": the session is told, the way a reply reaches it
+    # (its inbox, submitted as the person's prompt), or it would sit waiting
+    # with the grant it asked for.
+    os.makedirs(INBOX, exist_ok=True)
+    tmp = os.path.join(INBOX, sid + ".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump({"text": f"{g['label']} 권한을 {g['minutes']}분 동안 허용했습니다. 막혔던 작업을 계속 진행해 주세요.", "at": time.time()}, f)
+    os.replace(tmp, os.path.join(INBOX, sid + ".json"))
+    return 200, {"ok": True, "sent": "granted " + g["label"] + " for " + str(g["minutes"]) + "m and told it to go on"}
 
 
 # ---- what the session made and was handed (cc-mods' export) ---------------
