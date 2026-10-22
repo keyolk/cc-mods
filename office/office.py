@@ -104,6 +104,36 @@ def last_tool_in(path: str) -> dict:
 _counts: dict[str, dict] = {}
 
 
+_born: dict[str, float] = {}
+
+
+def born(sid: str) -> float | None:
+    """When the session began: the first timestamp in its transcript."""
+    path = transcript(sid)
+    if not path:
+        return None
+    if path in _born:
+        return _born[path]
+    try:
+        with open(path, "rb") as f:
+            for _ in range(40):
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    ts = json.loads(line).get("timestamp")
+                except ValueError:
+                    continue
+                if ts:
+                    from datetime import datetime
+
+                    _born[path] = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                    return _born[path]
+    except OSError:
+        pass
+    return None
+
+
 def tool_counts(sid: str) -> dict:
     path = transcript(sid)
     if not path:
@@ -281,6 +311,7 @@ def snapshot() -> list[dict]:
                 "mix": tc["by"],
                 "job": job_of(tc["by"]),
                 "rank": rank_of(tc["total"]),
+                "born": born(sid),
             }
         )
     return people

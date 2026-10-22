@@ -196,9 +196,17 @@ answers there.
   hoodie). Each job walks its own way (a scurry, a sway, a look-around) with
   what it carries, and works with its own effect (`{ }` rising, letters from a
   pen, chat bubbles, a scanning gaze, `01` rain, radio arcs, a pointing hand).
+  Its **age** is how long the session has lived (its transcript's first
+  line): grey streaks after a day, silver hair and a beard after three, a cane
+  and a slower walk after a week; the tooltip says how long (근속).
   Its **rank** is its total calls: 🐣 new (<100), staff, senior, manager, lead
   (silver crown), 👑 head (10,000+, gold crown); a little taller each step, and
   the desk fills with papers, a plant, a trophy.
+- **Walking** goes round things: the floor is a grid with desks, furniture
+  and walls blocked, A* finds a way along the aisles, the path is smoothed
+  where the line is clear, turns bend and the last steps ease in. Depth sorts
+  a desk by its front corner, so someone behind a desk is hidden by it and
+  someone in front is not covered.
 - **Hover** and a character reacts to you: one waiting on you is eager
   (sparkly eyes, hops, hearts), one working is nervous (sweat drop, tiny
   pupils, a shiver), one idle or asleep is startled awake (`!`), a subagent

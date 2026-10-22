@@ -114,6 +114,75 @@ const DOOR = [16.6, 1.55]
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
 
+// ---------- walking: a grid, its blocked cells, A* ----------
+// The floor is cut into CELL-sized cells; desks, furniture and walls block
+// theirs, so a walk goes round them along the aisles between pods and rooms
+// instead of straight through. The path is then smoothed: corners cut where
+// the straight line between two waypoints crosses nothing blocked.
+const CELL = 0.25
+let grid = { w: 0, h: 0, block: new Uint8Array(0) }
+function rebuildGrid() {
+  const w = Math.ceil((W + 0.6) / CELL), h = Math.ceil((D + 0.6) / CELL), block = new Uint8Array(w * h)
+  const mark = (x0, y0, x1, y1) => {
+    for (let gy = Math.max(0, Math.floor(y0 / CELL)); gy <= Math.min(h - 1, Math.floor((y1 - 1e-6) / CELL)); gy++)
+      for (let gx = Math.max(0, Math.floor(x0 / CELL)); gx <= Math.min(w - 1, Math.floor((x1 - 1e-6) / CELL)); gx++) block[gy * w + gx] = 1
+  }
+  mark(0, 0, W + 0.6, 0.25) // back wall
+  for (let k = 0; k < 4; k++) mark(0.55 + k * 1.17, 0, 0.55 + k * 1.17 + 1.05, 0.38)
+  for (let k = 0; k < 5; k++) mark(5.85 + k * 0.95, 0.05, 5.85 + k * 0.95 + 0.72, 0.67)
+  mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(15.95, 0.15, 17.25, 1.0)
+  for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
+  grid = { w, h, block }
+}
+function freeCell(gx, gy) { return gx >= 0 && gy >= 0 && gx < grid.w && gy < grid.h && !grid.block[gy * grid.w + gx] }
+// The nearest free cell to a point: a seat behind a desk or a spot in a
+// crowded lounge may sit on a blocked one.
+function nearestFree(x, y) {
+  const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL)
+  for (let r = 0; r < 8; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; if (freeCell(cx + dx, cy + dy)) return [cx + dx, cy + dy] }
+  return [cx, cy]
+}
+function lineFree(ax, ay, bx, by) {
+  const n = Math.ceil(Math.hypot(bx - ax, by - ay) / (CELL / 2))
+  for (let i = 1; i < n; i++) { const x = ax + ((bx - ax) * i) / n, y = ay + ((by - ay) * i) / n; if (!freeCell(Math.floor(x / CELL), Math.floor(y / CELL))) return false }
+  return true
+}
+function findPath(ax, ay, bx, by) {
+  if (!grid.w) return [[bx, by]]
+  const [sx, sy] = nearestFree(ax, ay), [tx, ty] = nearestFree(bx, by)
+  const W2 = grid.w, key = (x, y) => y * W2 + x, goal = key(tx, ty)
+  const gs = new Map([[key(sx, sy), 0]]), from = new Map(), open = [[0, sx, sy]], closed = new Set()
+  const hcost = (x, y) => Math.hypot(x - tx, y - ty)
+  let found = false, iter = 0
+  while (open.length && iter++ < 6000) {
+    let bi = 0; for (let i = 1; i < open.length; i++) if (open[i][0] < open[bi][0]) bi = i
+    const [, x, y] = open.splice(bi, 1)[0], k = key(x, y)
+    if (k === goal) { found = true; break }
+    if (closed.has(k)) continue
+    closed.add(k)
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const nx = x + dx, ny = y + dy
+      if (!freeCell(nx, ny) || (dx && dy && (!freeCell(x + dx, y) || !freeCell(x, y + dy)))) continue
+      const nk = key(nx, ny), ng = gs.get(k) + (dx && dy ? 1.414 : 1)
+      if (ng < (gs.get(nk) ?? Infinity)) { gs.set(nk, ng); from.set(nk, k); open.push([ng + hcost(nx, ny), nx, ny]) }
+    }
+  }
+  if (!found) return [[bx, by]]
+  const cells = []
+  for (let k = goal; k !== undefined; k = from.get(k)) cells.push([(k % W2 + 0.5) * CELL, (Math.floor(k / W2) + 0.5) * CELL])
+  cells.reverse()
+  // Smooth: from each kept point, jump to the farthest one in plain sight.
+  const out = []
+  let i = 0, cur = [ax, ay]
+  while (i < cells.length) {
+    let j = cells.length - 1
+    while (j > i && !lineFree(cur[0], cur[1], cells[j][0], cells[j][1])) j--
+    out.push(cells[j]); cur = cells[j]; i = j + 1
+  }
+  out.push([bx, by])
+  return out
+}
+
 // ---------- state ----------
 let windows = []
 const ents = new Map() // id -> a session or a subagent on the floor
@@ -157,6 +226,8 @@ function apply(people) {
   W = Math.max(18.8, COLS * POD_W + 0.3)
   D = py + 0.3
   if (!cam.user) fit()
+  // Desks are known once the sessions are seated; build the grid after.
+  queueMicrotask(rebuildGrid)
 
   const live = new Set()
   stats = { total: people.length, work: 0, wait: 0, subs: 0 }
@@ -321,7 +392,8 @@ function hover(e) {
 function persona(p) {
   const j = JOB[p.job] || JOB.shell
   const top = Object.entries(p.mix || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => (JOB[k] || JOB.shell).icon + ' ' + v).join('  ')
-  return j.icon + ' ' + j.name + ' · ' + RANK[p.rank || 0] + ' · 도구 ' + (p.tools || 0).toLocaleString() + '번 · ' + j.quirk + (top ? '<br>' + top : '')
+  const age = ageText(p)
+  return j.icon + ' ' + j.name + ' · ' + RANK[p.rank || 0] + ' · 도구 ' + (p.tools || 0).toLocaleString() + '번' + (age ? ' · 근속 ' + age : '') + ' · ' + j.quirk + (top ? '<br>' + top : '')
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
 
@@ -412,6 +484,13 @@ const JOB = {
   shell: { name: '해커', icon: '⌨️', shirt: 260, walk: 1.25, quirk: '터미널 붙박이' },
 }
 const RANK = ['🐣 신입', '사원', '대리', '과장', '차장', '👑 부장']
+// Age is how long the session has lived (its transcript's first line), apart
+// from rank (how much it has done): grey streaks at a day, silver hair and a
+// beard at three, a cane and a slower walk at a week.
+const DAY = 86400
+const ageOf = (p) => (p.born ? Math.max(0, Date.now() / 1000 - p.born) : 0)
+const ageStage = (p) => { const a = ageOf(p); return a > 7 * DAY ? 3 : a > 3 * DAY ? 2 : a > DAY ? 1 : 0 }
+function ageText(p) { const a = ageOf(p); if (!a) return ''; const d = Math.floor(a / DAY), h = Math.floor((a % DAY) / 3600); return d ? d + '일 ' + h + '시간째' : h ? h + '시간째' : Math.floor(a / 60) + '분째' }
 const rankScale = (r) => 0.92 + r * 0.035
 const SPARE = { talk: '말이 많아요', write: '문서 쓰는 게 일', code: '코드 고치는 게 일', read: '읽고 찾는 게 일', watch: '지켜보는 게 일', lead: '나눠 맡기는 게 일', ops: '인프라 도구 단골', shell: '명령어로 다 해요' }
 
@@ -511,14 +590,15 @@ function drawChibi(e, t, z0) {
   const jk = sub ? (p.job || 'shell') : (p.job || 'shell'), jw = (JOB[jk] || JOB.shell).walk
   const working = !walking && ['typing', 'reading', 'running', 'calling', 'delegating'].includes(p.doing)
   // Each job walks its own way: a scurry, a stroll with a sway, a look-around…
-  const stepHz = 12 * jw
+  const stepHz = 12 * jw * (ageStage(p) >= 3 && !sub ? 0.6 : 1)
   const bob = walking ? -Math.abs(Math.sin(t * stepHz)) * (jk === 'shell' ? 2 : jk === 'write' ? 4 : 3) : p.doing === 'typing' ? Math.sin(t * 22) * 0.6 : (p.doing === 'asking' || p.doing === 'alert') ? -Math.abs(Math.sin(t * 6)) * 4 : working && jk === 'talk' ? -Math.abs(Math.sin(t * 5)) * 1.5 : Math.sin(t * 2 + h) * 0.8
   if (walking && jk === 'write') x += Math.sin(t * stepHz / 2) * 2.2 * cam.s
   if (walking && jk === 'shell') x += Math.sin(t * 30) * 0.6 * cam.s
   // The shirt is the job's colour, a little shifted by window so two of a
   // kind still differ.
   const body = hsl2hex((job.shirt + ((e.hue % 40) - 20) + 360) % 360, sub ? 60 : 64, sub ? 74 : 64)
-  const hair = hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
+  const age = sub ? 0 : ageStage(p)
+  const hair = age >= 2 ? '#d9d9e3' : age === 1 ? mix(hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, 34), '#cfcfda', 0.45) : hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
   if (e.hl) { g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.ellipse(x, y, 19 * s, 8 * s, 0, 0, Math.PI * 2); g.fill() }
   g.fillStyle = 'rgba(30,20,40,.22)'; g.beginPath(); g.ellipse(x, y, 13 * s, 5 * s, 0, 0, Math.PI * 2); g.fill()
   const step = walking ? Math.sin(t * stepHz) * 3 : 0
@@ -562,6 +642,9 @@ function drawChibi(e, t, z0) {
   if (p.doing === 'asking' || p.doing === 'alert') g.arc(hx, hy + 6 * s, 1.8 * s, 0, Math.PI * 2)
   else g.arc(hx, hy + 4.5 * s, 2.2 * s, 0.15 * Math.PI, 0.85 * Math.PI)
   g.stroke()
+  if (age >= 2) { g.beginPath(); g.moveTo(hx - 9 * s, hy + 4 * s); g.quadraticCurveTo(hx, hy + 19 * s, hx + 9 * s, hy + 4 * s); g.quadraticCurveTo(hx, hy + 11 * s, hx - 9 * s, hy + 4 * s); g.fillStyle = '#ececf2'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke() }
+  if (age >= 1 && !sub) { g.strokeStyle = '#e8e8f0'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(hx - 6 * s, hy - 12 * s); g.lineTo(hx - 2 * s, hy - 10 * s); g.moveTo(hx + 3 * s, hy - 13 * s); g.lineTo(hx + 7 * s, hy - 10 * s); g.stroke() }
+  if (age >= 3) { g.strokeStyle = '#8a5a3a'; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(x - 13 * s, y - 1 * s); g.lineTo(x - 12 * s, by - 20 * s); g.quadraticCurveTo(x - 12 * s, by - 25 * s, x - 8 * s, by - 24 * s); g.stroke() }
   if (!sub) face(p.job, hx, hy, s, t)
   if (working) workFx(jk, p.doing, x, by, hx, hy, s, t, h)
   if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
@@ -655,10 +738,26 @@ function frame(now) {
     e.react = Math.max(0, Math.min(1, (e.react || 0) + (e.hl ? dt * 6 : -dt * 4)))
     if (e.hl && !e.hlAt) e.hlAt = t
     if (!e.hl && e.react === 0) e.hlAt = 0
-    const dx = e.tx - e.x, dy = e.ty - e.y, dist = Math.hypot(dx, dy)
-    const sp = (e.kind === 'sub' ? 3.2 : 2.6 * ((JOB[e.data.job] || JOB.shell).walk)) * dt
-    if (dist > 0.02) { const k = Math.min(1, sp / dist); e.x += dx * k; e.y += dy * k; e.walking = true } else { e.x = e.tx; e.y = e.ty; e.walking = false }
-    if (e.leaving && dist < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
+    // A new target: plan a walk round what is in the way.
+    if (e.pathTo !== e.tx + ',' + e.ty) { e.pathTo = e.tx + ',' + e.ty; e.path = Math.hypot(e.tx - e.x, e.ty - e.y) > 0.05 ? findPath(e.x, e.y, e.tx, e.ty) : [] }
+    const wp = e.path && e.path[0] ? e.path[0] : [e.tx, e.ty]
+    const dx = wp[0] - e.x, dy = wp[1] - e.y, dist = Math.hypot(dx, dy)
+    let sp = (e.kind === 'sub' ? 3.2 : 2.6 * ((JOB[e.data.job] || JOB.shell).walk) * (ageStage(e.data) >= 3 ? 0.6 : 1)) * dt
+    // Ease into the last stretch instead of stopping dead.
+    const left = Math.hypot(e.tx - e.x, e.ty - e.y)
+    if (left < 0.5) sp *= 0.45 + left
+    if (dist > 0.02) {
+      const k = Math.min(1, sp / dist)
+      // Turn smoothly: the heading bends toward the waypoint rather than snapping.
+      const want = Math.atan2(dy, dx)
+      e.dir = e.dir === undefined ? want : e.dir + Math.atan2(Math.sin(want - e.dir), Math.cos(want - e.dir)) * Math.min(1, dt * 10)
+      const step = Math.min(dist, sp)
+      e.x += Math.cos(e.dir) * step * (k < 1 ? 1 : dist / Math.max(step, 1e-6)) ; e.y += Math.sin(e.dir) * step * (k < 1 ? 1 : dist / Math.max(step, 1e-6))
+      e.walking = true
+    } else if (e.path && e.path.length > 1) { e.path.shift() }
+    else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
+    const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
+    if (e.leaving && dist2 < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
   }
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
   g.clearRect(0, 0, VW, VH)
@@ -686,7 +785,10 @@ function frame(now) {
     w.sessions.forEach((p, k) => {
       const [dx, dy] = p.desk
       const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
-      add(dx + 0.8 + dy + 0.35, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank))
+      // A desk sorts by its front-right corner: someone standing behind it
+      // (smaller x+y than that) is drawn first and hidden by it, someone in
+      // front is drawn after.
+      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank))
     })
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
