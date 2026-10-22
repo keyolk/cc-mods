@@ -35,6 +35,14 @@ canvas.drag { cursor: grabbing; }
 #card textarea { width: 100%; min-height: 54px; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; resize: vertical; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
+#help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 14px 18px; display: none; min-width: 300px; }
+#help h3 { margin: 0 0 8px; font-weight: 400; }
+#help table { border-collapse: collapse; font-size: 13px; }
+#help td { padding: 3px 10px 3px 0; }
+kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua, sans-serif; background: #fff; border: 2px solid var(--line); border-bottom-width: 3px; border-radius: 6px; padding: 0 5px; }
+#ask button.on { outline: 3px solid #fff; outline-offset: 1px; }
+#ask .next { background: #fff; color: #2a2033; border: 2px solid var(--line); border-radius: 12px; padding: 3px 10px; box-shadow: 0 2px 0 var(--line); }
+#card .key { display: inline-block; min-width: 16px; margin-right: 4px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; }
 #hint { position: absolute; right: 14px; top: 52px; color: var(--muted); font-size: 11px; z-index: 2; }
 </style>
 </head>
@@ -43,11 +51,26 @@ canvas.drag { cursor: grabbing; }
   <h1>🏢 Claude 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
 </header>
-<div id="hint">휠 확대 · 드래그 이동 · 더블클릭 맞춤 · 캐릭터 클릭 = 답하기</div>
+<div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
 <canvas id="c"></canvas>
 <div id="ask"></div>
 <div id="tip"></div>
 <div id="card"></div>
+<div id="help">
+  <h3>⌨️ 단축키</h3>
+  <table>
+    <tr><td><kbd>N</kbd> <kbd>Tab</kbd></td><td>다음으로 답할 agent (❗ 먼저, 오래 기다린 순)</td></tr>
+    <tr><td><kbd>P</kbd> <kbd>⇧Tab</kbd></td><td>이전 agent</td></tr>
+    <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
+    <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>직접 답장 입력 (<kbd>⌘</kbd><kbd>Enter</kbd> 보내기)</td></tr>
+    <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
+    <tr><td><kbd>G</kbd></td><td>그 agent의 tmux 창으로 이동</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>카드 닫기 / 입력 빠져나오기</td></tr>
+    <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>이동 · 확대 · 축소 · 전체 맞춤</td></tr>
+    <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
+  </table>
+  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.</div>
+</div>
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
@@ -276,11 +299,48 @@ function apply(people) {
   document.getElementById('s2').innerHTML = '일하는 중 <b>' + stats.work + '</b>'
   document.getElementById('s3').innerHTML = '나를 기다림 <b>' + stats.wait + '</b>'
   document.getElementById('s4').innerHTML = '서브에이전트 <b>' + stats.subs + '</b>'
-  const ask = document.getElementById('ask'); ask.innerHTML = ''
-  for (const p of people.filter((p) => p.doing === 'asking' || p.doing === 'alert')) {
-    const b = document.createElement('button'); b.className = p.doing === 'alert' ? 'x' : 'q'
-    b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name; b.onclick = () => openCard(p.id); ask.appendChild(b)
+  renderQueue()
+}
+
+// ---------- the waiting queue ----------
+// Who needs an answer next: a confirmation (❗) before a question (❓), then
+// whoever has waited longest. N/Tab walks it; a sent reply moves on to the
+// next one by itself.
+function waiting() {
+  return [...ents.values()].filter((e) => e.kind === 'session' && (e.data.doing === 'asking' || e.data.doing === 'alert'))
+    .map((e) => e.data)
+    .sort((a, b) => (a.doing === 'alert' ? 0 : 1) - (b.doing === 'alert' ? 0 : 1) || (a.since || 0) - (b.since || 0))
+}
+function renderQueue() {
+  const q = waiting(), ask = document.getElementById('ask'); ask.innerHTML = ''
+  if (q.length) { const n = document.createElement('button'); n.className = 'next'; n.innerHTML = '<kbd>N</kbd> 다음 ▶ ' + esc(q[0].name) + ' · 대기 ' + q.length; n.onclick = () => step(1); ask.appendChild(n) }
+  for (const p of q) {
+    const b = document.createElement('button'); b.className = (p.doing === 'alert' ? 'x' : 'q') + (p.id === cardSid ? ' on' : '')
+    b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name + (p.since ? ' · ' + ago(p.since).replace('째', '') : ''); b.onclick = () => openCard(p.id); ask.appendChild(b)
   }
+}
+// The next (or previous) waiting agent after the open card; from the top when none is open.
+function step(dir, skip) {
+  const q = waiting().filter((p) => p.id !== skip)
+  if (!q.length) { closeCard(); toast('기다리는 agent가 없어요 ☕'); return }
+  const i = q.findIndex((p) => p.id === cardSid)
+  const next = i < 0 ? (dir > 0 ? q[0] : q[q.length - 1]) : q[(i + dir + q.length) % q.length]
+  openCard(next.id)
+}
+function closeCard() { card.style.display = 'none'; cardSid = null; for (const e of ents.values()) e.sel = false; renderQueue() }
+let toastT
+function toast(t) { const m = document.getElementById('hint'); m.dataset.old = m.dataset.old || m.innerHTML; m.textContent = t; clearTimeout(toastT); toastT = setTimeout(() => { m.innerHTML = m.dataset.old }, 2200) }
+// Glide the camera to a character so the one being answered is in view.
+// Zoomed to at least a size where faces read, centred in the space the card
+// leaves free.
+const camGo = { on: false, ox: 0, oy: 0, s: 1 }
+function lookAt(e) {
+  if (!e) return
+  cam.user = true
+  const ts = Math.min(2.2, Math.max(cam.s, 1.15))
+  const wx = (e.x - e.y) * (TW / 2), wy = (e.x + e.y) * (TH / 2)
+  const right = card.style.display === 'block' ? Math.min(400, innerWidth * 0.45) : 0
+  camGo.s = ts; camGo.ox = (innerWidth - right) / 2 - wx * ts; camGo.oy = innerHeight / 2 + 30 * ts - wy * ts; camGo.on = true
 }
 
 // ---------- camera ----------
@@ -298,7 +358,7 @@ function fit() {
 }
 addEventListener('resize', resize)
 cv.addEventListener('wheel', (e) => {
-  e.preventDefault(); cam.user = true
+  e.preventDefault(); cam.user = true; camGo.on = false
   const k = Math.exp(-e.deltaY * 0.0015), ns = Math.min(4, Math.max(0.25, cam.s * k)), r = ns / cam.s
   cam.ox = e.clientX - (e.clientX - cam.ox) * r; cam.oy = e.clientY - (e.clientY - cam.oy) * r; cam.s = ns
 }, { passive: false })
@@ -310,11 +370,42 @@ addEventListener('mouseup', (e) => {
   drag = null
 })
 addEventListener('mousemove', (e) => {
-  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; cam.user = true; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy } }
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy } }
   hover(e)
 })
 cv.addEventListener('dblclick', () => { cam.user = false; fit() })
 function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(pane)) }
+
+// ---------- keyboard ----------
+const help = document.getElementById('help')
+addEventListener('keydown', (e) => {
+  const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
+  if (typing) { if (e.key === 'Escape') { e.target.blur(); e.preventDefault() } return }
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const k = e.key
+  const open = card.style.display === 'block'
+  const hit = (fn) => { e.preventDefault(); fn() }
+  if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
+  if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
+  if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
+  if (k === 'n' || k === 'N' || k === 'ㅜ') return hit(() => step(1))
+  if (k === 'p' || k === 'P' || k === 'ㅔ') return hit(() => step(-1))
+  if (open && /^[1-9]$/.test(k) && card.keys && card.keys[+k]) return hit(() => card.keys[+k].click())
+  if (open && (k === 'r' || k === 'R' || k === '/' || k === 'ㄱ') && card.reply) return hit(() => card.reply.focus())
+  if (open && (k === 's' || k === 'S' || k === 'ㄴ') && card.stop) return hit(() => card.stop.click())
+  if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
+  if (k === 'f' || k === 'F' || k === 'ㄹ') return hit(() => { cam.user = false; camGo.on = false; fit() })
+  const PAN = 60
+  if (k === 'ArrowLeft') return hit(() => { cam.user = true; camGo.on = false; cam.ox += PAN })
+  if (k === 'ArrowRight') return hit(() => { cam.user = true; camGo.on = false; cam.ox -= PAN })
+  if (k === 'ArrowUp') return hit(() => { cam.user = true; camGo.on = false; cam.oy += PAN })
+  if (k === 'ArrowDown') return hit(() => { cam.user = true; camGo.on = false; cam.oy -= PAN })
+  if (k === '+' || k === '=' || k === '-' || k === '_') return hit(() => {
+    cam.user = true; camGo.on = false
+    const ns = Math.min(4, Math.max(0.25, cam.s * (k === '-' || k === '_' ? 0.85 : 1.18))), r = ns / cam.s, cx = innerWidth / 2, cy = innerHeight / 2
+    cam.ox = cx - (cx - cam.ox) * r; cam.oy = cy - (cy - cam.oy) * r; cam.s = ns
+  })
+})
 
 // ---------- quick actions ----------
 // A click opens the session's card: what it last said, its choice dialog if
@@ -327,6 +418,9 @@ let cardSid = null
 async function openCard(sid) {
   cardSid = sid
   card.style.display = 'block'
+  for (const e of ents.values()) e.sel = e.id === sid
+  lookAt(ents.get(sid))
+  renderQueue()
   card.innerHTML = '<div class="sub">불러오는 중…</div>'
   const d = await (await fetch('/detail?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()
   if (cardSid !== sid) return
@@ -334,7 +428,8 @@ async function openCard(sid) {
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
   card.innerHTML = ''
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; card.appendChild(e); return e }
-  const close = add('button', 'x', '✕'); close.onclick = () => { card.style.display = 'none'; cardSid = null }
+  const close = add('button', 'x', '✕'); close.onclick = closeCard
+  card.keys = []
   add('h2', '', esc(d.window + ' ' + d.name))
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   if (d.text) add('div', 'said', esc(d.text.length > 1400 ? '…' + d.text.slice(-1400) : d.text)).scrollTop = 1e9
@@ -346,24 +441,29 @@ async function openCard(sid) {
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || r.status)
       msg.textContent = '✓ ' + label
-      setTimeout(() => { if (cardSid === sid) openCard(sid) }, 1500)
+      // An answer sent: on to whoever waits next; a stop or a pick that keeps
+      // it busy here just refreshes the card.
+      const done = body.kind === 'reply' || body.kind === 'key'
+      setTimeout(() => { if (cardSid !== sid) return; if (done && waiting().some((p) => p.id !== sid)) { msg.textContent += ' → 다음'; setTimeout(() => step(1, sid), 500) } else if (done) closeCard(); else openCard(sid) }, 700)
     } catch (e) { msg.className = 'msg err'; msg.textContent = '못 보냄: ' + e.message }
   }
   if (d.dialog) {
     add('div', 'q', '🗳 ' + esc(d.dialog.question || '선택지'))
     const row = add('div', 'row')
-    for (const o of d.dialog.options) { const b = document.createElement('button'); b.className = 'act pick'; b.textContent = o.n + '. ' + o.label; b.onclick = () => send({ kind: 'key', value: String(o.n) }, o.n + '번 선택'); row.appendChild(b) }
+    for (const o of d.dialog.options) { const b = document.createElement('button'); b.className = 'act pick'; b.innerHTML = '<span class="key">' + o.n + '</span>' + esc(o.label); b.onclick = () => send({ kind: 'key', value: String(o.n) }, o.n + '번 선택'); row.appendChild(b); card.keys[o.n] = b }
   } else {
     const row = add('div', 'row')
-    for (const t of d.suggestions) { const b = document.createElement('button'); b.className = 'act go'; b.textContent = t; b.onclick = () => send({ kind: 'reply', value: t }, '"' + t + '" 보냄'); row.appendChild(b) }
-    const ta = add('textarea'); ta.placeholder = '직접 답장… (⌘/Ctrl+Enter로 보내기)'
+    d.suggestions.forEach((t, i) => { const b = document.createElement('button'); b.className = 'act go'; b.innerHTML = '<span class="key">' + (i + 1) + '</span>' + esc(t); b.onclick = () => send({ kind: 'reply', value: t }, '"' + t + '" 보냄'); row.appendChild(b); card.keys[i + 1] = b })
+    const ta = add('textarea'); ta.placeholder = '직접 답장… (R로 입력, ⌘/Ctrl+Enter로 보내기, Esc로 빠져나오기)'; card.reply = ta
     const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
     ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) go() }
     const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go'; b.textContent = '보내기'; b.onclick = go; r2.appendChild(b)
   }
   const nav = add('div', 'row')
-  if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.textContent = '✋ 멈추기 (Esc)'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b) }
-  const j = document.createElement('button'); j.className = 'act nav'; j.textContent = '↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j)
+  card.stop = null
+  if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.innerHTML = '<span class="key">S</span>✋ 멈추기'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b); card.stop = b }
+  const j = document.createElement('button'); j.className = 'act nav'; j.innerHTML = '<span class="key">G</span>↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j); card.go = j
+  const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
   card.appendChild(msg)
 }
 
@@ -600,6 +700,8 @@ function drawChibi(e, t, z0) {
   const age = sub ? 0 : ageStage(p)
   const hair = age >= 2 ? '#d9d9e3' : age === 1 ? mix(hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, 34), '#cfcfda', 0.45) : hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
   if (e.hl) { g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.ellipse(x, y, 19 * s, 8 * s, 0, 0, Math.PI * 2); g.fill() }
+  // The one whose card is open: a pulsing ring and a pointer over its head.
+  if (e.sel) { const pulse = 1 + Math.sin(t * 5) * 0.08; g.strokeStyle = '#ffcf5a'; g.lineWidth = 3 * cam.s; g.beginPath(); g.ellipse(x, y, 22 * s * pulse, 9 * s * pulse, 0, 0, Math.PI * 2); g.stroke(); const ay = y - 78 * s + Math.sin(t * 4) * 3 * s; poly([[x - 7 * s, ay - 9 * s], [x + 7 * s, ay - 9 * s], [x, ay]], '#ffcf5a') }
   g.fillStyle = 'rgba(30,20,40,.22)'; g.beginPath(); g.ellipse(x, y, 13 * s, 5 * s, 0, 0, Math.PI * 2); g.fill()
   // Facing: while walking, the body mirrors to the side it goes (its props
   // with it), the face turns three-quarters that way, and walking away shows
@@ -775,6 +877,7 @@ function frame(now) {
     const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (e.leaving && dist2 < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
   }
+  if (camGo.on) { const a = Math.min(1, dt * 6); cam.s += (camGo.s - cam.s) * a; cam.ox += (camGo.ox - cam.ox) * a; cam.oy += (camGo.oy - cam.oy) * a; if (Math.abs(camGo.ox - cam.ox) + Math.abs(camGo.oy - cam.oy) + Math.abs(camGo.s - cam.s) * 100 < 0.5) camGo.on = false }
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
   g.clearRect(0, 0, VW, VH)
   tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)

@@ -226,6 +226,15 @@ answers there.
     session's cc-mods submits it as your own prompt (2 s poll, dropped after 2
     minutes), so vim mode or a draft in the box cannot garble it;
   - `✋ stop` (Escape) while it works, and `↗` to its window (`cc-focus`).
+- **The waiting queue** along the bottom: everyone who needs you, a
+  confirmation (❗) before a question (❓), then whoever has waited longest,
+  each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
+  previous): the camera glides and zooms to it and a ring and arrow mark it.
+  A reply or a dialog pick moves on to the next one by itself.
+- **Keys** (`?` lists them): `1`-`9` press the card's numbered button (a
+  dialog option or a quick reply), `R` or `/` the reply box (`⌘Enter` sends,
+  `Esc` leaves it), `S` stop, `G` its window, `Esc` close, arrows pan, `+`/`-`
+  zoom, `F` fit. They also work with the Korean layout on (`ㅜ` for `N`, …).
 - Every POST needs the token the server writes into its page and a local
   `Host`: another site in the browser cannot drive a session through it.
 
