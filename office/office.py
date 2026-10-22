@@ -95,6 +95,115 @@ def last_tool_in(path: str) -> dict:
     return {"tool": tool, "detail": detail, "at": at, "done": done}
 
 
+# ---- personality: what kind of work, how much of it ----------------------
+#
+# Every tool call in the transcript is counted once, read incrementally (the
+# file only grows; the offset read so far is kept), and the mix gives the
+# character its job; the total, its seniority.
+
+_counts: dict[str, dict] = {}
+
+
+_born: dict[str, float] = {}
+
+
+def born(sid: str) -> float | None:
+    """When the session began: the first timestamp in its transcript."""
+    path = transcript(sid)
+    if not path:
+        return None
+    if path in _born:
+        return _born[path]
+    try:
+        with open(path, "rb") as f:
+            for _ in range(40):
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    ts = json.loads(line).get("timestamp")
+                except ValueError:
+                    continue
+                if ts:
+                    from datetime import datetime
+
+                    _born[path] = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                    return _born[path]
+    except OSError:
+        pass
+    return None
+
+
+def tool_counts(sid: str) -> dict:
+    path = transcript(sid)
+    if not path:
+        return {"total": 0, "by": {}}
+    st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0})
+    try:
+        size = os.path.getsize(path)
+        if size < st["off"]:
+            st.update(off=0, by={}, total=0)
+        with open(path, "rb") as f:
+            f.seek(st["off"])
+            chunk = f.read()
+    except OSError:
+        return {"total": st["total"], "by": st["by"]}
+    end = chunk.rfind(b"\n") + 1  # a half-written last line waits for next time
+    for line in chunk[:end].splitlines():
+        if b'"tool_use"' not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        for b in (d.get("message") or {}).get("content") or []:
+            if isinstance(b, dict) and b.get("type") == "tool_use":
+                st["by"][kind_of(b.get("name") or "")] = st["by"].get(kind_of(b.get("name") or ""), 0) + 1
+                st["total"] += 1
+    st["off"] += end
+    return {"total": st["total"], "by": st["by"]}
+
+
+def kind_of(tool: str) -> str:
+    t = tool.lower()
+    if "slack" in t or "gmail" in t or tool == "SendMessage":
+        return "talk"
+    if "docs" in t or "confluence" in t or "notion" in t or tool in ("Artifact", "NotebookEdit"):
+        return "write"
+    if tool in ("Edit", "Write", "MultiEdit"):
+        return "code"
+    if tool in ("Read", "Grep", "Glob", "WebFetch", "WebSearch") or "search" in t:
+        return "read"
+    if tool in ("Monitor", "TaskStop", "BashOutput", "ScheduleWakeup"):
+        return "watch"
+    if tool in ("Agent", "Task", "Workflow"):
+        return "lead"
+    if tool.startswith("mcp__"):
+        return "ops"
+    return "shell"
+
+
+# The job a mix reads as. Bash is most of every session's calls, so it only
+# decides when it is nearly all of them; otherwise the biggest share of the
+# rest does.
+JOBS = ("talk", "write", "code", "read", "watch", "lead", "ops", "shell")
+
+
+def job_of(by: dict) -> str:
+    total = sum(by.values())
+    rest = {k: v for k, v in by.items() if k != "shell"}
+    if total < 5 or sum(rest.values()) < total * 0.05:
+        return "shell"
+    return max(rest, key=lambda k: rest[k])
+
+
+RANKS = [(10_000, 5), (5_000, 4), (2_000, 3), (500, 2), (100, 1), (0, 0)]
+
+
+def rank_of(total: int) -> int:
+    return next(r for n, r in RANKS if total >= n)
+
+
 # A subagent counts as out while its transcript was written this recently.
 SUB_LIVE_S = 45
 SUB_CAP = 8
@@ -124,9 +233,23 @@ def subagents(sid: str) -> list[dict]:
             pass
         t = last_tool_in(f)
         where, doing = room("working", "none", t)
-        out.append({"id": aid, "desc": str(meta.get("description") or "")[:80], "type": meta.get("agentType") or "agent", "room": where, "doing": doing, "tool": t.get("tool"), "detail": t.get("detail"), "at": mt})
+        out.append({"id": aid, "desc": str(meta.get("description") or "")[:80], "type": meta.get("agentType") or "agent", "job": sub_job(meta, t), "room": where, "doing": doing, "tool": t.get("tool"), "detail": t.get("detail"), "at": mt})
     out.sort(key=lambda a: -a["at"])
     return out[:SUB_CAP]
+
+
+def sub_job(meta: dict, t: dict) -> str:
+    kind = str(meta.get("agentType") or "") + " " + str(meta.get("description") or "")
+    k = kind.lower()
+    if "review" in k:
+        return "read"
+    if "explore" in k or "search" in k or "research" in k:
+        return "read"
+    if "plan" in k or "architect" in k:
+        return "lead"
+    if "doc" in k or "writer" in k:
+        return "write"
+    return kind_of(t.get("tool") or "") if t.get("tool") else "shell"
 
 
 def room(state: str, attention: str, t: dict) -> tuple[str, str]:
@@ -165,6 +288,7 @@ def snapshot() -> list[dict]:
         pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid = p[:12]
         t = last_tool(sid)
         where, doing = room(state, attn, t)
+        tc = tool_counts(sid)
         people.append(
             {
                 "id": sid,
@@ -183,6 +307,11 @@ def snapshot() -> list[dict]:
                 "tool": t.get("tool"),
                 "detail": t.get("detail"),
                 "subs": subagents(sid) if state == "working" else [],
+                "tools": tc["total"],
+                "mix": tc["by"],
+                "job": job_of(tc["by"]),
+                "rank": rank_of(tc["total"]),
+                "born": born(sid),
             }
         )
     return people

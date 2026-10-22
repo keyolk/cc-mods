@@ -114,6 +114,75 @@ const DOOR = [16.6, 1.55]
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
 
+// ---------- walking: a grid, its blocked cells, A* ----------
+// The floor is cut into CELL-sized cells; desks, furniture and walls block
+// theirs, so a walk goes round them along the aisles between pods and rooms
+// instead of straight through. The path is then smoothed: corners cut where
+// the straight line between two waypoints crosses nothing blocked.
+const CELL = 0.25
+let grid = { w: 0, h: 0, block: new Uint8Array(0) }
+function rebuildGrid() {
+  const w = Math.ceil((W + 0.6) / CELL), h = Math.ceil((D + 0.6) / CELL), block = new Uint8Array(w * h)
+  const mark = (x0, y0, x1, y1) => {
+    for (let gy = Math.max(0, Math.floor(y0 / CELL)); gy <= Math.min(h - 1, Math.floor((y1 - 1e-6) / CELL)); gy++)
+      for (let gx = Math.max(0, Math.floor(x0 / CELL)); gx <= Math.min(w - 1, Math.floor((x1 - 1e-6) / CELL)); gx++) block[gy * w + gx] = 1
+  }
+  mark(0, 0, W + 0.6, 0.25) // back wall
+  for (let k = 0; k < 4; k++) mark(0.55 + k * 1.17, 0, 0.55 + k * 1.17 + 1.05, 0.38)
+  for (let k = 0; k < 5; k++) mark(5.85 + k * 0.95, 0.05, 5.85 + k * 0.95 + 0.72, 0.67)
+  mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(15.95, 0.15, 17.25, 1.0)
+  for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
+  grid = { w, h, block }
+}
+function freeCell(gx, gy) { return gx >= 0 && gy >= 0 && gx < grid.w && gy < grid.h && !grid.block[gy * grid.w + gx] }
+// The nearest free cell to a point: a seat behind a desk or a spot in a
+// crowded lounge may sit on a blocked one.
+function nearestFree(x, y) {
+  const cx = Math.floor(x / CELL), cy = Math.floor(y / CELL)
+  for (let r = 0; r < 8; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) { if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; if (freeCell(cx + dx, cy + dy)) return [cx + dx, cy + dy] }
+  return [cx, cy]
+}
+function lineFree(ax, ay, bx, by) {
+  const n = Math.ceil(Math.hypot(bx - ax, by - ay) / (CELL / 2))
+  for (let i = 1; i < n; i++) { const x = ax + ((bx - ax) * i) / n, y = ay + ((by - ay) * i) / n; if (!freeCell(Math.floor(x / CELL), Math.floor(y / CELL))) return false }
+  return true
+}
+function findPath(ax, ay, bx, by) {
+  if (!grid.w) return [[bx, by]]
+  const [sx, sy] = nearestFree(ax, ay), [tx, ty] = nearestFree(bx, by)
+  const W2 = grid.w, key = (x, y) => y * W2 + x, goal = key(tx, ty)
+  const gs = new Map([[key(sx, sy), 0]]), from = new Map(), open = [[0, sx, sy]], closed = new Set()
+  const hcost = (x, y) => Math.hypot(x - tx, y - ty)
+  let found = false, iter = 0
+  while (open.length && iter++ < 6000) {
+    let bi = 0; for (let i = 1; i < open.length; i++) if (open[i][0] < open[bi][0]) bi = i
+    const [, x, y] = open.splice(bi, 1)[0], k = key(x, y)
+    if (k === goal) { found = true; break }
+    if (closed.has(k)) continue
+    closed.add(k)
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const nx = x + dx, ny = y + dy
+      if (!freeCell(nx, ny) || (dx && dy && (!freeCell(x + dx, y) || !freeCell(x, y + dy)))) continue
+      const nk = key(nx, ny), ng = gs.get(k) + (dx && dy ? 1.414 : 1)
+      if (ng < (gs.get(nk) ?? Infinity)) { gs.set(nk, ng); from.set(nk, k); open.push([ng + hcost(nx, ny), nx, ny]) }
+    }
+  }
+  if (!found) return [[bx, by]]
+  const cells = []
+  for (let k = goal; k !== undefined; k = from.get(k)) cells.push([(k % W2 + 0.5) * CELL, (Math.floor(k / W2) + 0.5) * CELL])
+  cells.reverse()
+  // Smooth: from each kept point, jump to the farthest one in plain sight.
+  const out = []
+  let i = 0, cur = [ax, ay]
+  while (i < cells.length) {
+    let j = cells.length - 1
+    while (j > i && !lineFree(cur[0], cur[1], cells[j][0], cells[j][1])) j--
+    out.push(cells[j]); cur = cells[j]; i = j + 1
+  }
+  out.push([bx, by])
+  return out
+}
+
 // ---------- state ----------
 let windows = []
 const ents = new Map() // id -> a session or a subagent on the floor
@@ -157,6 +226,8 @@ function apply(people) {
   W = Math.max(18.8, COLS * POD_W + 0.3)
   D = py + 0.3
   if (!cam.user) fit()
+  // Desks are known once the sessions are seated; build the grid after.
+  queueMicrotask(rebuildGrid)
 
   const live = new Set()
   stats = { total: people.length, work: 0, wait: 0, subs: 0 }
@@ -265,7 +336,7 @@ async function openCard(sid) {
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; card.appendChild(e); return e }
   const close = add('button', 'x', '✕'); close.onclick = () => { card.style.display = 'none'; cardSid = null }
   add('h2', '', esc(d.window + ' ' + d.name))
-  add('div', 'sub', DOING[me.doing || d.doing] || d.state)
+  add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   if (d.text) add('div', 'said', esc(d.text.length > 1400 ? '…' + d.text.slice(-1400) : d.text)).scrollTop = 1e9
   const msg = document.createElement('div'); msg.className = 'msg'
   const send = async (body, label) => {
@@ -312,11 +383,17 @@ function hover(e) {
   const p = h.data
   const rows = h.kind === 'sub'
     ? ['<div class="t">🐣 ' + esc(p.desc || p.type) + '</div>', '<div>' + DOING[p.doing] + '</div>', '<div class="m">' + esc(p.parent.window + ' ' + p.parent.name) + '의 ' + esc(p.type) + '</div>', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '']
-    : ['<div class="t">' + esc(p.window + ' ' + p.name) + '</div>', '<div>' + DOING[p.doing] + (p.since ? ' · ' + ago(p.since) : '') + '</div>', p.title ? '<div class="m">' + esc(p.title) + '</div>' : '', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '', '<div class="m">' + (p.subs && p.subs.length ? '서브에이전트 ' + p.subs.length + '명 · ' : '') + (p.ctx != null ? 'context ' + p.ctx + '% · ' : '') + '클릭하면 답하기</div>']
+    : ['<div class="t">' + esc(p.window + ' ' + p.name) + '</div>', '<div class="m">' + persona(p) + '</div>', '<div>' + DOING[p.doing] + (p.since ? ' · ' + ago(p.since) : '') + '</div>', p.title ? '<div class="m">' + esc(p.title) + '</div>' : '', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '', '<div class="m">' + (p.subs && p.subs.length ? '서브에이전트 ' + p.subs.length + '명 · ' : '') + (p.ctx != null ? 'context ' + p.ctx + '% · ' : '') + '클릭하면 답하기</div>']
   tip.innerHTML = rows.join('')
   tip.style.display = 'block'
   tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'
   tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
+}
+function persona(p) {
+  const j = JOB[p.job] || JOB.shell
+  const top = Object.entries(p.mix || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => (JOB[k] || JOB.shell).icon + ' ' + v).join('  ')
+  const age = ageText(p)
+  return j.icon + ' ' + j.name + ' · ' + RANK[p.rank || 0] + ' · 도구 ' + (p.tools || 0).toLocaleString() + '번' + (age ? ' · 근속 ' + age : '') + ' · ' + j.quirk + (top ? '<br>' + top : '')
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
 
@@ -366,8 +443,12 @@ function nameplate(x, y, label, color) {
   g.fillStyle = '#2a2033'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(t, 4 * cam.s, fs * 0.05)
   g.restore()
 }
-function deskBox(x, y, on, t, mug, label, color) {
+function deskBox(x, y, on, t, mug, label, color, rank = 0) {
   box(x, y, 1.6, 0.7, 24, '#d9a46b')
+  // Seniority piles up on the desk: papers, then a plant, then a trophy.
+  if (rank >= 2) for (let k = 0; k < Math.min(4, rank); k++) box(x + 0.08, y + 0.08, 0.36, 0.26, 2.5, k % 2 ? '#ffffff' : '#f3ecdf', 24 + k * 2.5)
+  if (rank >= 3) { const [px, py] = P(x + 0.7, y + 0.2, 30); rrect(px - 3 * cam.s, py - 1 * cam.s, 6 * cam.s, 6 * cam.s, 1.5 * cam.s, '#c9875a'); circle(px, py - 4 * cam.s, 5 * cam.s, '#6fbf73') }
+  if (rank >= 5) { const [tx, ty] = P(x + 0.95, y + 0.55, 30); rrect(tx - 3 * cam.s, ty - 9 * cam.s, 6 * cam.s, 8 * cam.s, 2 * cam.s, '#ffd36b'); rrect(tx - 4.5 * cam.s, ty - 1.5 * cam.s, 9 * cam.s, 3 * cam.s, 1 * cam.s, '#b8864a') }
   if (label) nameplate(x, y + 0.7, label, color)
   box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', 24)
   if (on) { const [mx, my] = P(x + 1.32, y + 0.22, 32); g.globalAlpha = 0.35 + Math.sin(t * 6) * 0.15; circle(mx, my, 9 * cam.s, '#8fd1ff', null); g.globalAlpha = 1 }
@@ -388,10 +469,35 @@ function elevator(t) {
   text('🛗 서브에이전트', sx, sy, 12, '#fff8ee')
 }
 
+// ---------- personality ----------
+// A session's job is the kind of tool it uses most (the server's job_of),
+// its rank how many calls it has made in all. Both show on the body: the job
+// as a hat, a prop and a walk; the rank as height, a badge and a fuller desk.
+const JOB = {
+  talk: { name: '커뮤니케이터', icon: '📣', shirt: 32, walk: 1.15, quirk: '수다쟁이' },
+  write: { name: '작가', icon: '📝', shirt: 285, walk: 0.85, quirk: '문장 다듬는 중' },
+  code: { name: '개발자', icon: '💻', shirt: 205, walk: 1.0, quirk: '커밋 장인' },
+  read: { name: '탐정', icon: '🔍', shirt: 30, walk: 0.9, quirk: '뭐든 찾아냄' },
+  watch: { name: '감시자', icon: '👀', shirt: 160, walk: 0.8, quirk: '눈을 못 뗌' },
+  lead: { name: '매니저', icon: '🧑‍💼', shirt: 220, walk: 1.05, quirk: '일 나눠주기' },
+  ops: { name: '오퍼레이터', icon: '🛰', shirt: 48, walk: 1.0, quirk: '인프라 지킴이' },
+  shell: { name: '해커', icon: '⌨️', shirt: 260, walk: 1.25, quirk: '터미널 붙박이' },
+}
+const RANK = ['🐣 신입', '사원', '대리', '과장', '차장', '👑 부장']
+// Age is how long the session has lived (its transcript's first line), apart
+// from rank (how much it has done): grey streaks at a day, silver hair and a
+// beard at three, a cane and a slower walk at a week.
+const DAY = 86400
+const ageOf = (p) => (p.born ? Math.max(0, Date.now() / 1000 - p.born) : 0)
+const ageStage = (p) => { const a = ageOf(p); return a > 7 * DAY ? 3 : a > 3 * DAY ? 2 : a > DAY ? 1 : 0 }
+function ageText(p) { const a = ageOf(p); if (!a) return ''; const d = Math.floor(a / DAY), h = Math.floor((a % DAY) / 3600); return d ? d + '일 ' + h + '시간째' : h ? h + '시간째' : Math.floor(a / 60) + '분째' }
+const rankScale = (r) => 0.92 + r * 0.035
+const SPARE = { talk: '말이 많아요', write: '문서 쓰는 게 일', code: '코드 고치는 게 일', read: '읽고 찾는 게 일', watch: '지켜보는 게 일', lead: '나눠 맡기는 게 일', ops: '인프라 도구 단골', shell: '명령어로 다 해요' }
+
 // ---------- chibi ----------
 const SKIN = '#ffe2c8', BLUSH = 'rgba(255,128,150,.55)'
 function chibi(e, t) {
-  if (e.data.doing === 'napping' && !e.walking) {
+  if (e.data.doing === 'napping' && !e.walking && (e.react || 0) < 0.35) {
     const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
     const [bx, by] = P(e.x, e.y, layer * 9)
     g.save(); g.translate(bx, by); g.rotate((hashOf(e.id) % 2 ? 1 : -1) * 1.35); g.translate(-bx, -by)
@@ -404,23 +510,103 @@ function chibi(e, t) {
   }
   drawChibi(e, t, 0)
 }
+// How a character takes the cursor over it, by what it is doing:
+// waiting on you - eager (sparkly eyes, hops, hearts); working - nervous
+// (sweat, small pupils, shaking); idle or asleep - startled (jumps, `!`);
+// a subagent - shy (blushes, shrinks back).
+// The job's clothes: a tie, a lanyard, a hoodie pocket, a vest stripe…
+function outfit(jobKey, x, by, s, t, sub) {
+  if (sub) return
+  g.lineWidth = 1.2 * cam.s; g.strokeStyle = LINE
+  if (jobKey === 'lead') { poly([[x, by - 22 * s], [x - 2.5 * s, by - 17 * s], [x, by - 9 * s], [x + 2.5 * s, by - 17 * s]], '#d64545') }
+  else if (jobKey === 'ops') { g.fillStyle = '#ffe14d'; g.fillRect(x - 9 * s, by - 15 * s, 18 * s, 3 * s); g.strokeRect(x - 9 * s, by - 15 * s, 18 * s, 3 * s) }
+  else if (jobKey === 'shell') { rrect(x - 6 * s, by - 13 * s, 12 * s, 6 * s, 2 * s, 'rgba(0,0,0,.18)', LINE, 0.8) }
+  else if (jobKey === 'talk') { rrect(x - 3 * s, by - 18 * s, 6 * s, 8 * s, 1.5 * s, '#fff'); g.fillStyle = '#e86a5c'; g.fillRect(x - 2 * s, by - 16.5 * s, 4 * s, 1.5 * s) }
+  else if (jobKey === 'write') { g.strokeStyle = '#fff'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(x - 9 * s, by - 20 * s); g.lineTo(x + 9 * s, by - 20 * s); g.stroke() }
+  else if (jobKey === 'read') { poly([[x - 9 * s, by - 22 * s], [x - 2 * s, by - 14 * s], [x - 9 * s, by - 8 * s]], 'rgba(0,0,0,.15)', LINE, 0.8); poly([[x + 9 * s, by - 22 * s], [x + 2 * s, by - 14 * s], [x + 9 * s, by - 8 * s]], 'rgba(0,0,0,.15)', LINE, 0.8) }
+}
+// The job's hat; false when the job keeps its hair bare (it gets a face prop).
+function hat(jobKey, hx, hy, s, t, hair) {
+  if (jobKey === 'ops') { g.beginPath(); g.arc(hx, hy - 4 * s, 14.5 * s, Math.PI, 0); g.closePath(); g.fillStyle = '#ffcf33'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke(); rrect(hx - 17 * s, hy - 5 * s, 34 * s, 3.5 * s, 1.5 * s, '#ffcf33'); return true }
+  if (jobKey === 'write') { g.beginPath(); g.ellipse(hx - 2 * s, hy - 13 * s, 14 * s, 5.5 * s, -0.2, 0, Math.PI * 2); g.fillStyle = '#c0392b'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke(); g.beginPath(); g.moveTo(hx - 2 * s, hy - 18 * s); g.lineTo(hx - 1 * s, hy - 22 * s); g.stroke(); return true }
+  if (jobKey === 'read') { poly([[hx - 15 * s, hy - 7 * s], [hx + 15 * s, hy - 7 * s], [hx + 9 * s, hy - 12 * s], [hx + 7 * s, hy - 19 * s], [hx - 7 * s, hy - 19 * s], [hx - 9 * s, hy - 12 * s]], '#a0784f'); g.fillStyle = '#5c3d22'; g.fillRect(hx - 8 * s, hy - 13 * s, 16 * s, 3 * s); return true }
+  if (jobKey === 'shell') { g.beginPath(); g.arc(hx, hy + 1 * s, 16.5 * s, Math.PI * 1.02, Math.PI * 1.98); g.lineTo(hx + 16 * s, hy + 9 * s); g.lineTo(hx + 12 * s, hy + 9 * s); g.arc(hx, hy + 1 * s, 12.5 * s, Math.PI * 1.95, Math.PI * 1.05, true); g.lineTo(hx - 16 * s, hy + 9 * s); g.closePath(); g.fillStyle = '#4a4a6a'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke(); return true }
+  if (jobKey === 'lead') { g.fillStyle = hair; g.beginPath(); g.ellipse(hx + 3 * s, hy - 12 * s, 9 * s, 4 * s, 0.3, 0, Math.PI * 2); g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke(); return true }
+  return false
+}
+// Face props: a headset mic, round glasses, binoculars, big headphones.
+function face(jobKey, hx, hy, s, t) {
+  g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s
+  if (jobKey === 'talk') { g.beginPath(); g.arc(hx, hy - 2 * s, 15 * s, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); circle(hx - 14 * s, hy, 3.5 * s, '#555a78'); g.beginPath(); g.moveTo(hx - 14 * s, hy + 2 * s); g.quadraticCurveTo(hx - 12 * s, hy + 9 * s, hx - 4 * s, hy + 8 * s); g.stroke(); circle(hx - 4 * s, hy + 8 * s, 1.8 * s, '#e86a5c', null) }
+  else if (jobKey === 'code') { g.beginPath(); g.arc(hx, hy - 1 * s, 15.5 * s, Math.PI * 1.05, Math.PI * 1.95); g.lineWidth = 2.6 * cam.s; g.strokeStyle = '#3d3d55'; g.stroke(); rrect(hx - 18 * s, hy - 4 * s, 6 * s, 10 * s, 3 * s, '#5aa0e8'); rrect(hx + 12 * s, hy - 4 * s, 6 * s, 10 * s, 3 * s, '#5aa0e8') }
+  else if (jobKey === 'read' || jobKey === 'write') { for (const ex of [-5, 5]) circle(hx + ex * s, hy + 1 * s, 4.2 * s, 'rgba(255,255,255,.25)'); g.beginPath(); g.moveTo(hx - 0.8 * s, hy + 1 * s); g.lineTo(hx + 0.8 * s, hy + 1 * s); g.stroke() }
+  else if (jobKey === 'watch') { for (const ex of [-5, 5]) { circle(hx + ex * s, hy + 1 * s, 4.6 * s, '#2a2f45'); circle(hx + ex * s, hy + 1 * s, 2.6 * s, '#8fd1ff', null) } }
+}
+// Walking, by job: what the hands do and carry.
+function walkPose(jk, x, by, s, t, hz, arm) {
+  const sw = Math.sin(t * hz) * 2
+  if (jk === 'code') { arm(-9, -12 + sw); rrect(x + 4 * s, by - 18 * s, 10 * s, 8 * s, 1.5 * s, '#8a93ad'); arm(10, -13) }
+  else if (jk === 'lead') { arm(-9, -12 + sw); rrect(x + 7 * s, by - 9 * s, 10 * s, 8 * s, 2 * s, '#7a4a2b'); arm(10, -10) }
+  else if (jk === 'ops') { arm(-9, -12 + sw); rrect(x + 8 * s, by - 26 * s, 4 * s, 9 * s, 1 * s, '#3a3f55'); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.beginPath(); g.moveTo(x + 11 * s, by - 26 * s); g.lineTo(x + 11 * s, by - 31 * s); g.stroke(); arm(10, -20) }
+  else if (jk === 'read') { arm(-9, -12 + sw); circle(x + 14 * s, by - 22 * s, 4.5 * s, 'rgba(190,230,255,.7)'); g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(x + 11 * s, by - 19 * s); g.lineTo(x + 9 * s, by - 16 * s); g.stroke(); arm(9, -16) }
+  else if (jk === 'talk') { arm(-9, -12 + sw); arm(11 + Math.sin(t * 10) * 2, -26 + Math.cos(t * 10) * 2) }
+  else if (jk === 'write') { arm(-9, -14); rrect(x - 13 * s, by - 20 * s, 7 * s, 9 * s, 1 * s, '#fff8ee'); arm(9, -12 - sw) }
+  else if (jk === 'watch') { arm(-9, -12 + sw); arm(9, -12 - sw) }
+  else { arm(-7, -11 + sw * 0.5); arm(7, -11 - sw * 0.5) }
+}
+// Working, by job: what rises from the desk or the hands.
+function workFx(jk, doing, x, by, hx, hy, s, t, h) {
+  const ph = (k, rate = 0.8) => (t * rate + k / 3 + (h % 10) / 10) % 1
+  if (jk === 'code') { for (let k = 0; k < 3; k++) { const p = ph(k, 1.1); g.globalAlpha = 1 - p; text(['{ }', '</>', ';'][k], x + (k - 1) * 12 * s, by - 30 * s - p * 26 * s, 10, '#3d7fd8'); g.globalAlpha = 1 } }
+  else if (jk === 'write') { for (let k = 0; k < 3; k++) { const p = ph(k, 0.7); g.globalAlpha = 1 - p; text(['가', 'a', '¶'][k], x + 14 * s + p * 10 * s, by - 18 * s - p * 18 * s + Math.sin(p * 9) * 3 * s, 10, '#8e44ad'); g.globalAlpha = 1 } const [px, py] = [x + 10 * s + Math.sin(t * 9) * 2 * s, by - 18 * s]; g.strokeStyle = '#2a2033'; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(px, py); g.lineTo(px + 4 * s, py - 8 * s); g.stroke() }
+  else if (jk === 'read') { const a = t * 1.6; const lx = x + Math.cos(a) * 12 * s, ly = by - 20 * s + Math.sin(a * 2) * 4 * s; circle(lx, ly, 5 * s, 'rgba(190,230,255,.7)'); g.strokeStyle = LINE; g.lineWidth = 1.8 * cam.s; g.beginPath(); g.moveTo(lx + 3.5 * s, ly + 3.5 * s); g.lineTo(lx + 7 * s, ly + 7 * s); g.stroke() }
+  else if (jk === 'talk') { for (let k = 0; k < 2; k++) { const p = ph(k * 1.5, 0.6); g.globalAlpha = 1 - p; rrect(hx + 10 * s + p * 6 * s, hy - 14 * s - p * 20 * s, 14 * s, 9 * s, 4 * s, '#fff'); text('···', hx + 17 * s + p * 6 * s, hy - 10 * s - p * 20 * s, 8); g.globalAlpha = 1 } }
+  else if (jk === 'watch') { const sweep = Math.sin(t * 2.2); g.globalAlpha = 0.25; g.fillStyle = '#8fd1ff'; g.beginPath(); g.moveTo(hx, hy); g.arc(hx, hy, 40 * s, Math.PI * 0.15 + sweep * 0.4, Math.PI * 0.45 + sweep * 0.4); g.closePath(); g.fill(); g.globalAlpha = 1 }
+  else if (jk === 'ops') { for (let k = 0; k < 3; k++) { const p = ph(k, 0.9); g.globalAlpha = 1 - p; g.strokeStyle = '#f2a23a'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.arc(hx + 6 * s, hy - 16 * s, (5 + p * 16) * s, -Math.PI * 0.75, -Math.PI * 0.25); g.stroke(); g.globalAlpha = 1 } }
+  else if (jk === 'lead') { const p = ph(0, 1.2); g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; circle(x + 13 * s + p * 4 * s, by - 24 * s, 3 * s, SKIN); g.beginPath(); g.moveTo(x + 15 * s + p * 4 * s, by - 25 * s); g.lineTo(x + 21 * s + p * 6 * s, by - 28 * s); g.stroke() }
+  else { for (let k = 0; k < 4; k++) { const p = ph(k * 0.75, 1.3); g.globalAlpha = (1 - p) * 0.9; text(((h >> k) & 1) ? '1' : '0', x + (k - 1.5) * 7 * s, by - 26 * s - p * 30 * s, 9, '#2ecc71'); g.globalAlpha = 1 } }
+}
+function reactionOf(e) {
+  const d = e.data.doing
+  if (e.kind === 'sub') return 'shy'
+  if (d === 'asking' || d === 'alert') return 'eager'
+  if (d === 'idle' || d === 'napping') return 'startled'
+  return 'nervous'
+}
 function drawChibi(e, t, z0) {
   const p = e.data, sub = e.kind === 'sub'
-  const [x, y] = P(e.x, e.y, z0)
+  const rx = e.react || 0, kind = rx > 0 ? reactionOf(e) : null, since = t - (e.hlAt || t)
+  let [x, y] = P(e.x, e.y, z0)
+  // The reaction moves the whole body: a shiver, a hop, a jolt up, a lean back.
+  if (kind === 'nervous') x += Math.sin(t * 55) * 1.3 * rx * cam.s
+  if (kind === 'eager') y -= Math.abs(Math.sin(t * 9)) * 7 * rx * cam.s
+  if (kind === 'startled') y -= Math.max(0, 1 - since * 3) * 14 * rx * cam.s
+  if (kind === 'shy') x -= 3 * rx * cam.s
   e.sx = x; e.sy = y
-  const s = cam.s * (sub ? 0.68 : 1)
+  const job = JOB[p.job] || JOB.shell, rank = p.rank || 0
+  const s = cam.s * (sub ? 0.68 : rankScale(rank)) * (kind === 'shy' ? 1 - 0.06 * rx : kind === 'eager' ? 1 + 0.06 * rx : 1)
   const h = hashOf(e.id)
   const walking = e.walking
-  const bob = walking ? -Math.abs(Math.sin(t * 12)) * 3 : p.doing === 'typing' ? Math.sin(t * 22) * 0.6 : (p.doing === 'asking' || p.doing === 'alert') ? -Math.abs(Math.sin(t * 6)) * 4 : Math.sin(t * 2 + h) * 0.8
-  const body = hsl2hex((e.hue + (sub ? 25 : 0)) % 360, sub ? 60 : 62, sub ? 74 : 66)
-  const hair = hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
+  const jk = sub ? (p.job || 'shell') : (p.job || 'shell'), jw = (JOB[jk] || JOB.shell).walk
+  const working = !walking && ['typing', 'reading', 'running', 'calling', 'delegating'].includes(p.doing)
+  // Each job walks its own way: a scurry, a stroll with a sway, a look-around…
+  const stepHz = 12 * jw * (ageStage(p) >= 3 && !sub ? 0.6 : 1)
+  const bob = walking ? -Math.abs(Math.sin(t * stepHz)) * (jk === 'shell' ? 2 : jk === 'write' ? 4 : 3) : p.doing === 'typing' ? Math.sin(t * 22) * 0.6 : (p.doing === 'asking' || p.doing === 'alert') ? -Math.abs(Math.sin(t * 6)) * 4 : working && jk === 'talk' ? -Math.abs(Math.sin(t * 5)) * 1.5 : Math.sin(t * 2 + h) * 0.8
+  if (walking && jk === 'write') x += Math.sin(t * stepHz / 2) * 2.2 * cam.s
+  if (walking && jk === 'shell') x += Math.sin(t * 30) * 0.6 * cam.s
+  // The shirt is the job's colour, a little shifted by window so two of a
+  // kind still differ.
+  const body = hsl2hex((job.shirt + ((e.hue % 40) - 20) + 360) % 360, sub ? 60 : 64, sub ? 74 : 64)
+  const age = sub ? 0 : ageStage(p)
+  const hair = age >= 2 ? '#d9d9e3' : age === 1 ? mix(hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, 34), '#cfcfda', 0.45) : hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
   if (e.hl) { g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.ellipse(x, y, 19 * s, 8 * s, 0, 0, Math.PI * 2); g.fill() }
   g.fillStyle = 'rgba(30,20,40,.22)'; g.beginPath(); g.ellipse(x, y, 13 * s, 5 * s, 0, 0, Math.PI * 2); g.fill()
-  const step = walking ? Math.sin(t * 12) * 3 : 0
+  const step = walking ? Math.sin(t * stepHz) * 3 : 0
   circle(x - 5 * s, y - 2 * s - Math.max(0, step) * s, 3.6 * s, '#5b4b6b')
   circle(x + 5 * s, y - 2 * s - Math.max(0, -step) * s, 3.6 * s, '#5b4b6b')
   const by = y + bob * s
   rrect(x - 9 * s, by - 24 * s, 18 * s, 19 * s, 7 * s, body)
+  outfit(p.job, x, by, s, t, sub)
   const arm = (ax, ay) => circle(x + ax * s, by + ay * s, 3.4 * s, SKIN)
   const d = walking ? 'walk' : p.doing
   if (d === 'typing' || d === 'delegating') { arm(-8, -12 + Math.sin(t * 22) * 1.5); arm(8, -12 + Math.cos(t * 22) * 1.5) }
@@ -429,30 +615,98 @@ function drawChibi(e, t, z0) {
   else if (d === 'thinking') { arm(-9, -12); arm(5, -27) }
   else if (d === 'idle') { arm(-9, -12); arm(9, -15); rrect(x + 6 * s, by - 22 * s, 7 * s, 8 * s, 2 * s, '#fff4e0') }
   else if (d === 'napping') { arm(-10, -14); arm(10, -14) }
-  else if (d === 'walk') { arm(-9, -12 + Math.sin(t * 12) * 2); arm(9, -12 - Math.sin(t * 12) * 2) }
+  else if (d === 'walk') walkPose(jk, x, by, s, t, stepHz, arm)
   else { arm(-9, -12); arm(9, -12) }
   // Asleep on the desk: the head sinks and tilts onto the arms.
   const nap = p.doing === 'napping'
-  const hx = x + (p.doing === 'thinking' ? Math.sin(t * 1.5) * 1.5 * s : 0), hy = by - 36 * s
+  const hx = x + (p.doing === 'thinking' ? Math.sin(t * 1.5) * 1.5 * s : (working || walking) && jk === 'watch' ? Math.sin(t * 2.2) * 2.5 * s : 0), hy = by - 36 * s
   circle(hx, hy, 14 * s, SKIN)
   g.beginPath(); g.arc(hx, hy, 14 * s, Math.PI * 1.05, Math.PI * 1.95); g.lineTo(hx + 12 * s, hy - 4 * s); g.quadraticCurveTo(hx, hy - 10 * s, hx - 12 * s, hy - 4 * s); g.closePath()
   g.fillStyle = hair; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke()
   if (sub) { g.beginPath(); g.moveTo(hx, hy - 14 * s); g.lineTo(hx + 3 * s, hy - 22 * s); g.stroke(); circle(hx + 3 * s, hy - 23 * s, 3 * s, '#ffd36b') }
+  else if (hat(p.job, hx, hy, s, t, hair)) { /* the hat covers the tuft */ }
   else if (h % 3 === 0) { g.beginPath(); g.moveTo(hx - 1 * s, hy - 14 * s); g.quadraticCurveTo(hx + 7 * s, hy - 25 * s, hx + 4 * s, hy - 18 * s); g.stroke() }
   else if (h % 3 === 1) { poly([[hx - 12 * s, hy - 7 * s], [hx - 10 * s, hy - 20 * s], [hx - 3 * s, hy - 13 * s]], hair); poly([[hx + 12 * s, hy - 7 * s], [hx + 10 * s, hy - 20 * s], [hx + 3 * s, hy - 13 * s]], hair) }
   const look = p.doing === 'thinking' ? -2 : 0
   const blink = ((t + (h % 97) / 23) % 3.7) < 0.12
   const sleepy = nap
   g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.lineCap = 'round'
-  if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(hx + (ex - 2) * s, hy - 1 * s); g.lineTo(hx + (ex + 2) * s, hy + 1 * s); g.lineTo(hx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
+  if (kind && rx > 0.35) reactFace(kind, hx, hy, s, t, since)
+  else if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(hx + (ex - 2) * s, hy - 1 * s); g.lineTo(hx + (ex + 2) * s, hy + 1 * s); g.lineTo(hx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
   else if (blink || sleepy) { for (const ex of [-5, 5]) { g.beginPath(); g.arc(hx + ex * s, hy + 1 * s, 2.4 * s, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke() } }
   else { const r = p.doing === 'asking' ? 2.6 : 2.1; circle(hx - 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx + 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx - 4.3 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null); circle(hx + 5.7 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null) }
-  g.fillStyle = BLUSH; g.beginPath(); g.ellipse(hx - 8.5 * s, hy + 5 * s, 3 * s, 1.8 * s, 0, 0, Math.PI * 2); g.ellipse(hx + 8.5 * s, hy + 5 * s, 3 * s, 1.8 * s, 0, 0, Math.PI * 2); g.fill()
+  const flush = kind === 'shy' || kind === 'eager' ? 1 + rx * 1.4 : 1
+  g.fillStyle = kind === 'shy' ? 'rgba(255,90,120,' + (0.55 + 0.3 * rx) + ')' : BLUSH; g.beginPath(); g.ellipse(hx - 8.5 * s, hy + 5 * s, 3 * s * flush, 1.8 * s * flush, 0, 0, Math.PI * 2); g.ellipse(hx + 8.5 * s, hy + 5 * s, 3 * s * flush, 1.8 * s * flush, 0, 0, Math.PI * 2); g.fill()
+  if (kind && rx > 0.35) { reactMouth(kind, hx, hy, s, t); reactExtras(kind, hx, hy, s, t, rx, since); return }
   g.beginPath()
   if (p.doing === 'asking' || p.doing === 'alert') g.arc(hx, hy + 6 * s, 1.8 * s, 0, Math.PI * 2)
   else g.arc(hx, hy + 4.5 * s, 2.2 * s, 0.15 * Math.PI, 0.85 * Math.PI)
   g.stroke()
-  if (!nap) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
+  if (age >= 2) { g.beginPath(); g.moveTo(hx - 9 * s, hy + 4 * s); g.quadraticCurveTo(hx, hy + 19 * s, hx + 9 * s, hy + 4 * s); g.quadraticCurveTo(hx, hy + 11 * s, hx - 9 * s, hy + 4 * s); g.fillStyle = '#ececf2'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke() }
+  if (age >= 1 && !sub) { g.strokeStyle = '#e8e8f0'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(hx - 6 * s, hy - 12 * s); g.lineTo(hx - 2 * s, hy - 10 * s); g.moveTo(hx + 3 * s, hy - 13 * s); g.lineTo(hx + 7 * s, hy - 10 * s); g.stroke() }
+  if (age >= 3) { g.strokeStyle = '#8a5a3a'; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(x - 13 * s, y - 1 * s); g.lineTo(x - 12 * s, by - 20 * s); g.quadraticCurveTo(x - 12 * s, by - 25 * s, x - 8 * s, by - 24 * s); g.stroke() }
+  if (!sub) face(p.job, hx, hy, s, t)
+  if (working) workFx(jk, p.doing, x, by, hx, hy, s, t, h)
+  if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
+  // While it reacts to the cursor, its face says it: the usual bubble steps aside.
+  // The work effect already says what it does; the bubble is for the rest.
+  if (!nap && !working && !(kind && rx > 0.35)) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
+}
+function reactFace(kind, hx, hy, s, t, since) {
+  g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.lineCap = 'round'
+  if (kind === 'eager') {
+    // Sparkly eyes: big, with two highlights that twinkle.
+    for (const ex of [-5, 5]) {
+      circle(hx + ex * s, hy + 1 * s, 3.2 * s, '#2a2033', null)
+      circle(hx + (ex + 1) * s, hy - 0.2 * s, 1.2 * s, '#fff', null)
+      circle(hx + (ex - 1) * s, hy + 2 * s, (0.5 + 0.3 * Math.sin(t * 10 + ex)) * s, '#fff', null)
+    }
+  } else if (kind === 'nervous') {
+    // Tiny pupils in wide whites, darting.
+    const dart = Math.sin(t * 7) * 1.2 * s
+    for (const ex of [-5, 5]) { circle(hx + ex * s, hy + 1 * s, 3 * s, '#fff'); circle(hx + ex * s + dart, hy + 1 * s, 1 * s, '#2a2033', null) }
+  } else if (kind === 'startled') {
+    // Eyes pop open round, then settle.
+    const pop = 1 + Math.max(0, 1 - since * 2) * 0.6
+    for (const ex of [-5, 5]) { circle(hx + ex * s, hy + 1 * s, 3.2 * pop * s, '#fff'); circle(hx + ex * s, hy + 1 * s, 1.6 * s, '#2a2033', null) }
+  } else {
+    // Shy: eyes squeezed into happy arcs, looking away.
+    for (const ex of [-5, 5]) { g.beginPath(); g.arc(hx + (ex - 1.5) * s, hy + 2 * s, 2.4 * s, 1.15 * Math.PI, 1.85 * Math.PI); g.stroke() }
+  }
+}
+function reactMouth(kind, hx, hy, s, t) {
+  g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s
+  g.beginPath()
+  if (kind === 'eager') { g.arc(hx, hy + 4.5 * s, 3 * s, 0, Math.PI); g.fillStyle = '#ff8fa3'; g.fill(); g.stroke(); return }
+  if (kind === 'nervous') { for (let k = 0; k <= 4; k++) { const mx = hx - 4 * s + k * 2 * s, my = hy + 6 * s + (k % 2 ? -1 : 1) * s; k ? g.lineTo(mx, my) : g.moveTo(mx, my) } g.stroke(); return }
+  if (kind === 'startled') { g.ellipse(hx, hy + 6.5 * s, 2 * s, 2.8 * s, 0, 0, Math.PI * 2); g.fillStyle = '#5a2d3c'; g.fill(); g.stroke(); return }
+  g.moveTo(hx - 2.5 * s, hy + 6 * s); g.quadraticCurveTo(hx, hy + 4.5 * s, hx + 2.5 * s, hy + 6 * s); g.stroke()
+}
+function reactExtras(kind, hx, hy, s, t, rx, since) {
+  g.globalAlpha = rx
+  if (kind === 'eager') {
+    // Hearts and stars rising around the head.
+    for (let k = 0; k < 3; k++) { const ph = (t * 0.9 + k / 3) % 1; g.globalAlpha = rx * (1 - ph); text(k % 2 ? '✦' : '♥', hx + (k - 1) * 13 * s + Math.sin(ph * 6 + k) * 3 * s, hy - 18 * s - ph * 20 * s, 10 + 3 * (1 - ph), k % 2 ? '#ffd36b' : '#ff6f91') }
+  } else if (kind === 'nervous') {
+    // A sweat drop that slides down, and a little shiver of lines.
+    const ph = (t * 0.8) % 1
+    const sx = hx + 12 * s, sy = hy - 8 * s + ph * 10 * s
+    g.beginPath(); g.moveTo(sx, sy - 5 * s); g.quadraticCurveTo(sx + 4 * s, sy + 1 * s, sx, sy + 3 * s); g.quadraticCurveTo(sx - 4 * s, sy + 1 * s, sx, sy - 5 * s); g.fillStyle = '#9fd8ff'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke()
+    g.strokeStyle = LINE; g.lineWidth = 1.3 * cam.s
+    for (const sd of [-1, 1]) { g.beginPath(); g.moveTo(hx + sd * 17 * s, hy - 4 * s); g.lineTo(hx + sd * 20 * s, hy - 7 * s); g.moveTo(hx + sd * 17 * s, hy + 1 * s); g.lineTo(hx + sd * 21 * s, hy); g.stroke() }
+  } else if (kind === 'startled') {
+    // A big "!" over the head, and three surprise lines.
+    const k = Math.min(1, since * 5)
+    g.globalAlpha = rx * k
+    text('!', hx, hy - 26 * s - (1 - k) * 6 * s, 20, '#ff5a5a')
+    g.strokeStyle = LINE; g.lineWidth = 1.5 * cam.s
+    for (const a of [-0.5, 0, 0.5]) { g.beginPath(); g.moveTo(hx + Math.sin(a) * 18 * s, hy - Math.cos(a) * 18 * s); g.lineTo(hx + Math.sin(a) * 24 * s, hy - Math.cos(a) * 24 * s); g.stroke() }
+  } else {
+    // Shy: a small "///" across the cheek.
+    g.strokeStyle = '#ff5a78'; g.lineWidth = 1.2 * cam.s
+    for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(hx - 11 * s + k * 2.4 * s, hy + 7 * s); g.lineTo(hx - 9 * s + k * 2.4 * s, hy + 3 * s); g.stroke() }
+  }
+  g.globalAlpha = 1
 }
 const ICON = { thinking: '…', reading: '📖', running: '>_', calling: '🔌', typing: '✏️', delegating: '🐣', asking: '?', alert: '!', idle: '☕' }
 function bubble(e, p, x, y, s, t, sleepy) {
@@ -480,10 +734,30 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now
   const t = now / 1000
   for (const [id, e] of ents) {
-    const dx = e.tx - e.x, dy = e.ty - e.y, dist = Math.hypot(dx, dy)
-    const sp = (e.kind === 'sub' ? 3.2 : 2.6) * dt
-    if (dist > 0.02) { const k = Math.min(1, sp / dist); e.x += dx * k; e.y += dy * k; e.walking = true } else { e.x = e.tx; e.y = e.ty; e.walking = false }
-    if (e.leaving && dist < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
+    // Hover reaction eases in and out (0..1), so it never pops.
+    e.react = Math.max(0, Math.min(1, (e.react || 0) + (e.hl ? dt * 6 : -dt * 4)))
+    if (e.hl && !e.hlAt) e.hlAt = t
+    if (!e.hl && e.react === 0) e.hlAt = 0
+    // A new target: plan a walk round what is in the way.
+    if (e.pathTo !== e.tx + ',' + e.ty) { e.pathTo = e.tx + ',' + e.ty; e.path = Math.hypot(e.tx - e.x, e.ty - e.y) > 0.05 ? findPath(e.x, e.y, e.tx, e.ty) : [] }
+    const wp = e.path && e.path[0] ? e.path[0] : [e.tx, e.ty]
+    const dx = wp[0] - e.x, dy = wp[1] - e.y, dist = Math.hypot(dx, dy)
+    let sp = (e.kind === 'sub' ? 3.2 : 2.6 * ((JOB[e.data.job] || JOB.shell).walk) * (ageStage(e.data) >= 3 ? 0.6 : 1)) * dt
+    // Ease into the last stretch instead of stopping dead.
+    const left = Math.hypot(e.tx - e.x, e.ty - e.y)
+    if (left < 0.5) sp *= 0.45 + left
+    if (dist > 0.02) {
+      const k = Math.min(1, sp / dist)
+      // Turn smoothly: the heading bends toward the waypoint rather than snapping.
+      const want = Math.atan2(dy, dx)
+      e.dir = e.dir === undefined ? want : e.dir + Math.atan2(Math.sin(want - e.dir), Math.cos(want - e.dir)) * Math.min(1, dt * 10)
+      const step = Math.min(dist, sp)
+      e.x += Math.cos(e.dir) * step * (k < 1 ? 1 : dist / Math.max(step, 1e-6)) ; e.y += Math.sin(e.dir) * step * (k < 1 ? 1 : dist / Math.max(step, 1e-6))
+      e.walking = true
+    } else if (e.path && e.path.length > 1) { e.path.shift() }
+    else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
+    const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
+    if (e.leaving && dist2 < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
   }
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
   g.clearRect(0, 0, VW, VH)
@@ -511,7 +785,10 @@ function frame(now) {
     w.sessions.forEach((p, k) => {
       const [dx, dy] = p.desk
       const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
-      add(dx + 0.8 + dy + 0.35, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78)))
+      // A desk sorts by its front-right corner: someone standing behind it
+      // (smaller x+y than that) is drawn first and hidden by it, someone in
+      // front is drawn after.
+      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank))
     })
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
