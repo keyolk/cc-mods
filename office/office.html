@@ -43,7 +43,7 @@ canvas.drag { cursor: grabbing; }
 #card a.brand:hover, #card .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
 #card a.brand b { font-weight: 700; opacity: .85; }
 #card a.brand span { overflow: hidden; text-overflow: ellipsis; }
-#reset { position: fixed; right: 16px; top: 52px; display: none; font: inherit; font-size: 13px; background: var(--card); color: #2a2033; border: 2px solid var(--line); border-radius: 999px; padding: 3px 12px; cursor: pointer; box-shadow: 0 2px 0 var(--line); z-index: 5; }
+#reset { position: fixed; right: 16px; top: 84px; display: none; font: inherit; font-size: 13px; background: var(--card); color: #2a2033; border: 2px solid var(--line); border-radius: 999px; padding: 3px 12px; cursor: pointer; box-shadow: 0 2px 0 var(--line); z-index: 5; }
 #reset:hover { filter: brightness(1.05); transform: translateY(-1px); }
 #reset kbd { font-size: 11px; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
@@ -106,7 +106,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
-// reading, the server room while running, the lounge while idle, and each
+// reading, the workshop while running, a phone booth on an MCP call, the lounge while idle, and each
 // subagent as a small one that rides the elevator in and out.
 
 // ---------- iso projection ----------
@@ -165,7 +165,8 @@ function text(t, x, y, size, color = '#2a2033', align = 'center') {
 const COLS = 5, POD_W = 3.7, POD_D1 = 2.4, POD_D2 = 3.7, OFF_Y = 4.6
 const ZONES = {
   library: { x0: 0.3, x1: 5.3, floor: '#cfe8d6', label: '📚 자료실', when: '파일·코드·웹을 읽고 찾을 때', sign: '#2f6b4f', spots: [] },
-  server: { x0: 5.6, x1: 10.6, floor: '#d3dbef', label: '🖥 서버실', when: '명령 실행 · MCP 도구 호출 중', sign: '#2b3a67', spots: [] },
+  workshop: { x0: 5.6, x1: 8.3, floor: '#d9d6cf', label: '🛠 작업실', when: '명령 실행 (Bash · 모니터링)', sign: '#7a4a1e', spots: [] },
+  phone: { x0: 8.5, x1: 10.6, floor: '#cfd8ee', label: '📞 통화 부스', when: 'MCP로 외부 서비스 호출 중', sign: '#2b4a8a', spots: [] },
   lounge: { x0: 10.9, x1: 15.6, floor: '#f8d9dc', label: '☕ 휴게실', when: '할 일 없이 대기 · 10분 넘으면 낮잠', sign: '#a8435a', spots: [] },
 }
 // Idle this long: asleep, lying in the pile in front of the sofa. The lounge
@@ -175,8 +176,13 @@ const PILE = [13.3, 1.55]
 for (const z of Object.values(ZONES)) for (const y of [1.75, 2.65, 3.55]) for (let x = z.x0 + 0.55; x < z.x1 - 0.4; x += 0.78) z.spots.push([x + (y === 2.65 ? 0.39 : 0), y])
 // The lounge's café table and vending machine take a corner of its floor.
 const CAFE = [14.35, 3.05], VEND = [15.0, 1.45]
+// Three phone booths along the back wall; a caller stands in the first free
+// one (its spot in front of the phone), the rest wait on the floor.
+const BOOTHS = [8.62, 9.27, 9.92]
+ZONES.phone.spots = [...BOOTHS.map((bx) => [bx + 0.3, 0.95]), ...ZONES.phone.spots.filter(([, y]) => y > 2)]
+ZONES.phone.prefer = BOOTHS.length
 ZONES.lounge.spots = ZONES.lounge.spots.filter(([x, y]) => Math.hypot(x - CAFE[0] - 0.3, y - CAFE[1] - 0.3) > 0.75 && !(x > VEND[0] - 0.35 && y < VEND[1] + 0.95))
-const DOOR = [16.6, 1.55]
+const POOF_MS = 650
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
 // tmux sessions: a block of rows each, SECTION_GAP apart for the partition.
@@ -216,11 +222,11 @@ function rebuildGrid() {
   }
   mark(0, 0, W + 0.6, 0.25) // back wall
   for (let k = 0; k < 4; k++) mark(0.55 + k * 1.17, 0, 0.55 + k * 1.17 + 1.05, 0.38)
-  for (let k = 0; k < 5; k++) mark(5.85 + k * 0.95, 0.05, 5.85 + k * 0.95 + 0.72, 0.67)
   mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(15.95, 0.15, 17.25, 1.0)
-  mark(0.8, 0.85, 4.8, 1.3); mark(6.0, 0.9, 10.2, 1.3) // reading table, console desk
+  mark(0.8, 0.85, 4.8, 1.3) // reading table
+  mark(5.75, 0.05, 6.55, 0.7); mark(6.0, 0.9, 8.0, 1.3) // machine, workbench
+  for (const bx of BOOTHS) { mark(bx, 0.05, bx + 0.6, 0.7); mark(bx - 0.03, 0.05, bx + 0.02, 0.85); mark(bx + 0.58, 0.05, bx + 0.63, 0.85) }
   mark(CAFE[0], CAFE[1], CAFE[0] + 0.6, CAFE[1] + 0.6); mark(VEND[0], VEND[1], VEND[0] + 0.55, VEND[1] + 0.5)
-  for (const z of Object.values(ZONES)) { const cx = (z.x0 + z.x1) / 2; mark(cx - 0.9, 4.1, cx - 0.8, 4.2); mark(cx + 0.8, 4.1, cx + 0.9, 4.2) }
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
@@ -278,8 +284,7 @@ function findPath(ax, ay, bx, by) {
 // ---------- state ----------
 let windows = []
 const ents = new Map() // id -> a session or a subagent on the floor
-const spotTaken = { library: new Map(), server: new Map(), lounge: new Map() }
-const lift = { openUntil: 0 }
+const spotTaken = Object.fromEntries(Object.keys(ZONES).map((k) => [k, new Map()]))
 let stats = { total: 0, work: 0, wait: 0, subs: 0 }
 
 function spotFor(zone, id) {
@@ -288,6 +293,8 @@ function spotFor(zone, id) {
   const used = new Set(taken.values()), spots = ZONES[zone].spots
   let i = hashOf(id) % spots.length
   for (let k = 0; k < spots.length && used.has(i); k++) i = (i + 1) % spots.length
+  // A room with places to prefer (the booths) fills those first.
+  for (let k = 0; k < (ZONES[zone].prefer || 0); k++) if (!used.has(k)) { i = k; break }
   taken.set(id, i)
   // Full: squeeze in next to someone, a little off, rather than wait outside.
   if (used.size >= spots.length) { const j = hashOf(id); return [spots[i][0] + ((j % 7) - 3) * 0.08, spots[i][1] + (((j >> 3) % 5) - 2) * 0.08] }
@@ -361,7 +368,7 @@ function apply(people) {
       Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false })
       live.add(p.id)
       // A window's people stay together: subagents gather around their
-      // session wherever it is (its desk, the library, the server room) and
+      // session wherever it is (its desk, the library, the workshop) and
       // show what each does by its pose and bubble, not by walking off alone.
       const subs = p.subs || [], n = subs.length
       subs.forEach((s, j) => {
@@ -374,7 +381,9 @@ function apply(people) {
           ? [desk[0] + 0.2 + (j % 4) * 0.4, desk[1] + 0.98 + Math.floor(j / 4) * 0.28]
           : [tgt[0] + Math.cos(a) * 0.75, tgt[1] + 0.2 + Math.sin(a) * 0.6]
         let se = ents.get(sid)
-        if (!se) { se = { id: sid, kind: 'sub', x: DOOR[0], y: DOOR[1] }; ents.set(sid, se); lift.openUntil = performance.now() + 1500 }
+        // Summoned out of its session: it pops up where the session is, in a
+        // puff, and walks to its place.
+        if (!se) { const pe = ents.get(p.id); se = { id: sid, kind: 'sub', x: pe ? pe.x : tgt[0], y: pe ? pe.y : tgt[1], born: performance.now() }; ents.set(sid, se) }
         Object.assign(se, { tx: st[0], ty: st[1], data: { ...s, parent: p }, hue: w.hue, leaving: false })
         live.add(sid)
       })
@@ -382,7 +391,8 @@ function apply(people) {
   }
   for (const [id, e] of ents) {
     if (live.has(id)) continue
-    if (e.kind === 'sub' && !e.leaving) { e.leaving = true; e.tx = DOOR[0]; e.ty = DOOR[1]; releaseSpots(id) }
+    // Done: it vanishes where it stands, in a puff.
+    if (e.kind === 'sub' && !e.leaving) { e.leaving = true; e.goneAt = performance.now(); e.tx = e.x; e.ty = e.y; releaseSpots(id) }
     else if (e.kind === 'session') { ents.delete(id); releaseSpots(id) }
   }
   document.getElementById('s1').innerHTML = '세션 <b>' + stats.total + '</b>'
@@ -471,10 +481,12 @@ function fit() {
   const pts = [P(0, 0, 150), P(W, 0, 150), P(0, D), P(W, D)]
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
-  const top = 48, bottom = 48
+  // Room for the labels in the margin: the room callouts above the back
+  // wall, the tmux labels left of the left wall.
+  const top = 48 + 60, bottom = 48, left = Math.min(170, VW * 0.14)
   // Before the page has a size (VW/VH 0) this would go negative.
-  cam.s = Math.max(0.1, Math.min((VW - 16) / (maxX - minX), (VH - top - bottom) / (maxY - minY)))
-  cam.ox = (VW - (maxX - minX) * cam.s) / 2 - minX * cam.s
+  cam.s = Math.max(0.1, Math.min((VW - 16 - left) / (maxX - minX), (VH - top - bottom) / (maxY - minY)))
+  cam.ox = left + (VW - left - (maxX - minX) * cam.s) / 2 - minX * cam.s
   cam.oy = top + (VH - top - bottom - (maxY - minY) * cam.s) / 2 - minY * cam.s
 }
 addEventListener('resize', resize)
@@ -519,6 +531,7 @@ addEventListener('keydown', (e) => {
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
   if (k === '0') return hit(resetView)
+  if (open && card.shelfTab && k === 'Enter' && card.keys && card.keys[0]) return hit(() => card.keys[0].click())
   if (open && card.shelfTab && (k === '[' || k === ']')) return hit(() => card.shelfTab(k === ']' ? 1 : -1))
   if (k === 'n' || k === 'N' || k === 'ㅜ') return hit(() => step(1))
   if (k === 'p' || k === 'P' || k === 'ㅔ') return hit(() => step(-1))
@@ -601,6 +614,12 @@ async function openCard(sid, kind = null) {
     }
     card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show() } }
     show()
+    // The drawer is the whole card: no conversation, just a way to it.
+    card.said = card.reply = card.stop = card.grant = card.snooze = card.go = null
+    const nav2 = add('div', 'row')
+    const talk = document.createElement('button'); talk.className = 'act nav'; talk.innerHTML = '<span class="key">⏎</span>💬 대화 보기'; talk.onclick = () => openCard(sid); nav2.appendChild(talk)
+    card.keys[0] = talk
+    return
   } else card.shelfTab = null
   card.said = null
   if (d.text) {
@@ -677,7 +696,7 @@ async function openCard(sid, kind = null) {
 
 // ---------- hover ----------
 const tip = document.getElementById('tip')
-const DOING = { napping: '😴 휴게실에 드러누워 자는 중 (한참 쉼)', reading: '📖 자료실에서 읽는 중', running: '⌨️ 서버실에서 명령 실행 중', calling: '🔌 서버실에서 외부 도구 호출 중', typing: '✏️ 책상에서 쓰는 중', delegating: '🐣 서브에이전트에게 맡기는 중', thinking: '🤔 턱 괴고 고민 중', asking: '❓ 답을 기다리는 중', alert: '❗ 확인이 필요함', idle: '☕ 쉬는 중' }
+const DOING = { napping: '😴 휴게실에 드러누워 자는 중 (한참 쉼)', reading: '📖 자료실에서 읽는 중', running: '🛠 작업실에서 명령 실행 중', calling: '📞 통화 부스에서 외부 서비스 호출 중', typing: '✏️ 책상에서 쓰는 중', delegating: '🐣 서브에이전트에게 맡기는 중', thinking: '🤔 턱 괴고 고민 중', asking: '❓ 답을 기다리는 중', alert: '❗ 확인이 필요함', idle: '☕ 쉬는 중' }
 function ago(sec) { if (!sec) return ''; const m = Math.round((Date.now() / 1000 - sec) / 60); return m < 1 ? '방금' : m < 60 ? m + '분째' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분째' }
 function hit(mx, my) {
   let best = null, bd = 1e9
@@ -685,6 +704,16 @@ function hit(mx, my) {
   return best
 }
 // A thing on a desk under the pointer (characters win when both are).
+let hoverZone = null
+// The room under the pointer: its floor quad, tested on the screen.
+function zoneAt(mx, my) {
+  for (const [key, z] of Object.entries(ZONES)) {
+    const q = [P(z.x0, 0.35), P(z.x1, 0.35), P(z.x1, 4.25), P(z.x0, 4.25)]
+    const path = new Path2D(); path.moveTo(...q[0]); for (const pt of q.slice(1)) path.lineTo(...pt); path.closePath()
+    if (g.isPointInPath(path, mx * DPR, my * DPR)) return key
+  }
+  return null
+}
 function hitStuff(mx, my) {
   let best = null, bd = 1e9
   for (const h of deskHits) { if (h.poly) continue; const d = Math.hypot(mx - h.sx, my - h.sy); if (d < h.r && d < bd) { bd = d; best = h } }
@@ -704,12 +733,19 @@ function hover(e) {
   const h = drag && drag.moved || overUi ? null : hit(e.clientX, e.clientY)
   for (const x of ents.values()) x.hl = x === h
   const st = !h && !(drag && drag.moved) && !overUi && hitStuff(e.clientX, e.clientY)
+  hoverZone = !st && !(drag && drag.moved) && !overUi ? zoneAt(e.clientX, e.clientY) : null
   cv.style.cursor = h || st ? 'pointer' : ''
   if (st) {
     const owner = ents.get(st.sid)?.data, sh = SHELF[st.kind]
     const m = owner?.made || {}, outN = (m.pr || 0) + (m.slack || 0) + (m.ticket || 0)
     const parts = st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
     tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">' + (st.kind === 'desk' ? '클릭하면 서랍 열기' : '클릭하면 목록 열기') + '</div>'
+    tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
+    return
+  }
+  if (!h && hoverZone) {
+    const z = ZONES[hoverZone], who = inRoom(hoverZone)
+    tip.innerHTML = '<div class="t">' + z.label + '</div><div>' + z.when + '</div><div class="m">' + (who.length ? '지금 ' + who.length + '명: ' + esc(who.slice(0, 6).map((x) => x.data.name).join(', ')) + (who.length > 6 ? ' …' : '') : '지금은 비어 있음') + '</div>'
     tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
     return
   }
@@ -748,26 +784,18 @@ function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 // session comes here and who is here now, its own floor, its own furniture,
 // and over each visitor what it is reading or running.
 const inRoom = (k) => [...ents.values()].filter((e) => e.kind !== 'sub' && e.data.room === k && Math.hypot(e.x - e.tx, e.y - e.ty) < 0.3)
-function zoneSign(z) {
-  const cx = (z.x0 + z.x1) / 2, key = Object.keys(ZONES).find((k) => ZONES[k] === z)
-  const here = inRoom(key).length
-  for (const dx of [-0.85, 0.85]) { const [a, b] = P(cx + dx, 4.15, 0), [c, d] = P(cx + dx, 4.15, 40); g.strokeStyle = '#5b4a3a'; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(a, b); g.lineTo(c, d); g.stroke() }
-  const [sx, sy] = P(cx, 4.15, 52)
-  const w = 150 * cam.s, h = 40 * cam.s
-  rrect(sx - w / 2, sy - h / 2, w, h, 9 * cam.s, z.sign)
-  rrect(sx - w / 2 + 3 * cam.s, sy - h / 2 + 3 * cam.s, w - 6 * cam.s, h - 6 * cam.s, 7 * cam.s, null, 'rgba(255,255,255,.35)', 1)
-  text(z.label + (here ? '  · ' + here + '명' : ''), sx, sy - 7 * cam.s, 13, '#fffaf0')
-  text(z.when, sx, sy + 9 * cam.s, 9, 'rgba(255,250,240,.85)')
-}
 // Floors: parquet in the library, raised tiles with a hazard stripe in the
-// server room, a soft patterned carpet in the lounge.
+// workshop, a navy carpet by the booths, a soft patterned one in the lounge.
 function zoneFloors(t) {
-  const L = ZONES.library, S = ZONES.server, Lo = ZONES.lounge
+  const L = ZONES.library, S = ZONES.workshop, Ph = ZONES.phone, Lo = ZONES.lounge
   for (let x = L.x0; x < L.x1 - 0.01; x += 0.5) for (let y = 0.4; y < 4.2; y += 0.25) tile(x + ((y * 4) % 2 ? 0.25 : 0), y, Math.min(0.5, L.x1 - x - ((y * 4) % 2 ? 0.25 : 0)), 0.25, ((x * 2 + y * 4) | 0) % 2 ? '#d9b98f' : '#cfae83', 'rgba(120,85,50,.18)')
   tile(L.x0 + 0.6, 1.6, L.x1 - L.x0 - 1.2, 2.3, '#3f7a5c', null); tile(L.x0 + 0.7, 1.7, L.x1 - L.x0 - 1.4, 2.1, '#4f8f6c', null)
-  for (let x = S.x0; x < S.x1 - 0.01; x += 0.5) for (let y = 0.35; y < 4.2; y += 0.5) { tile(x, y, 0.5, 0.5, '#c9d0e0', 'rgba(70,80,110,.35)'); if (((x * 2 + y * 2) | 0) % 3 === 0) for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) { const [px, py] = P(x + 0.12 + a * 0.13, y + 0.12 + b * 0.13); circle(px, py, 1 * cam.s, 'rgba(70,80,110,.45)', null) } }
-  g.globalAlpha = 0.12 + Math.sin(t * 1.5) * 0.04; tile(S.x0, 0.35, S.x1 - S.x0, 3.9, '#5fa8ff', null); g.globalAlpha = 1
-  for (let x = S.x0; x < S.x1 - 0.01; x += 0.25) tile(x, 4.08, 0.25, 0.12, ((x * 4) | 0) % 2 ? '#f2c14e' : '#2a2033', null)
+  // Workshop: concrete slabs, an oil stain, a hazard stripe at the front.
+  for (let x = S.x0; x < S.x1 - 0.01; x += 0.9) for (let y = 0.35; y < 4.2; y += 0.9) tile(x, y, Math.min(0.9, S.x1 - x), Math.min(0.9, 4.25 - y), ((x + y) * 10 | 0) % 2 ? '#cfcbc2' : '#d6d2c9', 'rgba(90,80,70,.25)')
+  { const [ox, oy] = P(7.3, 2.9); g.fillStyle = 'rgba(60,50,40,.12)'; g.beginPath(); g.ellipse(ox, oy, 18 * cam.s, 7 * cam.s, 0.2, 0, Math.PI * 2); g.fill() }
+  for (let x = S.x0; x < S.x1 - 0.01; x += 0.25) tile(x, 4.08, Math.min(0.25, S.x1 - x), 0.12, ((x * 4) | 0) % 2 ? '#f2c14e' : '#2a2033', null)
+  // Phone booths: a quiet navy carpet with a border.
+  tile(Ph.x0, 0.35, Ph.x1 - Ph.x0, 3.9, '#9fb0d8', null); tile(Ph.x0 + 0.12, 0.47, Ph.x1 - Ph.x0 - 0.24, 3.66, '#b6c4e6', null)
   tile(Lo.x0, 0.35, Lo.x1 - Lo.x0, 3.9, '#f3c9cf', null)
   for (let x = Lo.x0 + 0.25; x < Lo.x1; x += 0.6) for (let y = 0.6; y < 4.1; y += 0.6) { const [px, py] = P(x, y); g.fillStyle = 'rgba(255,255,255,.35)'; g.beginPath(); g.ellipse(px, py, 5 * cam.s, 2.5 * cam.s, 0, 0, Math.PI * 2); g.fill() }
 }
@@ -790,32 +818,76 @@ function readingTable(t) {
   g.strokeStyle = '#8a5a3a'; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(a, b); g.lineTo(c, d2); g.moveTo(e, f); g.lineTo(g2, h); g.stroke()
   for (let k = 1; k < 7; k++) { const u = k / 7, [p1, q1] = P(4.2, 0.4 - 0.28 * u, 70 * u), [p2, q2] = P(4.45, 0.4 - 0.28 * u, 70 * u); g.beginPath(); g.moveTo(p1, q1); g.lineTo(p2, q2); g.stroke() }
 }
-// The server room's operator console: three screens; the middle one scrolls
-// the command whoever is in the room is running.
-function consoleDesk(t) {
-  const x = 6.0, y = 0.9, w = 4.2, d = 0.4
-  box(x, y, w, d, 22, '#4a5170')
-  const runners = inRoom('server').filter((e) => e.data.detail || e.data.tool)
-  for (let k = 0; k < 3; k++) {
-    const mx = x + 0.35 + k * 1.35, my = y + 0.08
-    box(mx, my, 0.9, 0.08, 26, '#1c2033', 22)
-    const q = [P(mx + 0.04, my + 0.08, 25), P(mx + 0.86, my + 0.08, 25), P(mx + 0.86, my + 0.08, 46), P(mx + 0.04, my + 0.08, 46)]
-    poly(q, '#0e1a12', null)
-    const e = runners[k] || null
-    const lines = e ? ['$ ' + (e.data.detail || e.data.tool), e.data.name] : k === 1 ? ['$ _'] : ['ok', 'ok', 'ok']
-    g.save(); g.beginPath(); g.moveTo(...q[0]); for (const pt of q.slice(1)) g.lineTo(...pt); g.closePath(); g.clip()
-    const [ox, oy] = q[3], [ax, ay] = q[2], l = Math.hypot(ax - ox, ay - oy)
-    g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
-    g.font = Math.max(5, 7 * cam.s) + 'px ui-monospace, Menlo, monospace'; g.textAlign = 'left'; g.textBaseline = 'top'
-    const scroll = e ? (t * 6) % 10 : 0
-    lines.forEach((s2, i) => { g.fillStyle = i === 0 ? '#7dffb0' : '#9fb3a6'; g.fillText(String(s2).slice(0, 22), 3 * cam.s, (3 + i * 8 - scroll * 0) * cam.s) })
-    if (Math.floor(t * 2) % 2) { g.fillStyle = '#7dffb0'; g.fillRect(3 * cam.s, (3 + lines.length * 8) * cam.s, 4 * cam.s, 6 * cam.s) }
-    g.restore()
-  }
-  // A cable tray hanging over the racks.
-  const [c1, c2] = P(5.7, 0.75, 92), [c3, c4] = P(10.5, 0.75, 92)
-  g.strokeStyle = '#7a7f95'; g.lineWidth = 3 * cam.s; g.beginPath(); g.moveTo(c1, c2); g.lineTo(c3, c4); g.stroke()
-  for (let k = 0; k < 6; k++) { const [u1, u2] = P(5.9 + k * 0.85, 0.75, 92), [v1, v2] = P(5.9 + k * 0.85, 0.75, 104); g.strokeStyle = ['#e86a5c', '#5c9de8', '#f2c14e'][k % 3]; g.lineWidth = 1.4 * cam.s; g.beginPath(); g.moveTo(u1, u2); g.quadraticCurveTo(u1 + 6 * cam.s, u2 + 8 * cam.s, v1 + 20 * cam.s, v2 + 6 * cam.s); g.stroke() }
+// Which service an MCP call goes to: a brand from simple-icons when the
+// tool's name or detail says one, else the server's own name.
+const MCP_BRANDS = [[/slack/i, 'slack'], [/jira|atlassian/i, 'jira'], [/confluence/i, 'confluence'], [/github/i, 'github'], [/grafana/i, 'grafana'], [/notion/i, 'notion'], [/linear/i, 'linear'], [/figma/i, 'figma'], [/sentry/i, 'sentry'], [/pagerduty/i, 'pagerduty'], [/datadog/i, 'datadog'], [/vercel/i, 'vercel'], [/gmail/i, 'gmail'], [/calendar/i, 'googlecalendar'], [/google|drive|docs|sheets/i, 'googledrive'], [/zoom/i, 'zoom'], [/argo/i, 'argo'], [/kube|k8s/i, 'kubernetes'], [/docker/i, 'docker']]
+function mcpService(p) {
+  const tool = String(p.tool || ''), all = tool + ' ' + (p.detail || '')
+  const icon = (MCP_BRANDS.find(([re]) => re.test(all)) || [])[1] || null
+  const server = tool.startsWith('mcp__') ? tool.split('__')[1].replace(/^claude_ai_/, '').replace(/_/g, ' ') : tool
+  return { icon, name: server || 'MCP' }
+}
+// Over a caller: the logo and name of the service on the line.
+function phoneTag(e) {
+  const sv = mcpService(e.data), c = sv.icon ? BRAND_ICON[sv.icon][0] : '#2b4a8a'
+  const label = sv.name.slice(0, 18)
+  g.font = Math.max(7, 9 * cam.s) + 'px Jua, sans-serif'
+  const w = g.measureText(label).width + 26 * cam.s, x = e.sx - w / 2, y = e.sy - 94 * cam.s
+  rrect(x, y, w, 16 * cam.s, 8 * cam.s, c, LINE, 1)
+  if (sv.icon) { g.save(); g.translate(x + 5 * cam.s, y + 2.5 * cam.s); g.scale(11 * cam.s / 24, 11 * cam.s / 24); g.fillStyle = '#fff'; g.fill(new Path2D(BRAND_ICON[sv.icon][1])); g.restore() } else text('🔌', x + 10 * cam.s, y + 8 * cam.s, 9)
+  g.fillStyle = '#fff'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(label, x + 19 * cam.s, y + 8 * cam.s)
+}
+// A phone booth: glass sides, a hood with a lamp that lights while in use, a
+// wall phone, and the logo of whoever is being called on its hood.
+function booth(bx, t) {
+  const y0 = 0.05, d = 0.65, h = 78
+  const caller = inRoom('phone').find((e) => Math.abs(e.x - (bx + 0.3)) < 0.2 && e.y < 1.3)
+  poly([P(bx, y0, 0), P(bx + 0.6, y0, 0), P(bx + 0.6, y0, h), P(bx, y0, h)], '#e8edf7')
+  for (const sx of [bx, bx + 0.6]) { box(sx - 0.03, y0, 0.05, d, h, '#5b6b8f'); poly([P(sx + 0.02, y0, 6), P(sx + 0.02, y0 + d, 6), P(sx + 0.02, y0 + d, h - 8), P(sx + 0.02, y0, h - 8)], 'rgba(200,225,255,.35)', null) }
+  box(bx - 0.03, y0, 0.66, d + 0.05, 8, '#2b4a8a', h)
+  const [lx, ly] = P(bx + 0.3, y0 + d + 0.05, h + 4)
+  rrect(lx - 14 * cam.s, ly - 6 * cam.s, 28 * cam.s, 10 * cam.s, 3 * cam.s, caller ? '#ffe08a' : '#dfe6f5', LINE, 1)
+  text(caller ? 'ON AIR' : '📞', lx, ly - 1 * cam.s, 7, '#2a2033')
+  // The phone on the back wall, its handset on the hook while free.
+  const [px, py] = P(bx + 0.3, y0 + 0.02, 40)
+  rrect(px - 6 * cam.s, py - 10 * cam.s, 12 * cam.s, 16 * cam.s, 2 * cam.s, '#3a3f55')
+  if (!caller) rrect(px - 8 * cam.s, py - 13 * cam.s, 4 * cam.s, 14 * cam.s, 2 * cam.s, '#2a2033')
+  else { g.strokeStyle = '#2a2033'; g.lineWidth = 1 * cam.s; g.beginPath(); for (let k = 0; k <= 12; k++) { const u = k / 12; g.lineTo(px - 4 * cam.s + Math.sin(u * 20) * 2 * cam.s, py + u * 20 * cam.s) } g.stroke() }
+}
+// The workshop's bench: a vise, tools, and a little terminal that shows what
+// the people in the room are running.
+function workbench(t) {
+  const x = 6.0, y = 0.9, w = 2.0, d = 0.4
+  for (const lx of [x + 0.05, x + w - 0.1]) box(lx, y + 0.05, 0.05, d - 0.1, 20, '#5b4a3a')
+  box(x, y, w, d, 5, '#b07a45', 20)
+  box(x + 0.1, y + 0.1, 0.2, 0.18, 8, '#5b6b8f', 25)
+  const [hx, hy] = P(x + 0.55, y + 0.25, 26); g.save(); g.translate(hx, hy); g.rotate(-0.4); rrect(-1.5 * cam.s, -10 * cam.s, 3 * cam.s, 14 * cam.s, 1 * cam.s, '#8a5a3a'); rrect(-5 * cam.s, -13 * cam.s, 10 * cam.s, 4 * cam.s, 1 * cam.s, '#7a7f95'); g.restore()
+  const runners = inRoom('workshop').filter((e) => e.data.detail || e.data.tool)
+  const mx = x + 1.05, my = y + 0.06
+  box(mx, my, 0.85, 0.08, 24, '#1c2033', 25)
+  const q = [P(mx + 0.04, my + 0.08, 28), P(mx + 0.81, my + 0.08, 28), P(mx + 0.81, my + 0.08, 47), P(mx + 0.04, my + 0.08, 47)]
+  poly(q, '#0e1a12', null)
+  g.save(); g.beginPath(); g.moveTo(...q[0]); for (const pt of q.slice(1)) g.lineTo(...pt); g.closePath(); g.clip()
+  const [ox, oy] = q[3], [ax, ay] = q[2], l = Math.hypot(ax - ox, ay - oy)
+  g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
+  g.font = Math.max(5, 7 * cam.s) + 'px ui-monospace, Menlo, monospace'; g.textAlign = 'left'; g.textBaseline = 'top'
+  const lines = runners.length ? runners.slice(0, 2).map((e) => '$ ' + (e.data.detail || e.data.tool)) : ['$ _']
+  lines.forEach((s2, i) => { g.fillStyle = '#7dffb0'; g.fillText(String(s2).slice(0, 22), 3 * cam.s, (3 + i * 8) * cam.s) })
+  g.restore()
+  // The pegboard of tools on the back wall above the bench.
+  poly([P(6.0, -0.3, 34), P(8.1, -0.3, 34), P(8.1, -0.3, 64), P(6.0, -0.3, 64)], '#c9a87a')
+  for (let k = 0; k < 7; k++) { const [tx, ty] = P(6.2 + k * 0.28, -0.3, 58); g.strokeStyle = ['#e86a5c', '#5b6b8f', '#f2c14e', '#7a7f95'][k % 4]; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(tx, ty); g.lineTo(tx + (k % 2 ? 3 : -2) * cam.s, ty + 16 * cam.s); g.stroke(); circle(tx, ty, 1.4 * cam.s, '#3b2a35', null) }
+}
+// A machine at the back of the workshop: gears turning and a puff of steam
+// while someone runs a command.
+function machine(x, y, t) {
+  box(x, y, 0.8, 0.65, 52, '#7d8aa8')
+  box(x + 0.1, y + 0.1, 0.6, 0.45, 6, '#5b6b8f', 52)
+  const busy = inRoom('workshop').length > 0, a = busy ? t * 2.5 : 0
+  const gear = (gx, gy, r, n, rot, c) => { g.save(); g.translate(gx, gy); g.rotate(rot); g.fillStyle = c; g.beginPath(); for (let k = 0; k < n * 2; k++) { const rr = k % 2 ? r * 0.78 : r; const an = (k / (n * 2)) * Math.PI * 2; g.lineTo(Math.cos(an) * rr, Math.sin(an) * rr) } g.closePath(); g.fill(); g.strokeStyle = LINE; g.lineWidth = 1 * cam.s; g.stroke(); circle(0, 0, r * 0.3, '#3b2a35', null); g.restore() }
+  const [g1x, g1y] = P(x + 0.4, y + 0.65, 30); gear(g1x - 6 * cam.s, g1y, 9 * cam.s, 8, a, '#f2c14e'); gear(g1x + 9 * cam.s, g1y - 7 * cam.s, 6 * cam.s, 6, -a * 1.5, '#e8a23a')
+  const [lx, ly] = P(x + 0.7, y + 0.65, 44); circle(lx, ly, 2 * cam.s, busy && Math.floor(t * 3) % 2 ? '#7dffb0' : '#2a5040', null)
+  if (busy) for (let k = 0; k < 3; k++) { const ph = (t * 0.8 + k / 3) % 1, [sx, sy] = P(x + 0.4, y + 0.3, 58 + ph * 26); g.globalAlpha = (1 - ph) * 0.7; circle(sx + Math.sin(ph * 6 + k) * 4 * cam.s, sy, (3 + ph * 5) * cam.s, '#ffffff', null); g.globalAlpha = 1 }
 }
 function cafeTable(x, y) {
   box(x + 0.27, y + 0.27, 0.06, 0.06, 16, '#7a7f95')
@@ -834,19 +906,21 @@ function vending(x, y, t) {
   const [lx, ly] = P(x + 0.47, fy, 52); circle(lx, ly, 1.8 * cam.s, Math.floor(t) % 2 ? '#7dffb0' : '#2a5040', null)
 }
 // Over each visitor that has arrived: what it reads or runs, so a trip to
-// the library or the server room says why.
+// the library, the workshop or a booth says why.
 function roomTags() {
   for (const e of ents.values()) {
     if (e.kind === 'sub' || e.walking || e.sx === undefined) continue
     const room = e.data.room
-    if (room !== 'library' && room !== 'server') continue
+    if (room !== hoverZone && !e.hl) continue
+    if (room === 'phone') { phoneTag(e); continue }
+    if (room !== 'library' && room !== 'workshop') continue
     const what = e.data.detail || e.data.tool
     if (!what) continue
     const label = (room === 'library' ? '📖 ' : '$ ') + String(what).replace(/^.*\//, '').slice(0, 20)
-    g.font = Math.max(7, 9 * cam.s) + 'px ' + (room === 'server' ? 'ui-monospace, Menlo, monospace' : 'Jua, sans-serif')
+    g.font = Math.max(7, 9 * cam.s) + 'px ' + (room === 'workshop' ? 'ui-monospace, Menlo, monospace' : 'Jua, sans-serif')
     const w = g.measureText(label).width + 10 * cam.s, x = e.sx - w / 2, y = e.sy - 92 * cam.s
-    rrect(x, y, w, 14 * cam.s, 5 * cam.s, room === 'server' ? '#0e1a12' : '#fff8ee', LINE, 1)
-    g.fillStyle = room === 'server' ? '#7dffb0' : '#2a2033'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, e.sx, y + 7 * cam.s)
+    rrect(x, y, w, 14 * cam.s, 5 * cam.s, room === 'workshop' ? '#0e1a12' : '#fff8ee', LINE, 1)
+    g.fillStyle = room === 'workshop' ? '#7dffb0' : '#2a2033'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, e.sx, y + 7 * cam.s)
   }
 }
 
@@ -922,15 +996,66 @@ function partition(x0, x1, y, hue) {
   box(x0, y, x1 - x0, 0.1, 2, '#f4efe6', 40)
 }
 // A standing sign at the section's left end: the tmux session and its count.
-function sectionSign(sc) {
-  const [sx, sy] = P(0.25, sc.y0 + 0.25, 46)
-  const label = '🗂 tmux ' + sc.name + ' · ' + sc.n + '명'
-  g.font = Math.max(8, 12 * cam.s) + 'px Jua, sans-serif'
-  const w = g.measureText(label).width + 18 * cam.s
-  const [bx, by] = P(0.25, sc.y0 + 0.25, 0)
-  g.strokeStyle = LINE; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(bx, by); g.lineTo(sx, sy); g.stroke()
-  rrect(sx - 6 * cam.s, sy - 22 * cam.s, w, 22 * cam.s, 6 * cam.s, hsl2hex(sc.hue, 55, 70))
-  text(label, sx - 6 * cam.s + w / 2, sy - 11 * cam.s, 12, '#2a2033')
+
+// ---------- labels in the margin ----------
+// The building fills the middle of the screen; its names live outside it, in
+// the dark around, joined to what they name by an elbow line: each room's name,
+// when sessions come there and who is there now above the back wall; each
+// tmux session's name and head count left of the left wall, with a band in
+// its colour along the wall's top over the rows it holds. Sizes follow the
+// zoom only a little, so zooming in does not blow them up over the floor.
+const labelScale = () => Math.min(1.15, Math.max(0.75, cam.s))
+// route: the elbow line's points, from the anchor to where it meets the label.
+function callout(route, lx, ly, lines, fill, align = 'center') {
+  const [ax, ay] = route[0]
+  const k = labelScale()
+  g.font = 13 * k + 'px Jua, sans-serif'
+  const w0 = g.measureText(lines[0]).width
+  g.font = 10 * k + 'px Jua, sans-serif'
+  const w1 = lines[1] ? g.measureText(lines[1]).width : 0
+  const w = Math.max(w0, w1) + 22 * k, h = (lines[1] ? 38 : 24) * k
+  const bx = align === 'right' ? lx - w : lx - w / 2, by = ly - h
+  g.strokeStyle = 'rgba(255,248,238,.55)'; g.lineWidth = 1.4; g.lineJoin = 'round'; g.beginPath(); g.moveTo(ax, ay); for (const [px, py] of route.slice(1)) g.lineTo(px, py); g.stroke()
+  circle(ax, ay, 3, '#fff8ee', null)
+  // The box waits until every line is drawn, so no line crosses a label.
+  labelBoxes.push(() => {
+  rrect(bx, by, w, h, 9 * k, fill, 'rgba(255,248,238,.7)', 1.2 / cam.s)
+  g.font = 13 * k + 'px Jua, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fffaf0'; g.fillText(lines[0], bx + w / 2, by + (lines[1] ? 13 : 12) * k)
+  if (lines[1]) { g.font = 10 * k + 'px Jua, sans-serif'; g.fillStyle = 'rgba(255,250,240,.85)'; g.fillText(lines[1], bx + w / 2, by + 28 * k) }
+  })
+}
+let labelBoxes = []
+function marginLabels() {
+  labelBoxes = []
+  // Rooms: above the building, in order, pushed apart sideways so none
+  // overlaps, each at its own height, joined to its room by an elbow line.
+  const k = labelScale(), items = Object.entries(ZONES).map(([key, z]) => {
+    const here = inRoom(key).length, lines = [z.label + (here ? ' · ' + here + '명' : ''), z.when]
+    g.font = 13 * k + 'px Jua, sans-serif'; const w0 = g.measureText(lines[0]).width
+    g.font = 10 * k + 'px Jua, sans-serif'; const w1 = g.measureText(lines[1]).width
+    const [ax, ay] = P((z.x0 + z.x1) / 2, -0.3, WALL_H + 2)
+    return { z, lines, ax, ay, w: Math.max(w0, w1) + 22 * k, x: 0 }
+  })
+  // Not one row: each label sits at its own height, out of the others' way.
+  const baseY = Math.min(...items.map((it) => it.ay)) - 30 * k, gap = 8
+  let right = -Infinity
+  for (const it of items) { it.x = Math.max(it.ax - it.w / 2, right + gap); right = it.x + it.w }
+  const over = right - (VW - 12)
+  if (over > 0) { let push = over; for (let i = items.length - 1; i >= 0; i--) { const it = items[i], room = i ? it.x - (items[i - 1].x + items[i - 1].w + gap) : it.x - 12; it.x -= push; push = Math.max(0, push - Math.max(0, room)) } }
+  items.forEach((it, i) => {
+    const ly = baseY - [0, 34, 10, 44][i % 4] * k, lx = it.x + it.w / 2, knee = ly + 12 * k
+    // An elbow: up from the room, across, up into the label.
+    callout([[it.ax, it.ay], [it.ax, Math.max(knee, Math.min(it.ay - 8 * k, knee))], [lx, knee], [lx, ly]], lx, ly, it.lines, it.z.sign)
+  })
+  // tmux sessions: a band along the left wall's top, a label out to the left.
+  for (const sc of sections) {
+    const c = hsl2hex(sc.hue, 55, 62)
+    poly([P(-0.55, sc.y0 + 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H + 5), P(-0.55, sc.y0 + 0.08, WALL_H + 5)], c, 'rgba(59,42,53,.6)', 1)
+    const [ax, ay] = P(-0.55, (sc.y0 + sc.y1) / 2, WALL_H + 3)
+    const ly = ay - 20 * labelScale(), lx = ax - 46 * labelScale()
+    callout([[ax, ay], [ax, ly - 12 * labelScale()], [lx, ly - 12 * labelScale()]], lx, ly, ['🗂 tmux ' + sc.name + ' · ' + sc.n + '명'], dark(c, 0.25), 'right')
+  }
+  for (const f of labelBoxes) f()
 }
 
 // ---------- walls ----------
@@ -1034,16 +1159,6 @@ function shelf(x, y) {
     }
   }
 }
-function rack(x, y, t) {
-  box(x, y, 0.72, 0.62, 86, '#3d4a66')
-  for (let u = 0; u < 8; u++) {
-    const z = 10 + u * 9.5
-    poly([P(x + 0.06, y + 0.62, z), P(x + 0.66, y + 0.62, z), P(x + 0.66, y + 0.62, z + 6), P(x + 0.06, y + 0.62, z + 6)], '#2a3349', LINE, 0.6)
-    const on = Math.sin(t * (2 + ((u * 7 + Math.round(x * 3)) % 5)) + u) > -0.2
-    const [lx, ly] = P(x + 0.58, y + 0.62, z + 3)
-    circle(lx, ly, 1.6 * cam.s, on ? (u % 3 ? '#7dffb0' : '#ffd36b') : '#25402f', null)
-  }
-}
 function sofa(x, y) { box(x, y, 2.3, 0.75, 14, '#e27d8b'); box(x, y, 2.3, 0.22, 34, '#d56b7a'); box(x - 0.18, y, 0.2, 0.75, 24, '#d56b7a'); box(x + 2.3, y, 0.2, 0.75, 24, '#d56b7a') }
 function coffee(x, y, t) {
   box(x, y, 0.62, 0.55, 46, '#e9e4da')
@@ -1121,16 +1236,14 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
 function elevator(t) {
   const x = 15.95, y = 0.15
   box(x, y, 1.3, 1.05, 120, '#b8bfd6')
-  const open = Math.max(0, Math.min(1, (lift.openUntil - performance.now()) / 400)) * 0.28
+  const open = 0
   const fy = y + 1.05
   if (open > 0) poly([P(x + 0.15, fy, 4), P(x + 1.15, fy, 4), P(x + 1.15, fy, 96), P(x + 0.15, fy, 96)], '#fff6c9', null)
   poly([P(x + 0.15, fy, 4), P(x + 0.65 - open, fy, 4), P(x + 0.65 - open, fy, 96), P(x + 0.15, fy, 96)], '#dfe3f0')
   poly([P(x + 0.65 + open, fy, 4), P(x + 1.15, fy, 4), P(x + 1.15, fy, 96), P(x + 0.65 + open, fy, 96)], '#dfe3f0')
   const [lx, ly] = P(x + 0.65, fy, 108)
   rrect(lx - 16 * cam.s, ly - 7 * cam.s, 32 * cam.s, 13 * cam.s, 4 * cam.s, '#2a2b40')
-  text(stats.subs ? '▲ ' + stats.subs : '·', lx, ly, 10, '#ffd36b')
-  const [sx, sy] = P(x + 0.65, fy, 142)
-  text('🛗 서브에이전트', sx, sy, 12, '#fff8ee')
+  text('1F', lx, ly, 10, '#ffd36b')
 }
 
 // ---------- personality ----------
@@ -1160,6 +1273,27 @@ const SPARE = { talk: '말이 많아요', write: '문서 쓰는 게 일', code: 
 
 // ---------- chibi ----------
 const SKIN = '#ffe2c8', BLUSH = 'rgba(255,128,150,.55)'
+// A subagent: a small helper on a dotted tether to its session, popping in
+// with a puff and sparkles and leaving the same way.
+function puff(x, y, u, c) {
+  g.globalAlpha = Math.max(0, 1 - u)
+  for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2, r = (6 + u * 22) * cam.s; circle(x + Math.cos(a) * r, y - 14 * cam.s + Math.sin(a) * r * 0.6, (5 - u * 3) * cam.s, '#ffffff', null) }
+  for (let k = 0; k < 5; k++) { const a = (k / 5) * Math.PI * 2 + u * 2, r = (10 + u * 30) * cam.s; text('✦', x + Math.cos(a) * r, y - 20 * cam.s + Math.sin(a) * r * 0.7, 9, c) }
+  g.globalAlpha = 1
+}
+function subChibi(e, t) {
+  const now = performance.now(), pe = ents.get(e.data.parent && e.data.parent.id)
+  const [x, y] = P(e.x, e.y)
+  if (pe && pe.sx !== undefined && !e.leaving) {
+    g.strokeStyle = hsl2hex(e.hue, 60, 72); g.lineWidth = 1.4 * cam.s; g.setLineDash([2 * cam.s, 3 * cam.s])
+    g.beginPath(); g.moveTo(pe.sx, pe.sy - 30 * cam.s); g.quadraticCurveTo((pe.sx + x) / 2, Math.min(pe.sy, y) - 50 * cam.s, x, y - 26 * cam.s); g.stroke(); g.setLineDash([])
+  }
+  const bornU = e.born ? (now - e.born) / POOF_MS : 1, goneU = e.leaving ? (now - e.goneAt) / POOF_MS : 0
+  const scale = Math.min(1, bornU < 1 ? 0.3 + bornU * 0.7 : 1) * (e.leaving ? Math.max(0, 1 - goneU) : 1)
+  if (scale > 0.02) { g.save(); g.translate(x, y); g.scale(scale, scale); g.translate(-x, -y); drawChibi(e, t, 0); g.restore() }
+  if (bornU < 1) puff(x, y, bornU, '#ffd36b')
+  if (e.leaving && goneU < 1) puff(x, y, goneU, '#c9b8ff')
+}
 function chibi(e, t) {
   if (e.data.doing === 'napping' && !e.walking && (e.react || 0) < 0.35) {
     const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
@@ -1172,6 +1306,7 @@ function chibi(e, t) {
     for (let q = 0; q < 2; q++) { const ph = (t * 0.45 + q / 2 + (hashOf(e.id) % 10) / 10) % 1; g.globalAlpha = 1 - ph; text('z', hx + ph * 12 * cam.s, hy - 18 * cam.s - ph * 16 * cam.s, 9 + q * 3, '#fff8ee'); g.globalAlpha = 1 }
     return
   }
+  if (e.kind === 'sub') return subChibi(e, t)
   drawChibi(e, t, 0)
 }
 // How a character takes the cursor over it, by what it is doing:
@@ -1234,9 +1369,9 @@ function workFx(jk, doing, x, by, hx, hy, s, t, h) {
 // variants, picked by who it is and changed every few seconds.
 //   library (reading): turns pages of an open book / reaches up and pulls one
 //     off the shelf / squints through a magnifier at a page;
-//   server room (running): types fast on a laptop with scrolling green lines
+//   workshop (running): types fast on a laptop with scrolling green lines
 //     / plugs a cable in, sparks at the end;
-//   server room (calling, MCP): talks into a walkie-talkie, signal arcs out;
+//   phone booth (calling, MCP): the handset at the ear, a hand talking;
 //   lounge (idle): sips coffee, steam / stretches both arms up / nibbles a
 //     donut / plays a handheld game.
 function roomPose(d, x, by, s, t, h, arm) {
@@ -1254,10 +1389,10 @@ function roomPose(d, x, by, s, t, h, arm) {
     return
   }
   if (d === 'calling') {
-    arm(-9, -12); arm(8, -30)
-    rrect(x + 5 * s, by - 40 * s, 6 * s, 12 * s, 1.5 * s, '#2a2033'); g.strokeStyle = '#2a2033'; g.lineWidth = 1.2 * cam.s; g.beginPath(); g.moveTo(x + 9 * s, by - 40 * s); g.lineTo(x + 9 * s, by - 46 * s); g.stroke()
-    circle(x + 9 * s, by - 46.5 * s, 1.3 * s, Math.floor(t * 4) % 2 ? '#e86a5c' : '#5c2a2a', null)
-    for (let k = 0; k < 3; k++) { const ph = (t * 1.2 + k / 3) % 1; g.globalAlpha = 1 - ph; g.strokeStyle = '#5c9de8'; g.lineWidth = 1.4 * cam.s; g.beginPath(); g.arc(x + 9 * s, by - 46 * s, (4 + ph * 14) * s, -Math.PI * 0.8, -Math.PI * 0.2); g.stroke(); g.globalAlpha = 1 }
+    // On the booth's phone: the handset at the ear, the other hand talking.
+    arm(-9 - Math.sin(t * 3) * 2, -14 - Math.abs(Math.sin(t * 3)) * 4); arm(9, -32)
+    rrect(x + 6 * s, by - 42 * s, 5 * s, 14 * s, 2 * s, '#2a2033')
+    if (Math.floor(t * 2) % 2) text('…', x - 14 * s, by - 44 * s, 10, '#2b4a8a')
     return
   }
   if (d === 'running') {
@@ -1491,7 +1626,7 @@ function frame(now) {
     else if (e.path && e.path.length > 1) { e.x = wp[0]; e.y = wp[1]; e.path.shift(); e.walking = true }
     else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
     const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
-    if (e.leaving && dist2 < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
+    if (e.leaving && now - (e.goneAt || now) > POOF_MS) ents.delete(id)
   }
   if (camGo.on) { const a = Math.min(1, dt * 6); cam.s += (camGo.s - cam.s) * a; cam.ox += (camGo.ox - cam.ox) * a; cam.oy += (camGo.oy - cam.oy) * a; if (Math.abs(camGo.ox - cam.ox) + Math.abs(camGo.oy - cam.oy) + Math.abs(camGo.s - cam.s) * 100 < 0.5) camGo.on = false }
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
@@ -1513,16 +1648,16 @@ function frame(now) {
   const items = []
   const add = (depth, fn) => items.push([depth, fn])
   for (let k = 0; k < 4; k++) { const x = 0.55 + k * 1.17; add(x + 0.7, () => shelf(x, 0.0)) }
-  for (let k = 0; k < 5; k++) { const x = 5.85 + k * 0.95; add(x + 0.7, () => rack(x, 0.05, t)) }
+  add(5.75 + 0.8 + 0.7, () => machine(5.75, 0.05, t))
+  for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t))
   add(11.6, () => coffee(11.05, 0.1, t))
   add(13.6, () => sofa(12.1, 0.25))
   add(15.3, () => plant(14.95, 0.2))
   add(17.3, () => elevator(t))
   add(4.8 + 1.3, () => readingTable(t))
-  add(10.2 + 1.3, () => consoleDesk(t))
+  add(8.0 + 1.3, () => workbench(t))
   add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]))
   add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t))
-  for (const z of Object.values(ZONES)) add((z.x0 + z.x1) / 2 + 0.9 + 4.2, () => zoneSign(z))
   for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))
   for (const w of windows) {
     if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t)) }
@@ -1538,10 +1673,11 @@ function frame(now) {
   }
   for (const sc of sections) {
     if (!sc.first) for (const [a, b] of partSegments(sc.y0)) add(b + sc.y0 + 0.1, () => partition(a, b, sc.y0, sc.hue))
-    add(0.2 + sc.y0 + 0.2, () => sectionSign(sc))
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
   add(1e9, () => roomTags())
+  add(1e9 + 1, () => marginLabels())
+  if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
   items.sort((a, b) => a[0] - b[0])
   for (const [, fn] of items) fn()
 }

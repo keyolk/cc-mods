@@ -178,15 +178,16 @@ answers there.
 - **One pod per tmux window**: its sessions sit at its desks side by side, the
   window name on each desk's front.
 - **Where a session stands** follows its last tool call (its transcript):
-  📚 library while reading, 🖥 server room while running a command or an MCP
-  tool, its desk while writing (typing) or with no tool (chin in hand, `…`),
+  📚 library while reading, 🛠 workshop while running a command, 📞 a phone
+  booth during an MCP call, its desk while writing (typing) or with no tool (chin in hand, `…`),
   `?` / `!` over its head while it waits on you.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
   minutes they lie down in a pile in front of the sofa, asleep.
 - **Subagents** (`<project>/<sid>/subagents/agent-*.jsonl`, live while written
-  in the last 45 s) are small ones with an antenna: they come up the elevator,
-  stand with their session (a row in front of its desk, or around it in a
-  room), show their own work by pose and bubble, and leave by the elevator.
+  in the last 45 s) are small ones with an antenna, summoned out of their
+  session: each pops up where it is in a puff with sparkles, stands with it (a
+  row in front of its desk, or around it in a room) on a dotted tether, shows
+  its own work by pose and bubble, and vanishes in a puff when done.
 - **Personality** from its own transcript, every tool call counted once
   (read incrementally): its **job** is the kind of tool it uses most beside
   Bash — 📣 communicator (Slack: headset), 📝 writer (Docs/Artifact: beret,
@@ -269,17 +270,22 @@ answers there.
   drawers in the card, a tab a kind: 📥 받은 것, 📤 보낸 것, 📝 스크래치, 📄
   파일, 🗂 exp, 🖼 아티팩트, each item a badge or chip one click away; `[`/`]`
   switch tabs. A click on one thing opens the drawers at its tab.
-- **Rooms say what they are for**: a standing sign at each room's front names
-  it, says when a session comes there (reading and searching; running commands
-  and MCP calls; idle, napping after 10 minutes) and how many are there now.
+- **Rooms say what they are for**: each room's name, when a session comes
+  there and how many are there now sit in the margin above the building, each
+  at its own height, joined to its room by an elbow line; the tmux sessions'
+  names sit left of the left wall the same way, over a band in their colour
+  along its top. Hovering a room's floor lights it up and lists who is there.
   The library has parquet, a long reading table with green lamps and a ladder;
-  the server room a raised perforated floor with a hazard stripe, an operator
-  console whose screens show what the people in the room are running and a
-  cable tray; the lounge a patterned carpet, a café table with donuts and a
-  vending machine. Over each arrived visitor a tag says what it reads (`📖
-  file`) or runs (`$ command`). What they do there differs too: turning pages,
+  the workshop a concrete floor with a hazard stripe, a tool pegboard, a bench
+  whose terminal shows what the people in the room are running and a machine
+  whose gears turn and steam while someone is there; the phone booths a navy
+  carpet and three booths (an `ON AIR` lamp, the handset off the hook while
+  used), the logo and name of the service on the line over the caller; the
+  lounge a patterned carpet, a café table with donuts and a
+  vending machine. Over a visitor, while you hover its room or it, a tag says what it reads
+  (`📖 file`) or runs (`$ command`), or which service it calls. What they do there differs too: turning pages,
   pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
-  cable with sparks, a walkie-talkie for MCP calls; sipping coffee, stretching,
+  cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` button (shown once
   you have zoomed or panned) glides back to the whole office.

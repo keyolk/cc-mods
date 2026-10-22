@@ -6,9 +6,10 @@ Serves office.html and /state on 127.0.0.1 only. A session is a tmux pane with
 last tool call in its transcript:
 
   Read/Grep/Glob/WebFetch/WebSearch -> library     (reading)
-  Bash/Monitor/BashOutput           -> server room (running a command)
+  Bash/Monitor/BashOutput           -> workshop    (running a command)
+  mcp__*                            -> phone booth (calling a service)
   Edit/Write/NotebookEdit           -> desk        (writing)
-  Agent/Task/Workflow               -> desk, subagents ride the elevator
+  Agent/Task/Workflow               -> desk, subagents pop out of it
   working with no tool for a while  -> desk, chin in hand (thinking)
   waiting/ask, action               -> desk, a "?" or "!" over the head
   done / idle                       -> lounge
@@ -260,13 +261,13 @@ def room(state: str, attention: str, t: dict) -> tuple[str, str]:
             if tool in READ:
                 return "library", "reading"
             if tool in RUN:
-                return "server", "running"
+                return "workshop", "running"
             if tool in WRITE:
                 return "desk", "typing"
             if tool in DELEGATE:
                 return "desk", "delegating"
             if tool.startswith("mcp__"):
-                return "server", "calling"
+                return "phone", "calling"
         return "desk", "thinking"
     if attention == "action":
         return "desk", "alert"
