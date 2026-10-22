@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Install and update the binaries cc-mods calls, from their GitHub releases.
+
+The cockpit shells out to tweb, narwhal and ccproxy. Building each from source
+(Rust + Go toolchains, three repos) was the slow part of setting cc-mods up, so
+every tool now publishes prebuilt binaries on a v* tag and this script fetches
+the newest one.
+
+    cc-mods-tools status [--json]        what is installed, what the latest release is
+    cc-mods-tools install [tool ...]     install missing tools (or the named ones)
+    cc-mods-tools update [tool ...]      replace tools this script installed with the latest release
+        --force                          also replace binaries it did not install (a local build)
+        --prefix DIR                     install into DIR/bin (default ~/.local)
+
+The tool list is tools.json beside bin/. Two asset layouts are understood:
+  <name>_<version>_<os>_<arch>.tar.gz + checksums.txt   (goreleaser; tweb, narwhal)
+  <name>-<os>-<arch>                  + SHA256SUMS      (raw binary; ccproxy)
+
+A binary that is already on disk but was not put there by this script (its
+sha256 is not the one recorded in the state file) is treated as a local build
+and left alone unless --force: the people who develop these tools run
+`make install`, and an update must not silently replace their build with an
+older release.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MANIFEST = ROOT / "tools.json"
+STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "cc-mods" / "tools.json"
+ORG = Path.home() / ".config" / "cc-mods" / "org.json"
+API = "https://api.github.com"
+CHECKSUM_FILES = ("checksums.txt", "SHA256SUMS")
+
+
+def platform_pair() -> tuple[str, str]:
+    os_name = sys.platform
+    os_name = {"darwin": "darwin", "linux": "linux"}.get(os_name, os_name)
+    arch = platform.machine().lower()
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(arch, arch)
+    return os_name, arch
+
+
+def sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def load_json(path: Path, default):
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return default
+
+
+# --- GitHub ------------------------------------------------------------------
+
+def gh_token(owner: str) -> str | None:
+    """The token for an owner, picked the way the mod's gh routing picks it:
+    org.json github.accounts maps owner -> login ("" means the active account).
+    No gh, or not logged in, means anonymous, which still reads public repos."""
+    if os.environ.get("GH_TOKEN"):
+        return os.environ["GH_TOKEN"]
+    login = (load_json(ORG, {}).get("github", {}).get("accounts", {}) or {}).get(owner) or ""
+    argv = ["gh", "auth", "token"] + (["--user", login] if login else [])
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() or None
+
+
+def request(url: str, token: str | None, accept: str = "application/vnd.github+json") -> urllib.request.Request:
+    req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "cc-mods-tools"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    return req
+
+
+def latest_release(repo: str, token: str | None) -> dict:
+    try:
+        with urllib.request.urlopen(request(f"{API}/repos/{repo}/releases/latest", token), timeout=20) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise RuntimeError(f"{repo}: latest release, HTTP {e.code}") from None
+    # 404 means either no release yet or, for a private repo, no access: GitHub
+    # answers 404 rather than 403 to a caller who cannot see it.
+    try:
+        urllib.request.urlopen(request(f"{API}/repos/{repo}", token), timeout=20).close()
+    except urllib.error.HTTPError:
+        raise RuntimeError(f"{repo}: cannot read the repo; log in with `gh auth login` as an account that can") from None
+    raise RuntimeError(f"{repo}: no release published yet")
+
+
+def download(asset: dict, token: str | None, dest: Path) -> None:
+    # The asset API URL works for private repos with a token; browser_download_url
+    # would redirect to a login page instead.
+    with urllib.request.urlopen(request(asset["url"], token, "application/octet-stream"), timeout=300) as r, dest.open("wb") as f:
+        shutil.copyfileobj(r, f)
+
+
+def pick_asset(name: str, assets: list[dict], os_name: str, arch: str) -> dict | None:
+    want = [a for a in assets if a["name"].startswith(name) and os_name in a["name"] and arch in a["name"].split(os_name, 1)[1]]
+    archives = [a for a in want if a["name"].endswith(".tar.gz")]
+    raw = [a for a in want if "." not in a["name"].split(os_name, 1)[1]]
+    return (archives or raw or [None])[0]
+
+
+# --- install -----------------------------------------------------------------
+
+def place(src: Path, dest: Path) -> None:
+    src.chmod(0o755)
+    if sys.platform == "darwin":
+        # A download through urllib carries no quarantine flag, but a copy made
+        # by a browser does; clearing it is harmless either way. Re-signing
+        # ad hoc matches what tweb's `make install` does: an arm64 binary whose
+        # signature does not match its bytes is SIGKILLed on exec.
+        subprocess.run(["xattr", "-d", "com.apple.quarantine", str(src)], capture_output=True)
+        subprocess.run(["codesign", "-f", "-s", "-", str(src)], capture_output=True)
+    # rename(2), never a copy over the old file: overwriting a running Mach-O
+    # in place breaks its signature mid-write and every later exec dies.
+    os.replace(src, dest)
+
+
+def install_tool(tool: dict, rel: dict, token: str | None, bindir: Path) -> dict:
+    os_name, arch = platform_pair()
+    asset = pick_asset(tool["name"], rel.get("assets", []), os_name, arch)
+    if not asset:
+        raise RuntimeError(f"{tool['name']} {rel['tag_name']}: no asset for {os_name}/{arch}")
+    sums_asset = next((a for a in rel["assets"] if a["name"] in CHECKSUM_FILES), None)
+
+    bindir.mkdir(parents=True, exist_ok=True)
+    # The staging directory sits beside the target so the final os.replace is
+    # a rename on one filesystem, not a cross-device copy.
+    with tempfile.TemporaryDirectory(dir=bindir, prefix=".cc-mods-tools-") as tmp:
+        t = Path(tmp)
+        blob = t / asset["name"]
+        download(asset, token, blob)
+        if sums_asset:
+            download(sums_asset, token, t / "sums")
+            sums = dict(reversed(line.split(None, 1)) for line in (t / "sums").read_text().splitlines() if line.strip())
+            expected = sums.get(asset["name"]) or sums.get("*" + asset["name"])
+            if not expected:
+                raise RuntimeError(f"{asset['name']} is not listed in {sums_asset['name']}")
+            if sha256(blob) != expected:
+                raise RuntimeError(f"{asset['name']}: sha256 does not match {sums_asset['name']}")
+        else:
+            print(f"  warning: {tool['name']} {rel['tag_name']} publishes no checksum file; not verified", file=sys.stderr)
+
+        out = t / "out"
+        out.mkdir()
+        if asset["name"].endswith(".tar.gz"):
+            with tarfile.open(blob) as tf:
+                members = [m for m in tf.getmembers() if m.isfile() and Path(m.name).name in tool["bins"]]
+                for m in members:
+                    m.name = Path(m.name).name  # flatten; never trust paths from the archive
+                    tf.extract(m, out, filter="data") if hasattr(tarfile, "data_filter") else tf.extract(m, out)
+        else:
+            shutil.move(blob, out / tool["bins"][0])
+
+        if not (out / tool["bins"][0]).exists():
+            raise RuntimeError(f"{asset['name']} does not contain {tool['bins'][0]}")
+        files = {}
+        for b in tool["bins"]:
+            # The first bin is the tool; the rest are companions that only some
+            # platforms ship (tweb-webkit is macOS-only).
+            if (out / b).exists():
+                place(out / b, bindir / b)
+                # Hashed after place(): the ad hoc re-sign rewrites the bytes.
+                files[b] = sha256(bindir / b)
+    return {"tag": rel["tag_name"], "repo": tool["repo"], "asset": asset["name"], "installed_at": int(time.time()), "files": files}
+
+
+# --- status ------------------------------------------------------------------
+
+def local_state(tool: dict, rec: dict | None, bindir: Path) -> str:
+    """missing | managed | modified | local"""
+    main = bindir / tool["bins"][0]
+    if not main.exists():
+        return "missing"
+    if not rec:
+        return "local"
+    return "managed" if sha256(main) == rec["files"].get(tool["bins"][0]) else "modified"
+
+
+def survey(tools: list[dict], state: dict, bindir: Path) -> list[dict]:
+    rows = []
+    for tool in tools:
+        owner = tool["repo"].split("/")[0]
+        token = gh_token(owner)
+        row = {"name": tool["name"], "repo": tool["repo"], "why": tool.get("why", ""), "token": token}
+        rec = state.get(tool["name"])
+        row["local"] = local_state(tool, rec, bindir)
+        row["installed"] = rec["tag"] if rec and row["local"] == "managed" else None
+        try:
+            row["release"] = latest_release(tool["repo"], token)
+            row["latest"] = row["release"]["tag_name"]
+        except (RuntimeError, urllib.error.URLError) as e:
+            row["release"], row["latest"], row["error"] = None, None, str(e)
+        on_path = shutil.which(tool["bins"][0])
+        if on_path and Path(on_path).resolve() != (bindir / tool["bins"][0]).resolve():
+            row["shadowed_by"] = on_path
+        rows.append(row)
+    return rows
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("--")]
+    flags = {a for a in argv if a.startswith("--")}
+    prefix = Path.home() / ".local"
+    if "--prefix" in argv:
+        i = argv.index("--prefix")
+        prefix = Path(argv[i + 1]).expanduser()
+        args.remove(argv[i + 1])
+    bindir = prefix / "bin"
+    cmd = args[0] if args else "status"
+    names = set(args[1:])
+
+    tools = load_json(MANIFEST, {"tools": []})["tools"]
+    unknown = names - {t["name"] for t in tools}
+    if unknown:
+        print(f"unknown tool(s): {', '.join(sorted(unknown))}; known: {', '.join(t['name'] for t in tools)}", file=sys.stderr)
+        return 2
+    if names:
+        tools = [t for t in tools if t["name"] in names]
+    state = load_json(STATE, {})
+    rows = survey(tools, state, bindir)
+
+    if cmd == "status":
+        if "--json" in flags:
+            print(json.dumps([{k: v for k, v in r.items() if k not in ("release", "token")} for r in rows], indent=2))
+            return 0
+        for r in rows:
+            have = {"missing": "not installed", "local": "local build", "modified": "changed since install"}.get(r["local"], r["installed"])
+            latest = r["latest"] or f"? ({r.get('error')})"
+            mark = "✓" if r["local"] == "managed" and r["installed"] == r["latest"] else "↑" if r["local"] in ("missing", "managed") and r["latest"] else "·"
+            print(f"{mark} {r['name']:<9} {have:<22} latest {latest}")
+            if r.get("shadowed_by"):
+                print(f"    note: {r['shadowed_by']} comes first on PATH, not {bindir / r['name']}")
+        return 0
+
+    if cmd not in ("install", "update"):
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    failed = 0
+    for tool, r in zip(tools, rows):
+        if not r["release"]:
+            print(f"✗ {r['name']}: {r.get('error')}", file=sys.stderr)
+            failed += 1
+            continue
+        if r["local"] in ("local", "modified") and "--force" not in flags:
+            print(f"· {r['name']}: {'local build' if r['local'] == 'local' else 'changed since install'} at {bindir / tool['bins'][0]}, left alone (--force replaces it with {r['latest']})")
+            continue
+        if cmd == "install" and r["local"] == "managed" and not names:
+            print(f"· {r['name']}: already installed ({r['installed']}); `update` moves it to {r['latest']}")
+            continue
+        if r["local"] == "managed" and r["installed"] == r["latest"]:
+            print(f"✓ {r['name']} {r['latest']} is current")
+            continue
+        try:
+            state[tool["name"]] = install_tool(tool, r["release"], r["token"], bindir)
+        except (RuntimeError, urllib.error.URLError, OSError, tarfile.TarError) as e:
+            print(f"✗ {r['name']}: {e}", file=sys.stderr)
+            failed += 1
+            continue
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(state, indent=2) + "\n")
+        print(f"✓ {r['name']} {r['latest']} → {bindir} ({', '.join(state[tool['name']]['files'])})")
+        if r.get("shadowed_by"):
+            print(f"    note: {r['shadowed_by']} comes first on PATH and will still run instead")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

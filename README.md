@@ -462,6 +462,38 @@ conflict, merged, changes requested) or a turn that wrote or asks stays (`❗ wa
 
 Policy short names: `merge` `prod` `prod-w` `auto` `tmux`.
 
+## Install the tools it calls
+
+The cockpit shells out to three binaries. Each publishes prebuilt binaries
+for macOS and Linux (amd64, arm64) on a `v*` tag, so nobody needs the Rust or
+Go toolchain to set cc-mods up:
+
+| Tool | Repo | Used by |
+|---|---|---|
+| `tweb` (+ `twebd`, `tweb-webkit`, `tweb-native-input`) | keyolk/tweb | Web tab, `/browser`, browserEmbed |
+| `narwhal` | keyolk/narwhal | Needs you / Work: narwhal runs |
+| `ccproxy` | sendbird/ccproxy (internal) | Usage tab |
+
+```bash
+bin/cc-mods-tools status          # installed / local build / latest release
+bin/cc-mods-tools install         # the missing ones, into ~/.local/bin
+bin/cc-mods-tools update          # move the ones it installed to the latest release
+bin/cc-mods-tools update narwhal --force   # also replace a local `make install` build
+```
+
+The list is `tools.json`. Each archive is checked against the release's
+`checksums.txt` / `SHA256SUMS`, re-signed ad hoc on macOS, and moved into place
+with a rename (never copied over a running binary). What it installed is
+recorded in `~/.local/state/cc-mods/tools.json` by sha256; a binary there that
+does not match, such as your own `make install`, is a local build and is left
+alone unless `--force`. Tokens come from `gh auth token`, picked per owner from
+`org.json` `github.accounts` as the mod does; `sendbird/ccproxy` needs a gh
+login that can read sendbird repos. `tmux-chrome` is scripts plus a Chrome
+extension and is still installed from its repo (`install.sh`).
+
+A tool reaches users only when it is tagged: bump, merge, tag the merge commit
+(`ccproxy` also requires `internal/buildinfo/VERSION` to match the tag).
+
 ## Load it
 
 ```bash
