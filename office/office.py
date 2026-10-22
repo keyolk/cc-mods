@@ -631,13 +631,24 @@ def route_of(pane: str) -> str:
     return out if out in ("tweb", "tweb-chrome", "tweb-webkit", "chrome") else "default"
 
 
+# A reply sent from the office that the session has not picked up yet: what
+# it says and how long it has waited (cc-mods takes it within ~2 s once idle).
+def inbox_waiting(sid: str) -> dict | None:
+    try:
+        with open(os.path.join(INBOX, sid + ".json")) as f:
+            d = json.load(f)
+        return {"text": str(d.get("text", ""))[:200], "at": d.get("at")}
+    except (OSError, ValueError):
+        return None
+
+
 def detail(sid: str, kind: str | None = None) -> dict:
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "route": route_of(me["pane"]), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -709,6 +720,14 @@ def act(body: dict) -> tuple[int, dict]:
         text = str(value or "").strip()
         if not text or len(text) > 4000:
             return 400, {"error": "empty or too long"}
+        # A session at work takes a prompt as a queued follow-up, and one
+        # still in the inbox has not even reached it: a second one is usually
+        # the same answer twice. The page asks again before forcing it.
+        if not body.get("force"):
+            if me["state"] == "working":
+                return 409, {"error": "busy", "busy": "working", "tool": me.get("tool")}
+            if os.path.exists(os.path.join(INBOX, sid + ".json")):
+                return 409, {"error": "busy", "busy": "inbox"}
         os.makedirs(INBOX, exist_ok=True)
         tmp = os.path.join(INBOX, sid + ".json.tmp")
         with open(tmp, "w") as f:
