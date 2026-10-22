@@ -72,3 +72,9 @@ export function isCallbackUrl(s: string): boolean {
 export function serverOf(itemId: string): string | undefined {
   return itemId.startsWith('mcp:') ? itemId.slice(4) : undefined
 }
+
+// A login that just finished outranks the last `claude mcp list`: that list
+// runs at most every 10 minutes, is kept for 30, and can lag a fresh token.
+export function markLoggedIn<T extends { id: string; state: string; detail?: string; fix?: unknown }>(items: readonly T[], server: string): T[] {
+  return items.map((i) => (serverOf(i.id) === server ? { ...i, state: 'ok', detail: 'logged in', fix: undefined } : i))
+}

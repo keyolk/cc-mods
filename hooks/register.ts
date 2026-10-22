@@ -36,7 +36,7 @@ import { USAGE_WINDOWS, renderUsage, type UsageWindow } from './views/usage'
 import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
 import { EMPTY, parseProfiles, suggest, type Sources } from './lib/complete'
 import { BLOCK_TTL_MS, blockOf, grantLabel, nowAllowed, resumePrompt, type Blocked } from './lib/unblock'
-import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
+import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
 import { cockpitColumns } from './lib/layout'
 import { RCA_MS, alertOf, rcaGrants, rcaSection, restoreArgvs, type Alert, type Grant, type RcaState } from './lib/rca'
 import { identityText } from './lib/identity'
@@ -447,6 +447,11 @@ async function closeLoginPane($: any) {
 }
 
 let mcpList: { at: number; items: AuthItem[] } | undefined
+// Connectors logged in from this session, and when: shown ok over the list
+// for LOGGED_IN_HOLD_MS (lib/mcpauth.ts markLoggedIn). Without it the band
+// said "logged in and reconnected here" while Needs you still said expired.
+const loggedInAt = new Map<string, number>()
+const LOGGED_IN_HOLD_MS = 15 * 60_000
 let mcpListRunning = false
 
 async function refreshMcpList($: any) {
@@ -512,6 +517,7 @@ async function finishMcpLogin($: any, server: string, msg: string) {
   mcpPoll?.cancel()
   await update($, mcpLoginA, (l) => ({ server, status: 'done', msg, at: Date.now(), claudeAi: l?.claudeAi }))
   $.ui.toast(server.replace(/^claude\.ai /, '') + ': ' + msg)
+  loggedInAt.set(server, Date.now())
   await runRadar($, true)
   $.clock.after(60_000, () => update($, mcpLoginA, (l) => (l?.status === 'done' && l.server === server ? null : l)))
 }
@@ -1085,8 +1091,11 @@ async function runRadar($: any, force = false): Promise<AuthItem[]> {
   // background at most every 10 minutes; until it has, the needs-auth cache.
   const listed = mcpList && Date.now() - mcpList.at < 30 * 60_000 ? mcpList.items : undefined
   if (!mcpListRunning && (!mcpList || Date.now() - mcpList.at > 10 * 60_000)) void refreshMcpList($)
+  // A login finished here outranks the list for a while: the list may have
+  // been read before it, and `claude mcp list` itself lags a fresh token.
+  const fresh = [...loggedInAt].filter(([, at]) => now - at < LOGGED_IN_HOLD_MS).map(([s]) => s)
   items.push(
-    ...(listed ?? mcpItems(await readText($, home + '/.claude/mcp-needs-auth-cache.json'))).map((i) =>
+    ...fresh.reduce(markLoggedIn, (listed ?? mcpItems(await readText($, home + '/.claude/mcp-needs-auth-cache.json'))) as AuthItem[]).map((i) =>
       authorizedAt.has(serverOf(i.id) ?? '') ? { ...i, state: 'ok' as const, detail: 'authorized · restart to use', fix: undefined } : i,
     ),
   )
