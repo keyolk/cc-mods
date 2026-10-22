@@ -55,7 +55,7 @@ import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from '
 import { clip, hhmm } from './lib/text'
 import { isMcpTool, looksDisconnected, mcpServerKey, normalizeServer } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
-import { parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
+import { focusWindowArgv, parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
 import { ORG_PATH, org, parseOrg, setOrg } from './lib/org'
 import { answerBody, freshItems, itemKey, parseAttention, parseRuns, resultPrompt, runOutputs, toastFor, type NarwhalItem, type NarwhalRun } from './lib/narwhal'
 import { backoff, classify, decide as resumeDecide, slept, type Pending } from './lib/resume'
@@ -1400,7 +1400,7 @@ async function narwhalAction($: any, it: NarwhalItem, action: 'answer' | 'monito
 async function refreshElsewhere($: any) {
   let windows: Elsewhere[] = []
   try {
-    const r = await $.process.run(['tmux', 'list-windows', '-a', '-F', '#{session_name}|#{window_index}|#{window_name}|#{@cc_state}|#{@cc_attention}|#{@title}|#{@cc_since}|#{@cc_session}'], { timeoutMs: 3000 })
+    const r = await $.process.run(['tmux', 'list-windows', '-a', '-F', '#{session_name}|#{window_index}|#{window_name}|#{@cc_state}|#{@cc_attention}|#{@title}|#{@cc_since}|#{@cc_session}|#{window_id}'], { timeoutMs: 3000 })
     windows = parseTmuxWindows(r.stdout, sid)
   } catch {}
   const d = new Date()
@@ -2571,7 +2571,7 @@ async function shareSession($: any) {
 async function shareOther($: any, x: Elsewhere) {
   if (!x.session) return
   const r = await $.process.run(['sh', '-c', 'ls "$HOME"/.claude/projects/*/"$0".jsonl 2>/dev/null | head -1', x.session], { timeoutMs: 3000 }).catch(() => undefined)
-  const text = identityText({ session: x.session, window: x.target + ' ' + x.window.replace(/^\d+:/, ''), topic: x.title, state: x.attention, transcript: r?.stdout.trim() || undefined })
+  const text = identityText({ session: x.session, window: x.where + ' ' + x.window.replace(/^\d+:/, ''), topic: x.title, state: x.attention, transcript: r?.stdout.trim() || undefined })
   await copyText($, text, x.window + "'s identity")
 }
 
@@ -3971,7 +3971,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       todos: ((await read($, elsewhereA)) as { todos: Todo[] }).todos,
       narwhal: await narwhalVisible($),
       onNarwhal: (it, action, value) => void narwhalAction($, it, action, value),
-      onWindow: (target) => void tmux($, [['select-window', '-t', target]]),
+      onWindow: (target) => void (isPaneId(pane) ? $.process.run(focusWindowArgv(pane, target), { timeoutMs: 5000 }).catch(() => undefined) : tmux($, [['select-window', '-t', target]])),
       resume: (await read($, resumeA)) as Pending | null,
       onResume: async (now) => {
         await update($, resumeA, () => null)

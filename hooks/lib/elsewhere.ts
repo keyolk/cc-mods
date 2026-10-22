@@ -5,18 +5,22 @@
 
 export type Elsewhere = {
   window: string // tmux window index:name
-  target: string // tmux target to select it (session:index)
+  // tmux target to select it: its window id (@12), which stays put when the
+  // window is moved to another session; session:index only from a listing
+  // without ids.
+  target: string
+  where: string // session:index, as it reads now
   attention: 'action' | 'ask' | 'idle' | 'working'
   title?: string
   since?: number // epoch seconds the state began
   session?: string // its Claude Code session id (@cc_session), for its identity
 }
 
-// `tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{@cc_state}|#{@cc_attention}|#{@title}|#{@cc_since}|#{@cc_session}'`
+// `tmux list-windows -a -F '#{session_name}|#{window_index}|#{window_name}|#{@cc_state}|#{@cc_attention}|#{@title}|#{@cc_since}|#{@cc_session}|#{window_id}'`
 export function parseWindows(out: string, mySession: string | undefined): Elsewhere[] {
   const rows: Elsewhere[] = []
   for (const line of out.split('\n')) {
-    const [sess, idx, name, state, attn, title, since, cc] = line.split('|')
+    const [sess, idx, name, state, attn, title, since, cc, wid] = line.split('|')
     if (!sess || !idx || !state) continue
     if (mySession && cc === mySession) continue
     // Waiting on the person: a permission or action (action), a question or
@@ -25,7 +29,7 @@ export function parseWindows(out: string, mySession: string | undefined): Elsewh
     // handed to another session.
     const attention = state === 'working' ? 'working' : attn === 'action' ? 'action' : attn === 'ask' ? 'ask' : state === 'waiting' ? 'idle' : undefined
     if (!attention) continue
-    rows.push({ window: idx + ':' + name, target: sess + ':' + idx, attention, title: title || undefined, since: Number(since) || undefined, session: cc || undefined })
+    rows.push({ window: idx + ':' + name, target: /^@\d+$/.test(wid ?? '') ? wid! : sess + ':' + idx, where: sess + ':' + idx, attention, title: title || undefined, since: Number(since) || undefined, session: cc || undefined })
   }
   const rank = { action: 0, ask: 1, idle: 2, working: 3 } as const
   return rows.sort((a, b) => rank[a.attention] - rank[b.attention] || (b.since ?? 0) - (a.since ?? 0))
@@ -59,4 +63,23 @@ export function since(sec: number | undefined, nowMs: number): string {
   if (!sec) return ''
   const m = Math.max(0, Math.round((nowMs / 1000 - sec) / 60))
   return m < 60 ? m + 'm' : m < 1440 ? Math.floor(m / 60) + 'h' : Math.floor(m / 1440) + 'd'
+}
+
+// Bringing another window in front from the cockpit. `select-window` alone
+// only changes that window's own session: once windows live in more than one
+// tmux session (one was moved), the person's client stays where it is. So
+// the clients showing this session's pane are switched to the target, which
+// also makes it their current window. Every lookup happens at press time,
+// through the pane id: the session this window is in now, not the one
+// $TMUX named when Claude started.
+const FOCUS_WINDOW = [
+  'me=$(tmux display-message -p -t "$0" \'#{session_name}\') || exit 1',
+  'tmux list-clients -F \'#{client_name}|#{client_session}\' | while IFS=\'|\' read -r c s; do',
+  '  [ "$s" = "$me" ] && tmux switch-client -c "$c" -t "$1"',
+  'done',
+  'tmux select-window -t "$1"',
+].join('\n')
+
+export function focusWindowArgv(pane: string, target: string): string[] {
+  return ['sh', '-c', FOCUS_WINDOW, pane, target]
 }
