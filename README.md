@@ -272,15 +272,18 @@ else the first name of your account's full name, else your login name.
   replies dim while it works. A reply then is refused once with that reason
   (the server checks the session's state and its inbox); pressing again sends
   it anyway, as a queued follow-up.
-- **Quiet until you speak first**: `Z` (or `⌥Z` in the reply box) tells an
-  agent to keep quiet: it leaves the Tab/N queue and stops lighting its pod
-  up, whatever it waits on, until you speak to it first (a reply, a pick or a
-  grant from the office, or anything you type to it yourself: a human prompt
-  in its transcript after you muted it). `Z` again lifts it. It wears tape
-  over its mouth; with something to say it strains, cheeks puffed and
-  reddening, a hand up and waving, a muffled `음! 음음!` bubble going nowhere,
-  and its chip reads `🤐 name · 할 말 참는 중 N분`. Kept in
-  `~/.claude/state/office/mute.json`.
+- **미루기**: one button (`Z`, or `⌥Z` in the reply box) opens a menu: 30
+  minutes, an hour, the rest of today, or `🤐 until you speak first`, and,
+  when already set aside, call it back now (digits pick). A set-aside agent
+  leaves the Tab/N queue and stops lighting its pod up, whatever it waits on;
+  speaking to it first lifts any of them (a reply, a pick or a grant from the
+  office, or anything you type to it yourself: a human prompt in its
+  transcript after you set it aside), and a timed one also ends on its time.
+  A timed one wears `💤` (`💤!` with something to say); one waiting for you to
+  speak wears tape over its mouth and, with something to say, strains:
+  cheeks puffed and reddening, a hand up and waving, a muffled `음! 음음!`
+  bubble going nowhere. Chips: `💤 name · N분`, `🤐 name · 할 말 참는 중 N분`.
+  Kept in `~/.claude/state/office/mute.json`.
 - **Desks differ** by window: wood, white, dark, pastel or standing desks; a
   striped, checked or round rug; in a pod with a free seat a plant, a
   bookshelf, a beanbag, a whiteboard, a sleeping cat, a water cooler, an

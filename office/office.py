@@ -751,11 +751,21 @@ def act(body: dict) -> tuple[int, dict]:
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
-        # value: true to keep it quiet until the person speaks first, false
-        # to let it call again.
-        on = bool(value)
-        set_mute(sid, on)
-        return 200, {"ok": True, "sent": "muted until you speak" if on else "may call you again"}
+        # value: minutes to set it aside for, "speak" for until the person
+        # speaks to it first, 0 to let it call again.
+        if value == "speak":
+            set_mute(sid, True, None)
+            return 200, {"ok": True, "sent": "quiet until you speak"}
+        try:
+            mins = int(value or 0)
+        except (TypeError, ValueError):
+            return 400, {"error": "minutes or speak"}
+        if mins <= 0:
+            set_mute(sid, False)
+            return 200, {"ok": True, "sent": "may call you again"}
+        until = time.time() + mins * 60
+        set_mute(sid, True, until)
+        return 200, {"ok": True, "sent": "set aside", "until": until}
     # Speaking to it (a pick, a reply, a grant) lifts its silence.
     if kind in ("key", "reply", "grant"):
         set_mute(sid, False)
@@ -868,10 +878,11 @@ def rearrange(kind: str, me: dict, value) -> tuple[int, dict]:
     return 200, {"ok": True, "sent": r.stdout.strip()}
 
 
-# Agents told to keep quiet until the person speaks to them first: out of the
-# waiting queue, no call for attention, whatever they wait on. Kept in a file
-# (sid -> since) so a reload or `prefix O` sees the same. Lifted by the person
-# speaking first: a reply, a pick or a grant from the office, or anything they
+# Agents set aside ("미루기"): out of the waiting queue, no call for attention,
+# whatever they wait on, for a while (until) or until the person speaks to
+# them first (until None). Kept in a file (sid -> {since, until}) so a reload
+# or `prefix O` sees the same. Either kind is lifted by the person speaking
+# first, and a timed one by its time: a reply, a pick or a grant from the office, or anything they
 # type to the session themselves (a human prompt in its transcript after
 # `since`; a plugin's asUser prompt counts, as the office's replies go that
 # way, a plugin's own notification does not).
@@ -885,13 +896,20 @@ def _mute_file() -> dict:
             d = json.load(f) or {}
     except (OSError, ValueError):
         return {}
-    return {k: v for k, v in d.items() if isinstance(v, (int, float))}
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, (int, float)):
+            v = {"since": v, "until": None}
+        if isinstance(v, dict) and isinstance(v.get("since"), (int, float)):
+            out[k] = {"since": v["since"], "until": v.get("until")}
+    return out
 
 
-def set_mute(sid: str, on: bool) -> dict:
+def set_mute(sid: str, on: bool, until: float | None = None) -> dict:
+    """on: set aside until `until` (epoch s), or until spoken to when None."""
     d = _mute_file()
     if on:
-        d[sid] = d.get(sid) or time.time()
+        d[sid] = {"since": time.time(), "until": until}
     else:
         d.pop(sid, None)
     os.makedirs(os.path.dirname(MUTE_FILE), exist_ok=True)
@@ -944,9 +962,10 @@ def last_spoke(sid: str) -> float | None:
 
 
 def muted() -> dict:
-    """sid -> since, with the ones the person has since spoken to lifted."""
+    """sid -> {since, until}; the expired and the spoken-to are lifted."""
     d = _mute_file()
-    lifted = [sid for sid, since in d.items() if (last_spoke(sid) or 0) > since]
+    now = time.time()
+    lifted = [sid for sid, m in d.items() if (m["until"] and m["until"] <= now) or (last_spoke(sid) or 0) > m["since"]]
     for sid in lifted:
         d = set_mute(sid, False)
     return d
