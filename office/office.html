@@ -43,9 +43,9 @@ canvas.drag { cursor: grabbing; }
 #card a.brand:hover, #card .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
 #card a.brand b { font-weight: 700; opacity: .85; }
 #card a.brand span { overflow: hidden; text-overflow: ellipsis; }
-#reset { position: fixed; right: 16px; top: 84px; display: none; font: inherit; font-size: 13px; background: var(--card); color: #2a2033; border: 2px solid var(--line); border-radius: 999px; padding: 3px 12px; cursor: pointer; box-shadow: 0 2px 0 var(--line); z-index: 5; }
+/* In the header row with the counts, so it never covers the office or the card. */
+#reset { display: none; font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #reset:hover { filter: brightness(1.05); transform: translateY(-1px); }
-#reset kbd { font-size: 11px; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .shelf .tabs button.on { background: #2a2033; color: #fff; }
@@ -73,9 +73,9 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <header>
   <h1>🏢 Claude 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
+  <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
 </header>
 <div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
-<button id="reset" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 <kbd>0</kbd></button>
 <canvas id="c"></canvas>
 <div id="ask"></div>
 <div id="tip"></div>
@@ -1632,7 +1632,7 @@ function frame(now) {
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
   g.clearRect(0, 0, VW, VH)
   deskHits = []
-  resetBtn.style.display = cam.user ? 'block' : 'none'
+  resetBtn.style.display = cam.user ? 'inline-block' : 'none'
   tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
   for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, 1, 1, 'rgba(160,120,80,.07)', null)
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)

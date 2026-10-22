@@ -287,8 +287,8 @@ answers there.
   pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
   cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
-- **Zoom back**: `0`, a double click or the `⤢ 전체 보기` button (shown once
-  you have zoomed or panned) glides back to the whole office.
+- **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row
+  (shown once you have zoomed or panned) glides back to the whole office.
 - **tmux sessions are blocks**: each tmux session's windows get their own
   rows with a floor tint and a sign (`🗂 tmux 2 · 16명`), and a long cubicle
   partition (fabric below, frosted glass above) runs between blocks, with
