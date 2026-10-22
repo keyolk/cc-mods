@@ -187,6 +187,10 @@ answers there.
   in the last 45 s) are small ones with an antenna: they come up the elevator,
   stand with their session (a row in front of its desk, or around it in a
   room), show their own work by pose and bubble, and leave by the elevator.
+- **Hover** and a character reacts to you: one waiting on you is eager
+  (sparkly eyes, hops, hearts), one working is nervous (sweat drop, tiny
+  pupils, a shiver), one idle or asleep is startled awake (`!`), a subagent
+  is shy (blushes, leans back). It eases in and out.
 - **Quick actions**: a click on a character (or a `❓`/`❗` chip at the bottom)
   opens its card: what it last said, and
   - a choice dialog on its screen (a permission prompt, AskUserQuestion): each

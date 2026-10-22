@@ -391,7 +391,7 @@ function elevator(t) {
 // ---------- chibi ----------
 const SKIN = '#ffe2c8', BLUSH = 'rgba(255,128,150,.55)'
 function chibi(e, t) {
-  if (e.data.doing === 'napping' && !e.walking) {
+  if (e.data.doing === 'napping' && !e.walking && (e.react || 0) < 0.35) {
     const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
     const [bx, by] = P(e.x, e.y, layer * 9)
     g.save(); g.translate(bx, by); g.rotate((hashOf(e.id) % 2 ? 1 : -1) * 1.35); g.translate(-bx, -by)
@@ -404,11 +404,28 @@ function chibi(e, t) {
   }
   drawChibi(e, t, 0)
 }
+// How a character takes the cursor over it, by what it is doing:
+// waiting on you - eager (sparkly eyes, hops, hearts); working - nervous
+// (sweat, small pupils, shaking); idle or asleep - startled (jumps, `!`);
+// a subagent - shy (blushes, shrinks back).
+function reactionOf(e) {
+  const d = e.data.doing
+  if (e.kind === 'sub') return 'shy'
+  if (d === 'asking' || d === 'alert') return 'eager'
+  if (d === 'idle' || d === 'napping') return 'startled'
+  return 'nervous'
+}
 function drawChibi(e, t, z0) {
   const p = e.data, sub = e.kind === 'sub'
-  const [x, y] = P(e.x, e.y, z0)
+  const rx = e.react || 0, kind = rx > 0 ? reactionOf(e) : null, since = t - (e.hlAt || t)
+  let [x, y] = P(e.x, e.y, z0)
+  // The reaction moves the whole body: a shiver, a hop, a jolt up, a lean back.
+  if (kind === 'nervous') x += Math.sin(t * 55) * 1.3 * rx * cam.s
+  if (kind === 'eager') y -= Math.abs(Math.sin(t * 9)) * 7 * rx * cam.s
+  if (kind === 'startled') y -= Math.max(0, 1 - since * 3) * 14 * rx * cam.s
+  if (kind === 'shy') x -= 3 * rx * cam.s
   e.sx = x; e.sy = y
-  const s = cam.s * (sub ? 0.68 : 1)
+  const s = cam.s * (sub ? 0.68 : 1) * (kind === 'shy' ? 1 - 0.06 * rx : kind === 'eager' ? 1 + 0.06 * rx : 1)
   const h = hashOf(e.id)
   const walking = e.walking
   const bob = walking ? -Math.abs(Math.sin(t * 12)) * 3 : p.doing === 'typing' ? Math.sin(t * 22) * 0.6 : (p.doing === 'asking' || p.doing === 'alert') ? -Math.abs(Math.sin(t * 6)) * 4 : Math.sin(t * 2 + h) * 0.8
@@ -444,15 +461,75 @@ function drawChibi(e, t, z0) {
   const blink = ((t + (h % 97) / 23) % 3.7) < 0.12
   const sleepy = nap
   g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.lineCap = 'round'
-  if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(hx + (ex - 2) * s, hy - 1 * s); g.lineTo(hx + (ex + 2) * s, hy + 1 * s); g.lineTo(hx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
+  if (kind && rx > 0.35) reactFace(kind, hx, hy, s, t, since)
+  else if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(hx + (ex - 2) * s, hy - 1 * s); g.lineTo(hx + (ex + 2) * s, hy + 1 * s); g.lineTo(hx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
   else if (blink || sleepy) { for (const ex of [-5, 5]) { g.beginPath(); g.arc(hx + ex * s, hy + 1 * s, 2.4 * s, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke() } }
   else { const r = p.doing === 'asking' ? 2.6 : 2.1; circle(hx - 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx + 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx - 4.3 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null); circle(hx + 5.7 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null) }
-  g.fillStyle = BLUSH; g.beginPath(); g.ellipse(hx - 8.5 * s, hy + 5 * s, 3 * s, 1.8 * s, 0, 0, Math.PI * 2); g.ellipse(hx + 8.5 * s, hy + 5 * s, 3 * s, 1.8 * s, 0, 0, Math.PI * 2); g.fill()
+  const flush = kind === 'shy' || kind === 'eager' ? 1 + rx * 1.4 : 1
+  g.fillStyle = kind === 'shy' ? 'rgba(255,90,120,' + (0.55 + 0.3 * rx) + ')' : BLUSH; g.beginPath(); g.ellipse(hx - 8.5 * s, hy + 5 * s, 3 * s * flush, 1.8 * s * flush, 0, 0, Math.PI * 2); g.ellipse(hx + 8.5 * s, hy + 5 * s, 3 * s * flush, 1.8 * s * flush, 0, 0, Math.PI * 2); g.fill()
+  if (kind && rx > 0.35) { reactMouth(kind, hx, hy, s, t); reactExtras(kind, hx, hy, s, t, rx, since); return }
   g.beginPath()
   if (p.doing === 'asking' || p.doing === 'alert') g.arc(hx, hy + 6 * s, 1.8 * s, 0, Math.PI * 2)
   else g.arc(hx, hy + 4.5 * s, 2.2 * s, 0.15 * Math.PI, 0.85 * Math.PI)
   g.stroke()
-  if (!nap) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
+  // While it reacts to the cursor, its face says it: the usual bubble steps aside.
+  if (!nap && !(kind && rx > 0.35)) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
+}
+function reactFace(kind, hx, hy, s, t, since) {
+  g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.lineCap = 'round'
+  if (kind === 'eager') {
+    // Sparkly eyes: big, with two highlights that twinkle.
+    for (const ex of [-5, 5]) {
+      circle(hx + ex * s, hy + 1 * s, 3.2 * s, '#2a2033', null)
+      circle(hx + (ex + 1) * s, hy - 0.2 * s, 1.2 * s, '#fff', null)
+      circle(hx + (ex - 1) * s, hy + 2 * s, (0.5 + 0.3 * Math.sin(t * 10 + ex)) * s, '#fff', null)
+    }
+  } else if (kind === 'nervous') {
+    // Tiny pupils in wide whites, darting.
+    const dart = Math.sin(t * 7) * 1.2 * s
+    for (const ex of [-5, 5]) { circle(hx + ex * s, hy + 1 * s, 3 * s, '#fff'); circle(hx + ex * s + dart, hy + 1 * s, 1 * s, '#2a2033', null) }
+  } else if (kind === 'startled') {
+    // Eyes pop open round, then settle.
+    const pop = 1 + Math.max(0, 1 - since * 2) * 0.6
+    for (const ex of [-5, 5]) { circle(hx + ex * s, hy + 1 * s, 3.2 * pop * s, '#fff'); circle(hx + ex * s, hy + 1 * s, 1.6 * s, '#2a2033', null) }
+  } else {
+    // Shy: eyes squeezed into happy arcs, looking away.
+    for (const ex of [-5, 5]) { g.beginPath(); g.arc(hx + (ex - 1.5) * s, hy + 2 * s, 2.4 * s, 1.15 * Math.PI, 1.85 * Math.PI); g.stroke() }
+  }
+}
+function reactMouth(kind, hx, hy, s, t) {
+  g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s
+  g.beginPath()
+  if (kind === 'eager') { g.arc(hx, hy + 4.5 * s, 3 * s, 0, Math.PI); g.fillStyle = '#ff8fa3'; g.fill(); g.stroke(); return }
+  if (kind === 'nervous') { for (let k = 0; k <= 4; k++) { const mx = hx - 4 * s + k * 2 * s, my = hy + 6 * s + (k % 2 ? -1 : 1) * s; k ? g.lineTo(mx, my) : g.moveTo(mx, my) } g.stroke(); return }
+  if (kind === 'startled') { g.ellipse(hx, hy + 6.5 * s, 2 * s, 2.8 * s, 0, 0, Math.PI * 2); g.fillStyle = '#5a2d3c'; g.fill(); g.stroke(); return }
+  g.moveTo(hx - 2.5 * s, hy + 6 * s); g.quadraticCurveTo(hx, hy + 4.5 * s, hx + 2.5 * s, hy + 6 * s); g.stroke()
+}
+function reactExtras(kind, hx, hy, s, t, rx, since) {
+  g.globalAlpha = rx
+  if (kind === 'eager') {
+    // Hearts and stars rising around the head.
+    for (let k = 0; k < 3; k++) { const ph = (t * 0.9 + k / 3) % 1; g.globalAlpha = rx * (1 - ph); text(k % 2 ? '✦' : '♥', hx + (k - 1) * 13 * s + Math.sin(ph * 6 + k) * 3 * s, hy - 18 * s - ph * 20 * s, 10 + 3 * (1 - ph), k % 2 ? '#ffd36b' : '#ff6f91') }
+  } else if (kind === 'nervous') {
+    // A sweat drop that slides down, and a little shiver of lines.
+    const ph = (t * 0.8) % 1
+    const sx = hx + 12 * s, sy = hy - 8 * s + ph * 10 * s
+    g.beginPath(); g.moveTo(sx, sy - 5 * s); g.quadraticCurveTo(sx + 4 * s, sy + 1 * s, sx, sy + 3 * s); g.quadraticCurveTo(sx - 4 * s, sy + 1 * s, sx, sy - 5 * s); g.fillStyle = '#9fd8ff'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke()
+    g.strokeStyle = LINE; g.lineWidth = 1.3 * cam.s
+    for (const sd of [-1, 1]) { g.beginPath(); g.moveTo(hx + sd * 17 * s, hy - 4 * s); g.lineTo(hx + sd * 20 * s, hy - 7 * s); g.moveTo(hx + sd * 17 * s, hy + 1 * s); g.lineTo(hx + sd * 21 * s, hy); g.stroke() }
+  } else if (kind === 'startled') {
+    // A big "!" over the head, and three surprise lines.
+    const k = Math.min(1, since * 5)
+    g.globalAlpha = rx * k
+    text('!', hx, hy - 26 * s - (1 - k) * 6 * s, 20, '#ff5a5a')
+    g.strokeStyle = LINE; g.lineWidth = 1.5 * cam.s
+    for (const a of [-0.5, 0, 0.5]) { g.beginPath(); g.moveTo(hx + Math.sin(a) * 18 * s, hy - Math.cos(a) * 18 * s); g.lineTo(hx + Math.sin(a) * 24 * s, hy - Math.cos(a) * 24 * s); g.stroke() }
+  } else {
+    // Shy: a small "///" across the cheek.
+    g.strokeStyle = '#ff5a78'; g.lineWidth = 1.2 * cam.s
+    for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(hx - 11 * s + k * 2.4 * s, hy + 7 * s); g.lineTo(hx - 9 * s + k * 2.4 * s, hy + 3 * s); g.stroke() }
+  }
+  g.globalAlpha = 1
 }
 const ICON = { thinking: '…', reading: '📖', running: '>_', calling: '🔌', typing: '✏️', delegating: '🐣', asking: '?', alert: '!', idle: '☕' }
 function bubble(e, p, x, y, s, t, sleepy) {
@@ -480,6 +557,10 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now
   const t = now / 1000
   for (const [id, e] of ents) {
+    // Hover reaction eases in and out (0..1), so it never pops.
+    e.react = Math.max(0, Math.min(1, (e.react || 0) + (e.hl ? dt * 6 : -dt * 4)))
+    if (e.hl && !e.hlAt) e.hlAt = t
+    if (!e.hl && e.react === 0) e.hlAt = 0
     const dx = e.tx - e.x, dy = e.ty - e.y, dist = Math.hypot(dx, dy)
     const sp = (e.kind === 'sub' ? 3.2 : 2.6) * dt
     if (dist > 0.02) { const k = Math.min(1, sp / dist); e.x += dx * k; e.y += dy * k; e.walking = true } else { e.x = e.tx; e.y = e.ty; e.walking = false }
