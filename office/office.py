@@ -21,6 +21,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import subprocess
 import sys
 import time
@@ -370,7 +371,7 @@ def last_text(sid: str) -> str:
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
-            f.seek(max(0, f.tell() - 200_000))
+            f.seek(max(0, f.tell() - 400_000))
             lines = f.read().decode("utf-8", "replace").splitlines()[1:]
     except OSError:
         return ""
@@ -384,7 +385,7 @@ def last_text(sid: str) -> str:
             continue
         txt = "\n".join(b.get("text", "") for b in m["content"] if b.get("type") == "text").strip()
         if txt:
-            return txt[-2500:]
+            return txt[-12000:]
     return ""
 
 
@@ -406,12 +407,111 @@ def suggestions(text: str) -> list[str]:
     return list(dict.fromkeys(out))[:6]
 
 
+# ---- policy grant proposals (bin/cc-bridge.py policy, judged by Jev) -------
+
+HOOKS = os.path.expanduser("~/.claude/hooks/")
+BRIDGE = os.path.join(os.path.dirname(HERE), "bin", "cc-bridge.py")
+_proposals: dict[str, tuple[int, dict | None]] = {}  # sid -> (transcript size, proposal)
+
+
+def recent_blocks(sid: str) -> list[str]:
+    """The policy guards' refusals in the transcript's tail, newest last."""
+    path = transcript(sid)
+    if not path:
+        return []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 300_000))
+            raw = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    out = []
+    for m in re.finditer(r"BLOCKED by session policy:[^\"]{0,600}", raw):
+        out.append(m.group(0).replace("\\n", "\n").replace("\\`", "`"))
+    return out[-4:]
+
+
+def policy_caps(sid: str) -> dict:
+    try:
+        with open(os.path.expanduser(f"~/.claude/state/session_policy/{sid}.json")) as f:
+            return (json.load(f) or {}).get("capabilities") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def proposal(sid: str, answer: str) -> dict | None:
+    path = transcript(sid)
+    size = os.path.getsize(path) if path else 0
+    hit = _proposals.get(sid)
+    if hit and hit[0] == size:
+        return hit[1]
+    req = {"session": sid, "answer": answer, "blocks": recent_blocks(sid), "caps": policy_caps(sid)}
+    try:
+        r = subprocess.run(["python3", BRIDGE, "policy"], input=json.dumps(req), capture_output=True, text=True, timeout=8)
+        g = json.loads(r.stdout or "{}").get("grant")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        g = None
+    _proposals[sid] = (size, g)
+    return g
+
+
+# Grants the office made and when each goes back (a timer per grant; kept
+# only in this process, and said so in the card).
+_reverts: dict[str, threading.Timer] = {}
+
+
+def grant(sid: str) -> tuple[int, dict]:
+    g = (_proposals.get(sid) or (0, None))[1]
+    if not g:
+        return 409, {"error": "no proposal to approve now"}
+    env = {**os.environ, "CLAUDE_CODE_SESSION_ID": sid}
+    r = subprocess.run(["python3", HOOKS + "session_policy.py", *g["argv"]], capture_output=True, text=True, timeout=10, env=env)
+    if r.returncode != 0:
+        return 500, {"error": (r.stderr or r.stdout).strip()[:200]}
+    back = ["inherit", *g["argv"][1:]]
+    key = sid + " " + " ".join(g["argv"])
+    if key in _reverts:
+        _reverts[key].cancel()
+    t = threading.Timer(g["minutes"] * 60, lambda: subprocess.run(["python3", HOOKS + "session_policy.py", *back], capture_output=True, timeout=10, env=env))
+    t.daemon = True
+    t.start()
+    _reverts[key] = t
+    _proposals.pop(sid, None)
+    return 200, {"ok": True, "sent": "granted " + g["label"] + " for " + str(g["minutes"]) + "m"}
+
+
+# ---- what the session made and was handed (cc-mods' export) ---------------
+
+def related(sid: str) -> list[dict]:
+    files = sorted(glob.glob(os.path.expanduser("~/.claude/outputs/*/" + sid + ".json")))
+    if not files:
+        return []
+    try:
+        with open(files[-1]) as f:
+            outs = (json.load(f) or {}).get("outputs") or []
+    except (OSError, ValueError):
+        return []
+    made = {"created", "merged", "replied", "posted", "archived", "edited", "opened", "pushed", "Write", "Edit", "in the answer"}
+    keep = [o for o in outs if o.get("kind") in ("pr", "slack", "ticket", "link", "artifact", "scratch", "file", "exp") and (o.get("url") or o.get("path"))]
+    keep.sort(key=lambda o: (0 if (o.get("detail") in made or o.get("kind") in ("pr", "artifact", "exp")) else 1, -(o.get("at") or 0)))
+    seen, out = set(), []
+    for o in keep:
+        k = o.get("url") or o.get("path")
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append({"kind": o.get("kind"), "title": str(o.get("title") or "")[:70], "url": o.get("url"), "path": o.get("path"), "detail": o.get("detail")})
+    return out[:10]
+
+
 def detail(sid: str) -> dict:
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return {"error": "no such session"}
     text = last_text(sid)
-    return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text)}
+    return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid)}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -426,6 +526,20 @@ def act(body: dict) -> tuple[int, dict]:
             return 409, {"error": "no dialog with that choice on its screen now"}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
+    if kind == "grant":
+        return grant(sid)
+    if kind == "open":
+        # A link from the card: http(s) to the person's browser, a local path
+        # revealed in Finder. Nothing else.
+        v = str(value or "")
+        if re.match(r"^https?://", v):
+            subprocess.Popen(["open", v])
+            return 200, {"ok": True, "sent": "opened"}
+        p = os.path.expanduser(v)
+        if p.startswith("/") and os.path.exists(p):
+            subprocess.Popen(["open", "-R", p])
+            return 200, {"ok": True, "sent": "revealed"}
+        return 400, {"error": "not a link or an existing path"}
     if kind == "stop":
         if me["state"] != "working":
             return 409, {"error": "it is not working"}

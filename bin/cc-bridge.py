@@ -12,6 +12,7 @@ subcommand reads JSON on stdin and prints one JSON object.
     route      {"prompt": str, "recent": [str]} -> {"effort": str|null, "confidence": float}
     goal       {"transcript": str}               -> {"goal": {condition, active, met, setAt, checks, lastAt, reason, ended, endedAt}|null}
     jev_usage  {"now": float, "session"?: str}  -> {"today", "week", "session"?, "hours": [24], "callers", "kinds", "gateway"}
+    policy     {"answer": str, "blocks": [str], "caps": {cap: value}} -> {"grant": {argv, label, minutes, why}|null, "confidence": float}
 
 Failure is always an answer, never a traceback: the mod treats a missing
 value as "undecided" and keeps its default behaviour.
@@ -353,6 +354,75 @@ def goal(req: dict) -> dict:
     return {"goal": out}
 
 
+# ---- policy: a grant the session needs now, for the person to approve -------
+#
+# Candidates come from what the guards printed when they refused this session
+# (`/policy allow merge owner/repo 15m` …) and, failing that, from the
+# capabilities its last answer asks for. Jev picks one or none. The office
+# shows it with an approve button; nothing here changes the policy.
+
+import re as _re
+
+SHORT = {"merge": ("gh_merge", "--repo"), "prod": ("prod_eks_access", "--scope"), "prod-w": ("prod_eks_write", "--scope"),
+         "slack": ("slack_send", "--scope"), "tmux": ("tmux_window_escape", None), "auto": ("auto_continue", None)}
+LABEL = {"gh_merge": "PR merge", "prod_eks_access": "prod EKS 읽기", "prod_eks_write": "prod EKS 쓰기",
+         "slack_send": "Slack 보내기", "tmux_window_escape": "다른 tmux 창 조작", "auto_continue": "확인 없이 계속"}
+# Without a refusal to go on, an answer that plainly asks for one of these.
+ASKS = [("gh_merge", r"merge|머지"), ("prod_eks_write", r"prod.{0,20}(write|쓰기|재시작|restart|delete|apply)"),
+        ("prod_eks_access", r"prod.{0,20}(read|읽|조회|kubectl)"), ("slack_send", r"slack|슬랙|보낼까|보내도"),
+        ("tmux_window_escape", r"다른 (tmux )?(창|window)|tmux window")]
+
+
+def _grants_from_blocks(blocks: list[str]) -> list[dict]:
+    out = []
+    for b in blocks:
+        for m in _re.finditer(r"/policy allow (merge|prod-w|prod|slack|tmux|auto)(?: ([^\s`]+))?(?: (\d+)m)?", b):
+            short, scope, mins = m.group(1), m.group(2), m.group(3)
+            if scope in ("owner/repo",) or (scope and scope.startswith("<")):
+                scope = None
+            cap, flag = SHORT[short]
+            argv = ["allow", cap] + ([flag, scope] if flag and scope else [])
+            out.append({"argv": argv, "label": LABEL[cap] + (" " + scope if scope else " (모든 대상)"), "minutes": int(mins or 30),
+                        "why": "이 세션이 방금 정책에 막혔습니다: " + b.splitlines()[0][:120]})
+    return out
+
+
+def policy(req: dict) -> dict:
+    answer = str(req.get("answer", ""))[-1500:]
+    blocks = [str(b) for b in req.get("blocks", [])][-4:]
+    caps = req.get("caps") or {}
+    cands = _grants_from_blocks(blocks)
+    if not cands:
+        for cap, pat in ASKS:
+            if caps.get(cap) != "allow" and _re.search(pat, answer[-600:], _re.I):
+                cands.append({"argv": ["allow", cap], "label": LABEL[cap] + " (모든 대상)", "minutes": 15, "why": "마지막 답이 이 권한이 필요한 일을 묻습니다"})
+    seen, uniq = set(), []
+    for c in cands:
+        k = " ".join(c["argv"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(c)
+    cands = uniq[:5]
+    if not cands:
+        return {"grant": None, "confidence": 1.0}
+    try:
+        import jev
+    except Exception as exc:
+        return {"grant": cands[0] if blocks else None, "confidence": 0.0, "error": str(exc)}
+    criteria = {f"g{i}": f"Grant {c['label']} ({' '.join(c['argv'])}) — needed now: {c['why']}" for i, c in enumerate(cands)}
+    criteria["none"] = ("No policy change is needed for what this session is waiting on now: it asks a question, "
+                        "reports, or the refusal is old and already worked around.")
+    state = ("Refusals this session got from the policy guards (newest last):\n" + ("\n".join("- " + b[:300] for b in blocks) or "(none)")
+             + "\n\nEnd of its last answer:\n" + answer)
+    got = jev.choose(state, "policyGrant", criteria, timeout=3.0)
+    if not got:
+        return {"grant": cands[0] if blocks else None, "confidence": 0.0}
+    pick, conf = got
+    if pick == "none" or conf < 0.45:
+        return {"grant": None, "confidence": conf}
+    return {"grant": cands[int(pick[1:])], "confidence": conf}
+
+
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
@@ -366,7 +436,7 @@ def main() -> int:
     # jev.py names the caller by argv[0]; one name per bridge command keeps the
     # fork hint apart from routing in the cockpit's per-hook rows.
     sys.argv[0] = f"cc-bridge:{cmd}"
-    fn = {"attention": attention, "fork": fork, "neighbors": neighbors, "route": route, "jev_usage": jev_usage, "goal": goal}.get(cmd)
+    fn = {"attention": attention, "fork": fork, "neighbors": neighbors, "route": route, "jev_usage": jev_usage, "goal": goal, "policy": policy}.get(cmd)
     print(json.dumps(fn(req) if fn else {"error": f"unknown command {cmd!r}"}))
     return 0
 

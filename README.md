@@ -226,6 +226,18 @@ answers there.
     session's cc-mods submits it as your own prompt (2 s poll, dropped after 2
     minutes), so vim mode or a draft in the box cannot garble it;
   - `✋ stop` (Escape) while it works, and `↗` to its window (`cc-focus`).
+- **Policy on approval**: when a waiting session needs a policy change to go
+  on, its card proposes one, picked by Jev (`bin/cc-bridge.py policy`) from
+  the guards' own refusals in its transcript (`/policy allow merge
+  owner/repo`, `/policy allow prod-w ctx/ns 15m`) or, without one, from what
+  its last answer asks for. `A` (or the button) approves it: the office runs
+  the policy CLI for that session with the grant it proposed (never one sent
+  by the page) and puts it back after its minutes. Timers live in the office
+  server; a grant outlives a server restart until changed by hand.
+- **Links and related work**: URLs in what a session said open in your
+  browser, absolute paths show in Finder; the card lists its PRs, threads,
+  tickets, artifacts and files (from cc-mods' `~/.claude/outputs` export,
+  what it made first), each one click away.
 - **The waiting queue** along the bottom: everyone who needs you, a
   confirmation (❗) before a question (❓), then whoever has waited longest,
   each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
@@ -238,6 +250,10 @@ answers there.
   (`bin/cc-office-next`; `prefix o` is extrakto's) brings the office pane in
   front and opens the next one waiting:
   `bind-key O run-shell -b '~/src/keyolk/cc-mods/bin/cc-office-next'`
+- **Long answers**: the card shows the whole last answer (up to 12k chars),
+  opened at its end, and scrolls without the mouse: `PgUp`/`PgDn` anywhere
+  (the reply box included), `↑`/`↓` in an empty reply box, and outside it
+  `j`/`k`, `Space`/`⇧Space`, `Home`/`End`.
 - **Keys** (`?` lists them): `1`-`9` press the card's numbered button (a
   dialog option or a quick reply), `R` or `/` the reply box (`⌘Enter` sends,
   `Esc` leaves it), `S` stop, `G` its window, `Esc` close, arrows pan, `+`/`-`

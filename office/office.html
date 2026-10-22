@@ -26,13 +26,20 @@ canvas.drag { cursor: grabbing; }
 #card h2 { margin: 0 0 2px; font-size: 18px; font-weight: 400; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
 #card .x { position: absolute; right: 10px; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
-#card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; white-space: pre-wrap; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: 180px; overflow: auto; margin-bottom: 10px; }
+#card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; white-space: pre-wrap; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
+#card .scrollhint { font-size: 11px; color: #9a90b0; text-align: right; margin-bottom: 8px; }
 #card .q { font-size: 14px; margin: 6px 0; }
 #card .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 #card button.act { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 10px; padding: 4px 10px; cursor: pointer; background: #fff; box-shadow: 0 2px 0 var(--line); }
 #card button.act:active { transform: translateY(2px); box-shadow: none; }
 #card button.pick { background: #ffe08a; } #card button.go { background: #a8e6b0; } #card button.stop { background: #ffb3b3; } #card button.nav { background: #cfe0ff; }
 #card textarea { width: 100%; min-height: 54px; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; resize: vertical; }
+#card .said a { color: #2f6fd6; text-decoration: underline; cursor: pointer; word-break: break-all; }
+#card .grant { background: #fff1c9; border: 2px solid #e0a52e; border-radius: 12px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
+#card .grant .why { color: #7a6030; font-size: 12px; margin: 3px 0 6px; font-family: -apple-system, sans-serif; }
+#card button.grantb { background: #ffcf5a; }
+#card .rel { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+#card .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
 #help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 14px 18px; display: none; min-width: 300px; }
@@ -65,9 +72,12 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
+    <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
     <tr><td><kbd>G</kbd></td><td>그 agent의 tmux 창으로 이동</td></tr>
+    <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>답변 한 화면씩 (답장칸에서도)</td></tr>
+    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>j</kbd><kbd>k</kbd> <kbd>Space</kbd> <kbd>Home</kbd><kbd>End</kbd></td><td>답변 스크롤 (빈 답장칸에선 ↑↓)</td></tr>
     <tr><td><kbd>Esc</kbd></td><td>카드 닫기 / 입력 빠져나오기</td></tr>
-    <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>이동 · 확대 · 축소 · 전체 맞춤</td></tr>
+    <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>(카드가 닫혔을 때) 이동 · 확대 · 축소 · 전체 맞춤</td></tr>
     <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
   </table>
   <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 처음 한 번 <kbd>i</kbd>(insert)로 키를 페이지에 넘기세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
@@ -328,6 +338,15 @@ function step(dir, skip) {
   const next = i < 0 ? (dir > 0 ? q[0] : q[q.length - 1]) : q[(i + dir + q.length) % q.length]
   openCard(next.id)
 }
+// Scroll the open card's answer without the mouse: a few lines or a page.
+function scrollSaid(how) {
+  const el = card.said; if (!el) return false
+  const line = 40, page = el.clientHeight * 0.9
+  if (how === 'up') el.scrollTop -= line; else if (how === 'down') el.scrollTop += line
+  else if (how === 'pgup') el.scrollTop -= page; else if (how === 'pgdn') el.scrollTop += page
+  else if (how === 'top') el.scrollTop = 0; else if (how === 'bottom') el.scrollTop = el.scrollHeight
+  return true
+}
 function closeCard() { card.style.display = 'none'; cardSid = null; for (const e of ents.values()) e.sel = false; renderQueue() }
 let toastT
 function toast(t) { const m = document.getElementById('hint'); m.dataset.old = m.dataset.old || m.innerHTML; m.textContent = t; clearTimeout(toastT); toastT = setTimeout(() => { m.innerHTML = m.dataset.old }, 2200) }
@@ -394,7 +413,16 @@ addEventListener('keydown', (e) => {
   if (open && /^[1-9]$/.test(k) && card.keys && card.keys[+k]) return hit(() => card.keys[+k].click())
   if (open && (k === 'r' || k === 'R' || k === '/' || k === 'ㄱ') && card.reply) return hit(() => card.reply.focus())
   if (open && (k === 's' || k === 'S' || k === 'ㄴ') && card.stop) return hit(() => card.stop.click())
+  if (open && (k === 'a' || k === 'A' || k === 'ㅁ') && card.grant) return hit(() => card.grant.click())
   if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
+  if (open && card.said) {
+    if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
+    if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
+    if (k === 'ArrowUp' || k === 'k' || k === 'ㅏ') return hit(() => scrollSaid('up'))
+    if (k === 'ArrowDown' || k === 'j' || k === 'ㅓ') return hit(() => scrollSaid('down'))
+    if (k === 'Home') return hit(() => scrollSaid('top'))
+    if (k === 'End') return hit(() => scrollSaid('bottom'))
+  }
   if (k === 'f' || k === 'F' || k === 'ㄹ') return hit(() => { cam.user = false; camGo.on = false; fit() })
   const PAN = 60
   if (k === 'ArrowLeft') return hit(() => { cam.user = true; camGo.on = false; cam.ox += PAN })
@@ -433,7 +461,26 @@ async function openCard(sid) {
   card.keys = []
   add('h2', '', esc(d.window + ' ' + d.name))
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
-  if (d.text) add('div', 'said', esc(d.text.length > 1400 ? '…' + d.text.slice(-1400) : d.text)).scrollTop = 1e9
+  card.said = null
+  if (d.text) {
+    const said = add('div', 'said', linkify(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } }
+    // Opens at the end, where the question usually is; the keys scroll it.
+    said.style.scrollBehavior = 'auto'; said.scrollTop = 1e9; said.style.scrollBehavior = ''
+    card.said = said
+    if (said.scrollHeight > said.clientHeight + 4) add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
+  }
+  // Policy: what Jev thinks this session needs before it can go on, for one press.
+  if (d.grant) {
+    const gbox = add('div', 'grant', '🔐 <b>정책 제안</b> · ' + esc(d.grant.label) + ' · ' + d.grant.minutes + '분<div class="why">' + esc(d.grant.why) + '</div>')
+    const gb = document.createElement('button'); gb.className = 'act grantb'; gb.innerHTML = '<span class="key">A</span>승인하고 계속'; gb.onclick = () => send({ kind: 'grant' }, d.grant.label + ' ' + d.grant.minutes + '분 허용')
+    gbox.appendChild(gb); card.grant = gb
+  } else card.grant = null
+  // What it made or was handed: PRs, threads, tickets, files — one click away.
+  if (d.related && d.related.length) {
+    const rel = add('div', 'rel')
+    const icon = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
+    for (const o of d.related) { const a = document.createElement('a'); a.textContent = (icon[o.kind] || '•') + ' ' + o.title; a.title = o.url || o.path; a.onclick = () => openLink(o.url || o.path); rel.appendChild(a) }
+  }
   const msg = document.createElement('div'); msg.className = 'msg'
   const send = async (body, label) => {
     msg.className = 'msg'; msg.textContent = '보내는 중…'
@@ -444,7 +491,7 @@ async function openCard(sid) {
       msg.textContent = '✓ ' + label
       // An answer sent: on to whoever waits next; a stop or a pick that keeps
       // it busy here just refreshes the card.
-      const done = body.kind === 'reply' || body.kind === 'key'
+      const done = body.kind === 'reply' || body.kind === 'key' || body.kind === 'grant'
       setTimeout(() => { if (cardSid !== sid) return; if (done && waiting().some((p) => p.id !== sid)) { msg.textContent += ' → 다음'; setTimeout(() => step(1, sid), 500) } else if (done) closeCard(); else openCard(sid) }, 700)
     } catch (e) { msg.className = 'msg err'; msg.textContent = '못 보냄: ' + e.message }
   }
@@ -466,6 +513,9 @@ async function openCard(sid) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
+      if (!ta.value && e.altKey && (e.key === 'a' || e.code === 'KeyA') && card.grant) { e.preventDefault(); card.grant.click(); return }
+      if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
+      if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
     }
     const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go'; b.innerHTML = '<span class="key">⏎</span>보내기'; b.onclick = go; r2.appendChild(b)
@@ -490,7 +540,9 @@ function hit(mx, my) {
   return best
 }
 function hover(e) {
-  const h = drag && drag.moved ? null : hit(e.clientX, e.clientY)
+  // Over the card, the queue or the help, the office behind them is not hovered.
+  const overUi = e.target && e.target.closest && e.target.closest('#card, #ask, #help, header')
+  const h = drag && drag.moved || overUi ? null : hit(e.clientX, e.clientY)
   for (const x of ents.values()) x.hl = x === h
   if (!h) { tip.style.display = 'none'; return }
   const p = h.data
@@ -507,6 +559,18 @@ function persona(p) {
   const top = Object.entries(p.mix || {}).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => (JOB[k] || JOB.shell).icon + ' ' + v).join('  ')
   const age = ageText(p)
   return j.icon + ' ' + j.name + ' · ' + RANK[p.rank || 0] + ' · 도구 ' + (p.tools || 0).toLocaleString() + '번' + (age ? ' · 근속 ' + age : '') + ' · ' + j.quirk + (top ? '<br>' + top : '')
+}
+// URLs and absolute paths in what a session said become links: a URL opens in
+// the person's browser, a path is shown in Finder (office.py /act open).
+function linkify(t) {
+  return esc(t).replace(/(https?:\/\/[^\s<>"'`)\]]+)|((?:^|[\s`(])(?:~|\/)(?:Users|private|tmp|home|~)?[\w./@+~-]*\/[\w./@+-]+)/g, (m, url, path) => {
+    if (url) { const u = url.replace(/[.,;:]+$/, ''); return '<a data-open="' + u + '">' + u + '</a>' + url.slice(u.length) }
+    const lead = path.match(/^[\s`(]/) ? path[0] : '', p = path.slice(lead.length).replace(/[.,;:]+$/, '')
+    return lead + '<a data-open="' + p + '">' + p + '</a>' + path.slice(lead.length + p.length)
+  })
+}
+async function openLink(v) {
+  try { await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v }) }) } catch {}
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
 
