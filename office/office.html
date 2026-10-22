@@ -79,6 +79,10 @@ canvas.drag { cursor: grabbing; }
 #settings .m { color: #6b6280; font-size: 11px; }
 #settings select { font: inherit; width: 100%; padding: 3px 6px; border: 2px solid var(--line); border-radius: 8px; background: #fff; }
 #settings label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+#quietmenu { position: fixed; display: none; z-index: 9; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; box-shadow: 0 4px 0 var(--line); padding: 6px; min-width: 220px; }
+#quietmenu .h { font-size: 12px; color: #6b6280; padding: 2px 6px 4px; }
+#quietmenu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 13px; border: 0; background: none; padding: 4px 8px; border-radius: 8px; cursor: pointer; color: inherit; }
+#quietmenu button:hover { background: #efe7f7; }
 #placemenu { position: fixed; display: none; z-index: 9; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; box-shadow: 0 4px 0 var(--line); padding: 6px; min-width: 220px; }
 #placemenu .h { font-size: 12px; color: #6b6280; padding: 2px 6px 4px; }
 #placemenu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 13px; border: 0; background: none; padding: 4px 8px; border-radius: 8px; cursor: pointer; color: inherit; }
@@ -146,7 +150,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
     <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
-    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>이 agent를 30분 미루기 (Tab·N에서 빠짐, 다시 누르면 +30분)</td></tr>
+    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
     <tr><td><kbd>G</kbd></td><td>그 agent의 tmux 창으로 이동</td></tr>
     <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>답변 한 화면씩 (답장칸에서도)</td></tr>
@@ -475,10 +479,14 @@ function apply(people) {
 // Set aside for a while (Z on its card, 30 minutes a press): out of the queue
 // and of N/Tab until then. Its chip stays, muted, and turns loud if it starts
 // asking for a confirmation meanwhile.
-let snoozedUntil = {}
-const isSnoozed = (id) => (snoozedUntil[id] || 0) > Date.now() / 1000
+// Set aside (office.py mute): sid -> {since, until}; until null is "until you
+// speak first" (taped), a time is a plain 💤 for a while.
+let mutedSince = {}
+const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
+const isTaped = (id) => !!mutedSince[id] && !mutedSince[id].until
+const wantsToTalk = (p) => p.doing === 'asking' || p.doing === 'alert'
 function waiting() {
-  return [...ents.values()].filter((e) => e.kind === 'session' && (e.data.doing === 'asking' || e.data.doing === 'alert') && !isSnoozed(e.id))
+  return [...ents.values()].filter((e) => e.kind === 'session' && wantsToTalk(e.data) && !isMuted(e.id))
     .map((e) => e.data)
     .sort((a, b) => (a.doing === 'alert' ? 0 : 1) - (b.doing === 'alert' ? 0 : 1) || (a.since || 0) - (b.since || 0))
 }
@@ -489,24 +497,51 @@ function renderQueue() {
     const b = document.createElement('button'); b.className = (p.doing === 'alert' ? 'x' : 'q') + (p.id === cardSid ? ' on' : '')
     b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name + (p.since ? ' · ' + ago(p.since).replace('째', '') : ''); b.onclick = () => openCard(p.id); ask.appendChild(b)
   }
-  for (const [id, until] of Object.entries(snoozedUntil)) {
-    const e = ents.get(id); if (!e || until <= Date.now() / 1000) continue
-    const left = Math.ceil((until - Date.now() / 1000) / 60), loud = e.data.doing === 'alert'
-    const b = document.createElement('button'); b.className = 'zz' + (loud ? ' loud' : '') + (id === cardSid ? ' on' : '')
-    b.textContent = '💤 ' + e.data.name + ' · ' + left + '분' + (loud ? ' ❗' : ''); b.title = '눌러서 큐로 되돌리기'
-    b.onclick = () => snooze(id, 0); ask.appendChild(b)
+  // The quiet ones: muted chips; one with something to say strains against it.
+  for (const id of Object.keys(mutedSince)) {
+    const e = ents.get(id); if (!e) continue
+    if (!isMuted(id)) continue
+    const want = wantsToTalk(e.data), q = mutedSince[id]
+    const b = document.createElement('button'); b.className = 'zz' + (want ? ' loud' : '') + (id === cardSid ? ' on' : '')
+    b.textContent = q.until
+      ? '💤 ' + e.data.name + ' · ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분' + (want ? ' ❗' : '')
+      : '🤐 ' + e.data.name + (want ? ' · 할 말 참는 중' + (e.data.since ? ' ' + ago(e.data.since).replace('째', '') : '') : '')
+    b.title = (q.until ? '미뤄 둠' : '먼저 말 걸 때까지 조용히 하는 중') + ' — 눌러서 카드 열기'
+    b.onclick = () => openCard(id); ask.appendChild(b)
   }
 }
-async function snooze(id, mins) {
+// how: minutes, 'speak' (until you speak to it first) or 0 (call again).
+async function setMute(id, how) {
   try {
-    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: id, kind: 'snooze', value: mins }) })
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: id, kind: 'mute', value: how }) })
     const j = await r.json(); if (!r.ok) throw new Error(j.error)
-    if (mins > 0) snoozedUntil[id] = j.until; else delete snoozedUntil[id]
-    toast(mins > 0 ? '💤 ' + (ents.get(id)?.data.name || '') + ' ' + Math.round((j.until - Date.now() / 1000) / 60) + '분 미룸' : '큐로 되돌림')
+    const now = Date.now() / 1000
+    if (how === 'speak') mutedSince[id] = { since: now, until: null }; else if (how > 0) mutedSince[id] = { since: now, until: j.until }; else delete mutedSince[id]
+    const name = ents.get(id)?.data.name || ''
+    toast(how === 'speak' ? '🤐 ' + name + ': 먼저 말 걸 때까지 조용히' : how > 0 ? '💤 ' + name + ' ' + QUIET_LABEL[how] + ' 미룸' : '🔓 ' + name + ': 다시 불러도 됨')
     renderQueue()
-    if (mins > 0 && cardSid === id) step(1, id)
-  } catch (e) { toast('못 미룸: ' + e.message) }
+    if (how && cardSid === id) step(1, id); else if (cardSid === id) openCard(id)
+  } catch (e) { toast('못 바꿈: ' + e.message) }
 }
+// 미루기: one button, the choices in a menu (Z, then 1-5).
+const minsToEndOfDay = () => { const d = new Date(), e = new Date(d); e.setHours(23, 59, 0, 0); return Math.max(30, Math.round((e - d) / 60000)) }
+const QUIET_LABEL = { 30: '30분', 60: '1시간' }
+const quietMenu = document.createElement('div'); quietMenu.id = 'quietmenu'; document.body.appendChild(quietMenu)
+function showQuiet(id, anchor) {
+  const eod = minsToEndOfDay(); QUIET_LABEL[eod] = '오늘 하루'
+  const opts = [[30, '💤 30분'], [60, '💤 1시간'], [eod, '💤 오늘 하루'], ['speak', '🤐 내가 먼저 말 걸 때까지']]
+  if (isMuted(id)) opts.push([0, '🔓 지금 다시 부르기'])
+  quietMenu.innerHTML = '<div class="h">미루기</div>' + opts.map(([v, label], i) => '<button data-v="' + v + '"><kbd>' + (i + 1) + '</kbd> ' + label + '</button>').join('')
+  const r = anchor.getBoundingClientRect()
+  // Shown first so it has a height: then it goes just above the button.
+  quietMenu.style.display = 'block'
+  quietMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - 260)) + 'px'; quietMenu.style.top = Math.max(8, r.top - quietMenu.offsetHeight - 6) + 'px'
+  quietMenu.id_ = id
+  quietMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => pickQuiet(b.dataset.v) })
+}
+function pickQuiet(v) { const id = quietMenu.id_; hideQuiet(); setMute(id, v === 'speak' ? 'speak' : +v) }
+function hideQuiet() { quietMenu.style.display = 'none'; quietMenu.id_ = null }
+addEventListener('mousedown', (e) => { if (quietMenu.id_ && !e.target.closest('#quietmenu, .snz')) hideQuiet() }, true)
 // The next (or previous) waiting agent after the open card; from the top when none is open.
 function step(dir, skip) {
   const q = waiting().filter((p) => p.id !== skip)
@@ -624,7 +659,9 @@ addEventListener('keydown', (e) => {
   if (open && (k === 'r' || k === 'R' || k === '/' || k === 'ㄱ') && card.reply) return hit(() => card.reply.focus())
   if (open && (k === 's' || k === 'S' || k === 'ㄴ') && card.stop) return hit(() => card.stop.click())
   if (open && (k === 'a' || k === 'A' || k === 'ㅁ') && card.grant) return hit(() => card.grant.click())
-  if (open && (k === 'z' || k === 'Z' || k === 'ㅋ') && card.snooze) return hit(() => card.snooze.click())
+  if (quietMenu.id_ && /^[1-5]$/.test(k)) { const b = quietMenu.querySelectorAll('button')[+k - 1]; if (b) return hit(() => pickQuiet(b.dataset.v)) }
+  if (quietMenu.id_ && k === 'Escape') return hit(hideQuiet)
+  if (open && (k === 'z' || k === 'Z' || k === 'ㅋ') && card.mute) return hit(() => card.mute.click())
   if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
   if (open && card.said) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
@@ -720,7 +757,7 @@ async function openCard(sid, kind = null) {
     card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show() } }
     show()
     // The drawer is the whole card: no conversation, just a way to it.
-    card.said = card.reply = card.stop = card.grant = card.snooze = card.go = null
+    card.said = card.reply = card.stop = card.grant = card.mute = card.go = null
     const nav2 = add('div', 'row')
     const talk = document.createElement('button'); talk.className = 'act nav'; talk.innerHTML = '<span class="key">⏎</span>💬 대화 보기'; talk.onclick = () => openCard(sid); nav2.appendChild(talk)
     card.keys[0] = talk
@@ -789,7 +826,7 @@ async function openCard(sid, kind = null) {
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
       if (!ta.value && e.altKey && (e.key === 'a' || e.code === 'KeyA') && card.grant) { e.preventDefault(); card.grant.click(); return }
-      if (e.altKey && (e.key === 'z' || e.code === 'KeyZ') && card.snooze) { e.preventDefault(); card.snooze.click(); return }
+      if (e.altKey && (e.key === 'z' || e.code === 'KeyZ') && card.mute) { e.preventDefault(); card.mute.click(); return }
       if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
@@ -801,9 +838,9 @@ async function openCard(sid, kind = null) {
   if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.innerHTML = '<span class="key">S</span>✋ 멈추기'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b); card.stop = b }
   const j = document.createElement('button'); j.className = 'act nav'; j.innerHTML = '<span class="key">G</span>↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j); card.go = j
   const zz = document.createElement('button'); zz.className = 'act snz'
-  const zLeft = isSnoozed(sid) ? Math.ceil((snoozedUntil[sid] - Date.now() / 1000) / 60) : 0
-  zz.innerHTML = '<span class="key">Z</span>💤 ' + (zLeft ? '30분 더 (지금 ' + zLeft + '분)' : '30분 미루기'); zz.onclick = () => snooze(sid, 30); nav.appendChild(zz); card.snooze = zz
-  if (zLeft) { const back = document.createElement('button'); back.className = 'act nav'; back.textContent = '↩ 큐로 되돌리기'; back.onclick = () => snooze(sid, 0); nav.appendChild(back) }
+  const q = isMuted(sid) && mutedSince[sid]
+  zz.innerHTML = '<span class="key">Z</span>' + (!q ? '💤 미루기 ▾' : q.until ? '💤 ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분 남음 ▾' : '🤐 말 걸 때까지 ▾')
+  zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
   card.appendChild(msg)
   // A dialog has no reply box; the card itself takes the keys then.
@@ -1936,6 +1973,38 @@ function afterCompactFx(p, hx, hy, s, t) {
   g.fillStyle = '#fff8ee'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, hx, ly)
   g.globalAlpha = 1
 }
+// Muted: tape over the mouth. With something to say it strains: cheeks puffed,
+// a hand up and waving, a hop, and a muffled bubble ("음! 음음!") that goes
+// nowhere; the longer it holds it in, the redder it gets.
+function mutedFx(p, x, by, fhx, hy, s, t, h) {
+  const want = wantsToTalk(p), held = want && p.since ? Math.min(1, (Date.now() / 1000 - p.since) / 600) : 0
+  if (want) {
+    // Puffed cheeks, going red.
+    g.fillStyle = 'rgba(255,' + Math.round(150 - held * 80) + ',' + Math.round(150 - held * 80) + ',.55)'
+    for (const d of [-1, 1]) { g.beginPath(); g.ellipse(fhx + d * 8 * s, hy + 5 * s, 4 * s, 3 * s, 0, 0, Math.PI * 2); g.fill() }
+    // A hand up, waving to be noticed.
+    const w = Math.sin(t * 9 + h) * 3
+    circle(x + (11 + w * 0.3) * s, by - (33 + Math.abs(w)) * s, 3.4 * s, SKIN)
+    g.strokeStyle = LINE; g.lineWidth = 1 * cam.s
+    for (let i = 0; i < 2; i++) { g.beginPath(); g.arc(x + 11 * s, by - 34 * s, (6 + i * 3) * s, -1.2 + w * 0.05, -0.4 + w * 0.05); g.stroke() }
+  }
+  // The tape: an X of two strips across the mouth.
+  for (const r of [0.35, -0.35]) {
+    g.save(); g.translate(fhx, hy + 5 * s); g.rotate(r)
+    rrect(-7 * s, -1.8 * s, 14 * s, 3.6 * s, 1 * s, '#f1e3c4', 'rgba(59,42,53,.6)', 0.8)
+    g.restore()
+  }
+  if (!want) return
+  // The muffled bubble: a sound that cannot get out.
+  const bx = fhx - 16 * s, byy = hy - 30 * s + Math.sin(t * 7 + h) * 1.5 * s
+  const words = ['음!', '음음!', '으음…', '읍!'], wd = words[Math.floor(t * 1.5 + h) % words.length]
+  g.globalAlpha = 0.85
+  rrect(bx - 17 * s, byy - 8 * s, 34 * s, 16 * s, 7 * s, '#ece8f2', 'rgba(59,42,53,.5)', 1)
+  poly([[bx + 6 * s, byy + 8 * s], [bx + 11 * s, byy + 8 * s], [bx + 12 * s, byy + 13 * s]], '#ece8f2', 'rgba(59,42,53,.5)', 1)
+  text(wd, bx, byy, 9, '#8a7d99')
+  g.strokeStyle = 'rgba(200,70,70,.6)'; g.lineWidth = 1.2 * cam.s; g.beginPath(); g.moveTo(bx - 14 * s, byy + 6 * s); g.lineTo(bx + 14 * s, byy - 6 * s); g.stroke()
+  g.globalAlpha = 1
+}
 function reactionOf(e) {
   const d = e.data.doing
   if (e.kind === 'sub') return 'shy'
@@ -2039,7 +2108,8 @@ function drawChibi(e, t, z0) {
   else if (!sub && justCompacted(p)) afterCompactFx(p, hx, hy, s, t)
   else if (!sub && !nap && !(kind && rx > 0.35)) contextHead(p.ctx, hx, hy, fhx, s, t, h, hair)
   if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
-  if (!sub && isSnoozed(e.id)) { const zx = hx + 12 * s, zy = hy - 20 * s; rrect(zx - 9 * s, zy - 8 * s, 18 * s, 14 * s, 6 * s, '#4a4d6e', LINE, 1); text('💤', zx, zy - 1 * s, 9) }
+  if (!sub && isTaped(e.id)) mutedFx(p, x, by, fhx, hy, s, t, h)
+  else if (!sub && isMuted(e.id)) { const zx = hx + 12 * s, zy = hy - 20 * s; rrect(zx - 9 * s, zy - 8 * s, 18 * s, 14 * s, 6 * s, '#4a4d6e', LINE, 1); text(wantsToTalk(p) ? '💤!' : '💤', zx, zy - 1 * s, 9) }
   // While it reacts to the cursor, its face says it: the usual bubble steps aside.
   // The work effect already says what it does; the bubble is for the rest.
   if (!nap && !working && !(kind && rx > 0.35)) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
@@ -2104,6 +2174,8 @@ const ICON = { thinking: '…', reading: '📖', running: '>_', calling: '🔌',
 function bubble(e, p, x, y, s, t, sleepy) {
   // Compacting, or just done: the head says so itself (compactingFx, afterCompactFx).
   if (e.kind === 'session' && (p.compacting || justCompacted(p))) return
+  // Muted with something to say: mutedFx draws its muffled bubble instead.
+  if (e.kind === 'session' && isTaped(e.id) && wantsToTalk(p)) return
   if (sleepy) { for (let k = 0; k < 3; k++) { const ph = (t * 0.5 + k / 3) % 1; g.globalAlpha = 1 - ph; text('z', x + 10 * s + ph * 10 * s, y - ph * 18 * s, 10 + k * 2, '#fff8ee'); g.globalAlpha = 1 } return }
   if (p.doing === 'thinking') {
     circle(x + 9 * s, y + 4 * s, 2 * s, '#fff'); circle(x + 13 * s, y - 2 * s, 3 * s, '#fff')
@@ -2164,7 +2236,7 @@ function frame(now) {
   zoneFloors(t)
   for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, 40, 90), 'rgba(59,42,53,.12)')
   for (const w of windows) {
-    const need = w.sessions.some((p) => p.doing === 'asking' || p.doing === 'alert')
+    const need = w.sessions.some((p) => wantsToTalk(p) && !isMuted(p.id))
     tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, 55, 87), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
     rug(w, t)
     if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
@@ -2251,7 +2323,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); snoozedUntil = j.snoozed || {}; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)
