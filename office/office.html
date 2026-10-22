@@ -418,6 +418,7 @@ function apply(people) {
       if (p.state === 'working') stats.work++
       if (p.doing === 'asking' || p.doing === 'alert') stats.wait++
       if (p.doing === 'idle' && p.since && Date.now() / 1000 - p.since > NAP_S) p.doing = 'napping'
+      noteCompaction(p)
       let tgt
       if (p.room === 'desk') { tgt = [desk[0] + 0.42, desk[1] - 0.32]; releaseSpots(p.id) }
       else if (p.doing === 'napping') { const k = napIndex(p.id); tgt = [PILE[0] + pileX(k), PILE[1] + pileY(k)]; releaseSpots(p.id, 'pile') }
@@ -564,7 +565,7 @@ cv.addEventListener('mousedown', (e) => {
 addEventListener('mouseup', (e) => {
   cv.classList.remove('drag')
   if (drag && drag.moved && drag.pod) { const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return }
-  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st) openCard(st.sid, st.kind) }
+  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st) openCard(st.sid, st.kind === 'memory' ? null : st.kind) }
   drag = null
 })
 addEventListener('mousemove', (e) => {
@@ -847,7 +848,7 @@ function hover(e) {
   if (st) {
     const owner = ents.get(st.sid)?.data, sh = SHELF[st.kind]
     const m = owner?.made || {}, outN = (m.pr || 0) + (m.slack || 0) + (m.ticket || 0)
-    const parts = st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
+    const parts = st.kind === 'memory' ? '📦 요약 상자 ' + st.n + '개 · 대화를 ' + st.n + '번 압축했습니다' + (owner?.compactAt ? ' (마지막 ' + ago(owner.compactAt).replace('째', ' 전') + ')' : '') : st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
     tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">' + (st.kind === 'desk' ? '클릭하면 서랍 열기' : '클릭하면 목록 열기') + '</div>'
     tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
     return
@@ -1235,6 +1236,19 @@ function deskStuff(x, y, top, m, sid) {
   }
 }
 
+// Summary boxes on the floor by the desk's left end: one per compaction.
+function memoryBoxes(x, y, who) {
+  const n = Math.min(6, who.compacts || 0)
+  if (!n) return
+  for (let i = 0; i < n; i++) {
+    const col = i % 2, layer = Math.floor(i / 2)
+    box(x - 0.34 + col * 0.02, y + 0.12 + col * 0.24, 0.26, 0.2, 9, i === n - 1 && justCompacted(who) ? '#f2c97d' : '#d9a46b', layer * 9)
+  }
+  const [lx, ly] = P(x - 0.21, y + 0.3, Math.ceil(n / 2) * 9 + 6)
+  if ((who.compacts || 0) > 1) { rrect(lx - 8 * cam.s, ly - 6 * cam.s, 16 * cam.s, 11 * cam.s, 4 * cam.s, '#fff8ee', LINE, 0.8); text('×' + who.compacts, lx, ly - 0.5 * cam.s, 7, '#2a2033') }
+  deskHits.push({ sx: lx, sy: ly + 8 * cam.s, r: 12 * cam.s, sid: who.id, kind: 'memory', n: who.compacts })
+}
+
 // ---------- tmux sections ----------
 // A cubicle partition: a fabric lower half in the section's colour, a frosted
 // glass top and a cap rail.
@@ -1538,6 +1552,7 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
     const sil = [P(x, y, top), P(x + 1.6, y, top), P(x + 1.6, y, 0), P(x + 1.6, y + 0.7, 0), P(x, y + 0.7, 0), P(x, y + 0.7, top)]
     deskHits.push({ poly: sil, sid: who.id, kind: 'desk', n: 0 })
     deskStuff(x, y, top, who.made || {}, who.id)
+    memoryBoxes(x, y, who)
   }
   if (mug) { const [ux, uy] = P(x + 0.72, y + 0.55, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
 }
@@ -1733,6 +1748,95 @@ function roomPose(d, x, by, s, t, h, arm) {
   if ((h & 4) === 0) { const bite = Math.floor(t * 0.7) % 4; arm(-9, -12); arm(7, -22); circle(x + 7 * s, by - 26 * s, 5 * s, '#f2b45a'); circle(x + 7 * s, by - 26 * s, 2 * s, '#fff4e0', null); if (bite > 0) circle(x + 11 * s, by - 29 * s, 2.5 * s, '#fff4e0', null); return }
   rrect(x - 8 * s, by - 22 * s, 16 * s, 9 * s, 3 * s, '#6b4fbf'); rrect(x - 4 * s, by - 20.5 * s, 8 * s, 6 * s, 1 * s, Math.floor(t * 3) % 2 ? '#9ff0b5' : '#7dd3fc', null); arm(-9, -17 + Math.sin(t * 14) * 1); arm(9, -17 + Math.cos(t * 12) * 1)
 }
+// The head fills up with its context window. Past half a scribble of thoughts
+// hangs over it; past 65% the hair stands up and a sweat drop runs; past 80%
+// papers, question marks and gears orbit it and it steams; past 90% the eyes
+// spiral and pages fly off, until a compaction clears it all.
+function contextHead(ctx, hx, hy, fhx, s, t, h, hair) {
+  if (ctx == null || ctx < 50) return
+  const k = Math.min(1, (ctx - 50) / 50), ph = (h % 100) / 100
+  // The scribble: a tangled line over the head, bigger and redder as it fills.
+  const r = (6 + k * 10) * s, cx = hx + 2 * s, cy = hy - 24 * s - k * 6 * s
+  g.strokeStyle = ctx >= 80 ? 'rgba(220,80,80,.75)' : 'rgba(90,85,110,.6)'; g.lineWidth = 1.2 * cam.s
+  g.beginPath()
+  for (let i = 0; i <= 60; i++) {
+    const a = i * 0.55 + t * (0.8 + k * 2.2) + ph * 6, rr = r * (0.45 + 0.55 * Math.abs(Math.sin(i * 1.7 + ph * 9)))
+    const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a * 1.3) * rr * 0.55
+    if (i) g.lineTo(px, py); else g.moveTo(px, py)
+  }
+  g.stroke()
+  if (ctx >= 65) {
+    // Hair on end, and a sweat drop sliding down the temple.
+    g.strokeStyle = hair; g.lineWidth = 2 * cam.s
+    for (let i = 0; i < 5; i++) { const a = -Math.PI * (0.2 + i * 0.15), wob = Math.sin(t * 6 + i) * 1.5; g.beginPath(); g.moveTo(hx + Math.cos(a) * 13 * s, hy + Math.sin(a) * 13 * s); g.lineTo(hx + Math.cos(a) * (19 + wob) * s, hy + Math.sin(a) * (19 + wob) * s); g.stroke() }
+    const d = (t * 0.6 + ph) % 1
+    g.globalAlpha = 1 - d * 0.6; g.fillStyle = '#8fd1ff'; g.beginPath(); const sx = hx + 13 * s, sy = hy - 4 * s + d * 12 * s
+    g.moveTo(sx, sy - 4 * s); g.quadraticCurveTo(sx + 3 * s, sy + 1 * s, sx, sy + 2.5 * s); g.quadraticCurveTo(sx - 3 * s, sy + 1 * s, sx, sy - 4 * s); g.fill(); g.globalAlpha = 1
+  }
+  if (ctx >= 80) {
+    // Things orbiting the head, and steam off the top.
+    const items = ['📄', '?', '⚙', '📄', '!'], n = ctx >= 90 ? 5 : 3
+    for (let i = 0; i < n; i++) { const a = t * (1.6 + k) + (i / n) * Math.PI * 2; text(items[i], hx + Math.cos(a) * 20 * s, hy - 6 * s + Math.sin(a) * 7 * s, 8, i % 2 ? '#c0392b' : '#2a2033') }
+    for (let i = 0; i < 3; i++) { const q = (t * 0.9 + i / 3 + ph) % 1; g.globalAlpha = (1 - q) * 0.7; circle(hx - 6 * s + i * 6 * s + Math.sin(q * 7 + i) * 2 * s, hy - 16 * s - q * 18 * s, (2 + q * 3) * s, '#ffffff', null); g.globalAlpha = 1 }
+  }
+  if (ctx >= 90) {
+    // Spiral eyes, and pages flying off.
+    for (const ex of [-5, 5]) {
+      circle(fhx + ex * s, hy + 1 * s, 3.2 * s, SKIN, null)
+      g.strokeStyle = '#2a2033'; g.lineWidth = 1 * cam.s; g.beginPath()
+      for (let i = 0; i <= 20; i++) { const a = i * 0.6 + t * 6 * (ex > 0 ? 1 : -1), rr = (i / 20) * 3 * s; const px = fhx + ex * s + Math.cos(a) * rr, py = hy + 1 * s + Math.sin(a) * rr; if (i) g.lineTo(px, py); else g.moveTo(px, py) }
+      g.stroke()
+    }
+    for (let i = 0; i < 2; i++) { const q = (t * 0.5 + i / 2 + ph) % 1; g.globalAlpha = 1 - q; g.save(); g.translate(hx + (i ? 1 : -1) * (8 + q * 26) * s, hy - 20 * s - q * 14 * s + q * q * 30 * s); g.rotate(q * 4 * (i ? 1 : -1)); rrect(-3.5 * s, -4.5 * s, 7 * s, 9 * s, 1 * s, '#fffdf6', LINE, 0.8); g.restore(); g.globalAlpha = 1 }
+  }
+}
+// ---------- compaction ----------
+// While Claude Code compacts, the session presses its temples and the papers
+// in its head spiral into a summary box over it that grows. Right after, the
+// head is clear and sparkles, "🧹 정리 완료 · 96%→18%" floats up and the box
+// drops. Every compaction so far is a box stacked by its desk.
+const COMPACT_GLOW_S = 25
+const ctxBefore = new Map(), compactSeen = new Map(), compactFrom = new Map()
+function noteCompaction(p) {
+  const seen = compactSeen.get(p.id)
+  if (p.compactAt && seen !== undefined && seen !== p.compactAt) compactFrom.set(p.id, ctxBefore.get(p.id))
+  compactSeen.set(p.id, p.compactAt || null)
+  if (!p.compacting && p.ctx != null) ctxBefore.set(p.id, p.ctx)
+}
+const justCompacted = (p) => p.compactAt && Date.now() / 1000 - p.compactAt < COMPACT_GLOW_S
+function compactingFx(hx, hy, s, t, arm) {
+  // Hands on the temples, squeezing.
+  const sq = Math.abs(Math.sin(t * 5)) * 1.5
+  circle(hx - (15 - sq) * s, hy + 1 * s, 3.6 * s, SKIN); circle(hx + (15 - sq) * s, hy + 1 * s, 3.6 * s, SKIN)
+  g.strokeStyle = 'rgba(42,32,51,.5)'; g.lineWidth = 1 * cam.s
+  for (const d of [-1, 1]) for (let i = 0; i < 2; i++) { g.beginPath(); g.moveTo(hx + d * (20 + i * 3) * s, hy - 3 * s + i * 4 * s); g.lineTo(hx + d * (23 + i * 3) * s, hy - 3 * s + i * 4 * s); g.stroke() }
+  // Papers spiralling in to the box over the head, the box growing.
+  const bx = hx, by = hy - 34 * s, grow = (t * 0.25) % 1, bs = (6 + grow * 6) * s
+  for (let i = 0; i < 6; i++) {
+    const q = (t * 0.8 + i / 6) % 1, a = i * 1.1 + q * 6, r = (1 - q) * 26 * s
+    g.globalAlpha = Math.min(1, (1 - q) * 1.6)
+    g.save(); g.translate(bx + Math.cos(a) * r, by + 6 * s + Math.sin(a) * r * 0.5); g.rotate(a); g.scale(1 - q * 0.7, 1 - q * 0.7)
+    rrect(-3 * s, -4 * s, 6 * s, 8 * s, 1 * s, '#fffdf6', LINE, 0.7); g.restore(); g.globalAlpha = 1
+  }
+  rrect(bx - bs / 2, by - bs / 2, bs, bs, 1.5 * s, '#d9a46b', LINE, 1)
+  g.strokeStyle = '#a0784f'; g.lineWidth = 1 * cam.s; g.beginPath(); g.moveTo(bx - bs / 2, by); g.lineTo(bx + bs / 2, by); g.stroke()
+  const w = 52 * s
+  rrect(hx - w / 2, hy - 56 * s, w, 12 * s, 6 * s, '#2a2033', null)
+  text('🗜 압축 중…', hx, hy - 50 * s, 8, '#fff8ee')
+}
+function afterCompactFx(p, hx, hy, s, t) {
+  const age = Date.now() / 1000 - p.compactAt, u = Math.min(1, age / COMPACT_GLOW_S)
+  // Sparkles round a clear head.
+  g.globalAlpha = 1 - u
+  for (let i = 0; i < 5; i++) { const a = t * 2 + i * 1.26, r = (16 + Math.sin(t * 3 + i) * 2) * s; text('✦', hx + Math.cos(a) * r, hy - 4 * s + Math.sin(a) * r * 0.6, 8, '#ffd36b') }
+  // The note floating up.
+  const from = compactFrom.get(p.id), label = '🧹 정리 완료' + (from != null && p.ctx != null ? ' · ' + from + '%→' + p.ctx + '%' : '')
+  g.font = Math.max(7, 9 * cam.s) + 'px Jua, sans-serif'
+  const w = g.measureText(label).width + 12 * cam.s, ly = hy - 40 * s - u * 18 * s
+  rrect(hx - w / 2, ly - 7 * cam.s, w, 14 * cam.s, 7 * cam.s, '#2f6b4f', null)
+  g.fillStyle = '#fff8ee'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, hx, ly)
+  g.globalAlpha = 1
+}
 function reactionOf(e) {
   const d = e.data.doing
   if (e.kind === 'sub') return 'shy'
@@ -1832,6 +1936,9 @@ function drawChibi(e, t, z0) {
   if (age >= 3) { g.strokeStyle = '#8a5a3a'; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(x - 13 * s, y - 1 * s); g.lineTo(x - 12 * s, by - 20 * s); g.quadraticCurveTo(x - 12 * s, by - 25 * s, x - 8 * s, by - 24 * s); g.stroke() }
   if (!sub) face(p.job, fhx, hy, s, t)
   if (working) workFx(jk, p.doing, x, by, hx, hy, s, t, h)
+  if (!sub && p.compacting) compactingFx(hx, hy, s, t)
+  else if (!sub && justCompacted(p)) afterCompactFx(p, hx, hy, s, t)
+  else if (!sub && !nap && !(kind && rx > 0.35)) contextHead(p.ctx, hx, hy, fhx, s, t, h, hair)
   if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
   if (!sub && isSnoozed(e.id)) { const zx = hx + 12 * s, zy = hy - 20 * s; rrect(zx - 9 * s, zy - 8 * s, 18 * s, 14 * s, 6 * s, '#4a4d6e', LINE, 1); text('💤', zx, zy - 1 * s, 9) }
   // While it reacts to the cursor, its face says it: the usual bubble steps aside.
@@ -1896,6 +2003,8 @@ function reactExtras(kind, hx, hy, s, t, rx, since) {
 }
 const ICON = { thinking: '…', reading: '📖', running: '>_', calling: '🔌', typing: '✏️', delegating: '🐣', asking: '?', alert: '!', idle: '☕' }
 function bubble(e, p, x, y, s, t, sleepy) {
+  // Compacting, or just done: the head says so itself (compactingFx, afterCompactFx).
+  if (e.kind === 'session' && (p.compacting || justCompacted(p))) return
   if (sleepy) { for (let k = 0; k < 3; k++) { const ph = (t * 0.5 + k / 3) % 1; g.globalAlpha = 1 - ph; text('z', x + 10 * s + ph * 10 * s, y - ph * 18 * s, 10 + k * 2, '#fff8ee'); g.globalAlpha = 1 } return }
   if (p.doing === 'thinking') {
     circle(x + 9 * s, y + 4 * s, 2 * s, '#fff'); circle(x + 13 * s, y - 2 * s, 3 * s, '#fff')

@@ -250,6 +250,15 @@ else the first name of your account's full name, else your login name.
   each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
   previous): the camera glides and zooms to it and a ring and arrow mark it.
   A reply or a dialog pick moves on to the next one by itself.
+- **A head as full as its context**: past 50% a scribble of thoughts hangs
+  over it, past 65% the hair stands up and it sweats, past 80% papers, `?` and
+  gears orbit it and it steams, past 90% the eyes spiral and pages fly off.
+- **Compaction**: while Claude Code compacts (its pane says "Compacting
+  conversation"), the session presses its temples and the papers spiral into
+  a summary box over its head (`🗜 압축 중…`); right after (a `compact_boundary`
+  in the transcript) the head is clear and sparkles under `🧹 정리 완료 ·
+  96%→18%`. Every compaction so far is a summary box stacked by its desk
+  (`×N`; hover says how many and when the last was).
 - **No double answers**: a card says at once, under its title, when the
   session is working (the tool, for how long) or when a reply sent from the
   office has not been taken yet (`📨`), kept current as it changes; quick
