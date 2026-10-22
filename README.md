@@ -187,6 +187,18 @@ answers there.
   in the last 45 s) are small ones with an antenna: they come up the elevator,
   stand with their session (a row in front of its desk, or around it in a
   room), show their own work by pose and bubble, and leave by the elevator.
+- **Personality** from its own transcript, every tool call counted once
+  (read incrementally): its **job** is the kind of tool it uses most beside
+  Bash — 📣 communicator (Slack: headset), 📝 writer (Docs/Artifact: beret,
+  glasses), 💻 developer (Edit/Write: headphones), 🔍 detective (Read/Grep/Web:
+  fedora), 👀 watcher (Monitor: binocular eyes), 🧑‍💼 manager (Agent/Workflow:
+  tie), 🛰 operator (other MCP tools: hard hat), ⌨️ hacker (nearly all Bash:
+  hoodie). Each job walks its own way (a scurry, a sway, a look-around) with
+  what it carries, and works with its own effect (`{ }` rising, letters from a
+  pen, chat bubbles, a scanning gaze, `01` rain, radio arcs, a pointing hand).
+  Its **rank** is its total calls: 🐣 new (<100), staff, senior, manager, lead
+  (silver crown), 👑 head (10,000+, gold crown); a little taller each step, and
+  the desk fills with papers, a plant, a trophy.
 - **Hover** and a character reacts to you: one waiting on you is eager
   (sparkly eyes, hops, hearts), one working is nervous (sweat drop, tiny
   pupils, a shiver), one idle or asleep is startled awake (`!`), a subagent
