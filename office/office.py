@@ -9,7 +9,7 @@ last tool call in its transcript:
   Bash/Monitor/BashOutput           -> workshop    (running a command)
   mcp__*                            -> phone booth (calling a service)
   Edit/Write/NotebookEdit           -> desk        (writing)
-  Agent/Task/Workflow               -> desk, subagents pop out of it
+  Agent/Task/Workflow               -> desk, subagents come out of the corner
   working with no tool for a while  -> desk, chin in hand (thinking)
   waiting/ask, action               -> desk, a "?" or "!" over the head
   done / idle                       -> lounge

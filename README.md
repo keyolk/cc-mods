@@ -184,10 +184,11 @@ answers there.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
   minutes they lie down in a pile in front of the sofa, asleep.
 - **Subagents** (`<project>/<sid>/subagents/agent-*.jsonl`, live while written
-  in the last 45 s) are small ones with an antenna, summoned out of their
-  session: each pops up where it is in a puff with sparkles, stands with it (a
-  row in front of its desk, or around it in a room) on a dotted tether, shows
-  its own work by pose and bubble, and vanishes in a puff when done.
+  in the last 45 s) are small ones with an antenna from the crowd squeezed
+  into the back corner behind a low partition (`🐣 N` on its door, fewer while
+  some are out): the door opens, one walks out to its session and stands with
+  it (a row in front of its desk, or around it in a room) on a dotted tether,
+  shows its own work by pose and bubble, and walks back in when done.
 - **Personality** from its own transcript, every tool call counted once
   (read incrementally): its **job** is the kind of tool it uses most beside
   Bash — 📣 communicator (Slack: headset), 📝 writer (Docs/Artifact: beret,
