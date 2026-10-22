@@ -88,6 +88,10 @@ canvas.drag { cursor: grabbing; }
 #movebar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 10px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 8px 14px; font-size: 14px; }
 #movebar button { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 2px 10px; cursor: pointer; }
 #movebar button.ok { background: #9ff0b5; }
+#card .talks { background: #eef3fd; border: 2px solid #9db8ea; border-radius: 10px; padding: 6px 10px; margin: 6px 0; font-size: 12px; }
+#card .talks .h { font-family: Jua, sans-serif; margin-bottom: 3px; }
+#card .talks .t { margin: 2px 0; }
+#card .talks .m { color: #6b6280; font-size: 11px; }
 #card .busy { display: none; background: #fff1d6; border: 2px solid #e8a23a; border-radius: 10px; padding: 6px 10px; margin: 6px 0; font-size: 12.5px; }
 #card .busy hr { border: 0; border-top: 1px dashed #e8a23a; margin: 5px 0; }
 #card .busy .m { color: #8a5a1e; font-size: 11.5px; }
@@ -693,6 +697,7 @@ async function openCard(sid, kind = null) {
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   // Busy or a reply already on its way: said first, before anything to press.
   card.busy = add('div', 'busy')
+  if (!kind) { const ts = talkSection(sid); if (ts) add('div', '', ts) }
   card.inbox = d.inbox
   renderBusy(sid)
   // Opened from a thing on its desk: that shelf first, every item in it.
@@ -1790,6 +1795,96 @@ function contextHead(ctx, hx, hy, fhx, s, t, h, hair) {
     for (let i = 0; i < 2; i++) { const q = (t * 0.5 + i / 2 + ph) % 1; g.globalAlpha = 1 - q; g.save(); g.translate(hx + (i ? 1 : -1) * (8 + q * 26) * s, hy - 20 * s - q * 14 * s + q * q * 30 * s); g.rotate(q * 4 * (i ? 1 : -1)); rrect(-3.5 * s, -4.5 * s, 7 * s, 9 * s, 1 * s, '#fffdf6', LINE, 0.8); g.restore(); g.globalAlpha = 1 }
   }
 }
+// ---------- sessions talking ----------
+// A message one session sends another (SendMessage) flies across the office
+// as a paper plane from the sender to the recipient; on landing a speech
+// bubble over the recipient says what it is about, and the sender shows 📨
+// for a moment. One for someone not in the office flies off past the wall.
+// The last 15 minutes are kept: hovering a character draws its threads to
+// whom it talked, and its card lists them.
+let talkLog = [], talkFirst = true
+const flights = []
+const talkSeen = new Set()
+const FLY_MS = 1800, SAY_MS = 7000
+function noteTalks(list) {
+  talkLog = list
+  for (const t of list) {
+    if (talkSeen.has(t.id)) continue
+    talkSeen.add(t.id)
+    // On the first load only what was just sent flies; the rest is history.
+    if (talkFirst && Date.now() / 1000 - t.at > 20) continue
+    flights.push({ ...t, start: performance.now() })
+  }
+  talkFirst = false
+}
+function entOf(sid) { return sid && ents.get(sid) }
+function drawFlights(t) {
+  const now = performance.now()
+  for (let i = flights.length - 1; i >= 0; i--) {
+    const f = flights[i], u = (now - f.start) / FLY_MS
+    if (u > 1 + SAY_MS / FLY_MS) { flights.splice(i, 1); continue }
+    const a = entOf(f.from), b = entOf(f.to)
+    if (!a || a.sx === undefined) continue
+    const ax = a.sx, ay = a.sy - 50 * cam.s
+    const [bx, by] = b && b.sx !== undefined ? [b.sx, b.sy - 50 * cam.s] : [VW + 40, ay - 120]
+    if (u < 0.35) { // the sender: an envelope held up
+      const [ex, ey] = [a.sx + 12 * cam.s, a.sy - 70 * cam.s]
+      rrect(ex - 9 * cam.s, ey - 6 * cam.s, 18 * cam.s, 12 * cam.s, 2 * cam.s, '#fffdf6', LINE, 1)
+      text('📨', ex, ey, 8)
+    }
+    if (u <= 1) { // the plane, along an arc, nose first
+      const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2
+      const lift = Math.min(160, Math.hypot(bx - ax, by - ay) * 0.35 + 40) * cam.s
+      const px = ax + (bx - ax) * e, py = ay + (by - ay) * e - Math.sin(Math.PI * e) * lift
+      const dx = (bx - ax) - 0, dy = (by - ay) - Math.cos(Math.PI * e) * Math.PI * lift
+      g.strokeStyle = 'rgba(255,248,238,.5)'; g.setLineDash([2, 4]); g.lineWidth = 1.2; g.beginPath()
+      for (let k = 0; k <= 12; k++) { const q = (k / 12) * e; const qx = ax + (bx - ax) * q, qy = ay + (by - ay) * q - Math.sin(Math.PI * q) * lift; if (k) g.lineTo(qx, qy); else g.moveTo(qx, qy) }
+      g.stroke(); g.setLineDash([])
+      g.save(); g.translate(px, py); g.rotate(Math.atan2(dy, dx)); const z = 1.1 * cam.s
+      poly([[12 * z, 0], [-9 * z, -7 * z], [-4 * z, 0]], '#ffffff', LINE, 1); poly([[12 * z, 0], [-4 * z, 0], [-9 * z, 6 * z]], '#e8ecf5', LINE, 1)
+      g.restore()
+      continue
+    }
+    if (!b || b.sx === undefined) continue
+    // Landed: a bubble over the recipient, fading out.
+    const v = (u - 1) * FLY_MS / SAY_MS
+    g.globalAlpha = v > 0.8 ? (1 - v) * 5 : Math.min(1, (u - 1) * 6)
+    const head = '💬 ' + (f.fromName || '') + ': ', body = (f.text || '').slice(0, 46) + ((f.text || '').length > 46 ? '…' : '')
+    g.font = '12px Jua, sans-serif'
+    const w = Math.min(320, g.measureText(head + body).width + 20), x0 = b.sx - w / 2, y0 = b.sy - 112 * cam.s - 26
+    rrect(x0, y0, w, 26, 10, '#fffdf6', LINE, 1.4 / cam.s)
+    poly([[b.sx - 6, y0 + 26], [b.sx + 6, y0 + 26], [b.sx, y0 + 34]], '#fffdf6', LINE, 1.4 / cam.s)
+    g.fillStyle = '#2b4a8a'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(head, x0 + 10, y0 + 13)
+    const hw = g.measureText(head).width; g.fillStyle = '#2a2033'; g.fillText(body, x0 + 10 + hw, y0 + 13, w - 20 - hw)
+    g.globalAlpha = 1
+  }
+}
+// The threads of the one hovered: a dashed arc to each it talked with lately.
+function drawThreads() {
+  const h = [...ents.values()].find((e) => e.hl && e.kind === 'session') || (cardSid && ents.get(cardSid))
+  if (!h || h.sx === undefined) return
+  const seen = new Set()
+  for (const t of talkLog) {
+    const other = t.from === h.id ? t.to : t.to === h.id ? t.from : null
+    if (!other || seen.has(other)) continue
+    seen.add(other)
+    const o = entOf(other); if (!o || o.sx === undefined) continue
+    const ax = h.sx, ay = h.sy - 40 * cam.s, bx = o.sx, by = o.sy - 40 * cam.s, lift = Math.min(120, Math.hypot(bx - ax, by - ay) * 0.3) * cam.s
+    g.strokeStyle = 'rgba(91,155,232,.75)'; g.lineWidth = 2; g.setLineDash([5, 5]); g.beginPath(); g.moveTo(ax, ay); g.quadraticCurveTo((ax + bx) / 2, Math.min(ay, by) - lift, bx, by); g.stroke(); g.setLineDash([])
+    const n = talkLog.filter((q) => (q.from === h.id && q.to === other) || (q.to === h.id && q.from === other)).length
+    rrect((ax + bx) / 2 - 14, Math.min(ay, by) - lift / 2 - 18, 28, 16, 8, '#5b9be8', null); g.fillStyle = '#fff'; g.font = '11px Jua, sans-serif'; g.textAlign = 'center'; g.fillText('💬' + n, (ax + bx) / 2, Math.min(ay, by) - lift / 2 - 10)
+  }
+}
+// The card's list: who it talked with, newest first.
+function talkSection(sid) {
+  const mine = talkLog.filter((t) => t.from === sid || t.to === sid).slice(-6).reverse()
+  if (!mine.length) return ''
+  return '<div class="talks"><div class="h">💬 세션 대화 · 최근 15분</div>' + mine.map((t) => {
+    const out = t.from === sid, other = out ? (t.to && ents.get(t.to)?.data.name) || t.toName : (ents.get(t.from)?.data.name || t.fromName)
+    return '<div class="t"><b>' + (out ? '→ ' : '← ') + esc(other) + '</b> ' + esc(t.text) + ' <span class="m">' + ago(t.at).replace('째', ' 전') + '</span></div>'
+  }).join('') + '</div>'
+}
+
 // ---------- compaction ----------
 // While Claude Code compacts, the session presses its temples and the papers
 // in its head spiral into a summary box over it that grows. Right after, the
@@ -2104,6 +2199,8 @@ function frame(now) {
   add(1e9, () => roomTags())
   add(1e9 + 1, () => marginLabels())
   add(1e9 + 2, () => drawPodDrag())
+  add(1e9 - 2, () => drawThreads())
+  add(1e9 + 3, () => drawFlights(t))
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
   items.sort((a, b) => a[0] - b[0])
   for (const [, fn] of items) fn()
@@ -2121,7 +2218,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); snoozedUntil = j.snoozed || {}; apply(j.people) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); snoozedUntil = j.snoozed || {}; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)
