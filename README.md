@@ -173,7 +173,8 @@ linked, when it is opened, and every five minutes.
 Every Claude Code session in tmux as a chibi in a quarter-view office, in a
 TWeb pane beside this one, live (2 s). `office/office.py` serves it on
 `127.0.0.1:8796`, shared by all sessions; `/office` starts it when nothing
-answers there.
+answers there. It is named after you (`🏢 Gavin네 사무실`): `OFFICE_OWNER`,
+else the first name of your account's full name, else your login name.
 
 - **One pod per tmux window**: its sessions sit at its desks side by side, the
   window name on each desk's front.

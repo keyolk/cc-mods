@@ -18,6 +18,7 @@ Usage: office.py [--port 8787]
 """
 
 import glob
+import html
 import json
 import os
 import re
@@ -274,6 +275,20 @@ def room(state: str, attention: str, t: dict) -> tuple[str, str]:
     if attention == "ask":
         return "desk", "asking"
     return "lounge", "idle"
+
+
+# Whose office it is: OFFICE_OWNER, else the first name of the account's full
+# name (macOS keeps it in the passwd gecos field), else the login name.
+def owner() -> str:
+    name = os.environ.get("OFFICE_OWNER", "").strip()
+    if not name:
+        try:
+            import pwd
+
+            name = (pwd.getpwuid(os.getuid()).pw_gecos or "").split(",")[0].split()[0]
+        except (KeyError, IndexError, ImportError):
+            name = ""
+    return name or (os.environ.get("USER", "") or "my").split(".")[0].capitalize()
 
 
 def snapshot() -> list[dict]:
@@ -712,7 +727,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, f.read(), "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
-                return self.send(200, f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()), "text/html; charset=utf-8")
+                page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
+                return self.send(200, page, "text/html; charset=utf-8")
         self.send(404, b"not found", "text/plain")
 
 
