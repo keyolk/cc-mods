@@ -184,6 +184,24 @@ const COCKPIT = {
   props: { title: 'cockpit', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
 } as const
 
+test('office: a reply left for this session from the office goes in as the person\'s prompt, once; a stale one is dropped', async ($, on) => {
+  const submitted: string[] = []
+  const files: Record<string, string> = {}
+  const runs = baseStubs(on, { pane: '%42', submitted, files, run: (a) => (a[0] === 'rm' ? (delete files[a.at(-1)!.replace(/^.*\/\.claude\//, '.claude/')], { code: 0, out: '' }) : undefined) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: '1번으로 해 주세요', at: Date.now() / 1000 })
+  await clock.advance(2_100)
+  expect(submitted).toContain('1번으로 해 주세요')
+  expect(runs.some((a) => a[0] === 'rm' && String(a.at(-1)).endsWith('/.claude/state/office/inbox/sid-1.json'))).toBe(true)
+  await clock.advance(4_100)
+  expect(submitted.filter((t) => t === '1번으로 해 주세요')).toHaveLength(1)
+  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'old', at: Date.now() / 1000 - 600 })
+  await clock.advance(2_100)
+  expect(submitted).not.toContain('old')
+})
+
 test('the policy pane draws a row per capability and applies a mode', async ($, on) => {
   const runs = baseStubs(on, { policyJson: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }) })
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })

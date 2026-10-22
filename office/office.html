@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+<style>
+:root { --bg: #23253a; --ink: #fff8ee; --muted: #b9b3d6; --card: #2f3150; --line: #191a29; --warn: #ffcf5a; --bad: #ff7a7a; --ok: #8be08b; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: radial-gradient(ellipse at 50% 30%, #34375a, var(--bg) 70%); color: var(--ink); overflow: hidden; }
+body { font: 13px/1.4 "Jua", -apple-system, "Apple SD Gothic Neo", sans-serif; }
+header { position: absolute; left: 0; right: 0; top: 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 14px; z-index: 2; pointer-events: none; }
+header h1 { margin: 0; font-size: 18px; font-weight: 400; letter-spacing: .5px; }
+.chip { background: var(--card); border: 2px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
+.chip b { font-weight: 400; color: var(--warn); }
+#ask { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px; z-index: 2; }
+#ask button { font: inherit; color: #2a2033; border: 2px solid var(--line); border-radius: 12px; padding: 3px 10px; cursor: pointer; box-shadow: 0 2px 0 var(--line); }
+#ask .q { background: var(--warn); } #ask .x { background: var(--bad); color: #fff; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+canvas.drag { cursor: grabbing; }
+#tip { position: fixed; pointer-events: none; z-index: 5; max-width: 320px; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; padding: 8px 11px; display: none; box-shadow: 0 4px 0 var(--line); }
+#tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
+#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
+#card h2 { margin: 0 0 2px; font-size: 18px; font-weight: 400; }
+#card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
+#card .x { position: absolute; right: 10px; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
+#card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; white-space: pre-wrap; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: 180px; overflow: auto; margin-bottom: 10px; }
+#card .q { font-size: 14px; margin: 6px 0; }
+#card .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+#card button.act { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 10px; padding: 4px 10px; cursor: pointer; background: #fff; box-shadow: 0 2px 0 var(--line); }
+#card button.act:active { transform: translateY(2px); box-shadow: none; }
+#card button.pick { background: #ffe08a; } #card button.go { background: #a8e6b0; } #card button.stop { background: #ffb3b3; } #card button.nav { background: #cfe0ff; }
+#card textarea { width: 100%; min-height: 54px; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; resize: vertical; }
+#card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
+#card .msg.err { color: #c0392b; }
+#hint { position: absolute; right: 14px; top: 52px; color: var(--muted); font-size: 11px; z-index: 2; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏢 Claude 사무실</h1>
+  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
+</header>
+<div id="hint">휠 확대 · 드래그 이동 · 더블클릭 맞춤 · 캐릭터 클릭 = 답하기</div>
+<canvas id="c"></canvas>
+<div id="ask"></div>
+<div id="tip"></div>
+<div id="card"></div>
+<script>
+// Every Claude Code session in tmux as a chibi in a quarter-view office:
+// one pod per tmux window (its sessions share it), the library while
+// reading, the server room while running, the lounge while idle, and each
+// subagent as a small one that rides the elevator in and out.
+
+// ---------- iso projection ----------
+const TW = 64, TH = 32
+const cv = document.getElementById('c'), g = cv.getContext('2d')
+let DPR = 1, VW = 0, VH = 0
+const cam = { s: 1, ox: 0, oy: 0, user: false }
+const P = (x, y, z = 0) => [(x - y) * (TW / 2) * cam.s + cam.ox, (x + y) * (TH / 2) * cam.s - z * cam.s + cam.oy]
+const LINE = '#3b2a35'
+
+function hex(c) { const n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255] }
+function mix(c, t, a) { const x = hex(c), y = hex(t); return 'rgb(' + x.map((v, i) => Math.round(v + (y[i] - v) * a)).join(',') + ')' }
+const light = (c, a) => mix(c, '#ffffff', a), dark = (c, a) => mix(c, '#000000', a)
+function hsl2hex(h, s, l) { s /= 100; l /= 100; const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return '#' + [f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('') }
+function hashOf(s) { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0 }
+
+function poly(pts, fill, stroke = LINE, lw = 1.4) {
+  g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]); g.closePath()
+  if (fill) { g.fillStyle = fill; g.fill() }
+  if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw * cam.s; g.lineJoin = 'round'; g.stroke() }
+}
+function tile(x, y, w, d, fill, stroke) { poly([P(x, y), P(x + w, y), P(x + w, y + d), P(x, y + d)], fill, stroke, 1) }
+// A block on [x,x+w]×[y,y+d], from z0 up h. The faces we see: top, the y+d
+// face (front-left) and the x+w face (front-right).
+function box(x, y, w, d, h, c, z0 = 0) {
+  const z1 = z0 + h
+  poly([P(x, y + d, z0), P(x + w, y + d, z0), P(x + w, y + d, z1), P(x, y + d, z1)], c)
+  poly([P(x + w, y, z0), P(x + w, y + d, z0), P(x + w, y + d, z1), P(x + w, y, z1)], dark(c, 0.18))
+  poly([P(x, y, z1), P(x + w, y, z1), P(x + w, y + d, z1), P(x, y + d, z1)], light(c, 0.22))
+}
+function rrect(x, y, w, h, r, fill, stroke = LINE, lw = 1.4) {
+  g.beginPath(); g.roundRect(x, y, w, h, Math.max(0, r))
+  if (fill) { g.fillStyle = fill; g.fill() }
+  if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw * cam.s; g.stroke() }
+}
+function circle(x, y, r, fill, stroke = LINE, lw = 1.4) {
+  g.beginPath(); g.arc(x, y, Math.max(0.1, r), 0, Math.PI * 2)
+  if (fill) { g.fillStyle = fill; g.fill() }
+  if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw * cam.s; g.stroke() }
+}
+function text(t, x, y, size, color = '#2a2033', align = 'center') {
+  g.font = Math.max(8, size * cam.s) + 'px Jua, sans-serif'; g.textAlign = align; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(t, x, y)
+}
+
+// ---------- world layout ----------
+// Pods: a row of two desks per window, a second row when it holds 3-4
+// sessions; a row is as deep as its deepest pod.
+const COLS = 5, POD_W = 3.7, POD_D1 = 2.4, POD_D2 = 3.7, OFF_Y = 4.6
+const ZONES = {
+  library: { x0: 0.3, x1: 5.3, floor: '#cfe8d6', label: '📚 자료실', spots: [] },
+  server: { x0: 5.6, x1: 10.6, floor: '#d3dbef', label: '🖥 서버실', spots: [] },
+  lounge: { x0: 10.9, x1: 15.6, floor: '#f8d9dc', label: '☕ 휴게실', spots: [] },
+}
+// Idle this long: asleep, lying in the pile in front of the sofa. The lounge
+// has no seat limit: the more idle sessions, the fuller (and funnier) it gets.
+const NAP_S = 10 * 60
+const PILE = [13.3, 1.55]
+for (const z of Object.values(ZONES)) for (const y of [1.75, 2.65, 3.55]) for (let x = z.x0 + 0.55; x < z.x1 - 0.4; x += 0.78) z.spots.push([x + (y === 2.65 ? 0.39 : 0), y])
+const DOOR = [16.6, 1.55]
+let W = 22, D = 12
+const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
+
+// ---------- state ----------
+let windows = []
+const ents = new Map() // id -> a session or a subagent on the floor
+const spotTaken = { library: new Map(), server: new Map(), lounge: new Map() }
+const lift = { openUntil: 0 }
+let stats = { total: 0, work: 0, wait: 0, subs: 0 }
+
+function spotFor(zone, id) {
+  const taken = spotTaken[zone]
+  if (taken.has(id)) return ZONES[zone].spots[taken.get(id)]
+  const used = new Set(taken.values()), spots = ZONES[zone].spots
+  let i = hashOf(id) % spots.length
+  for (let k = 0; k < spots.length && used.has(i); k++) i = (i + 1) % spots.length
+  taken.set(id, i)
+  // Full: squeeze in next to someone, a little off, rather than wait outside.
+  if (used.size >= spots.length) { const j = hashOf(id); return [spots[i][0] + ((j % 7) - 3) * 0.08, spots[i][1] + (((j >> 3) % 5) - 2) * 0.08] }
+  return spots[i]
+}
+// The pile: each napper a place in it by arrival order, spread a little and
+// stacked a layer higher every few, so they overlap.
+const napOrder = []
+function napIndex(id) { let i = napOrder.indexOf(id); if (i < 0) { napOrder.push(id); i = napOrder.length - 1 } return i }
+const pileX = (k) => ((hashOf('x' + k) % 100) / 100 - 0.5) * 1.6
+const pileY = (k) => ((hashOf('y' + k) % 100) / 100) * 1.3
+function releaseSpots(id, keep) {
+  if (keep !== 'pile') { const i = napOrder.indexOf(id); if (i >= 0) napOrder.splice(i, 1) } for (const z of Object.keys(spotTaken)) if (z !== keep) spotTaken[z].delete(id) }
+
+function apply(people) {
+  const byWin = new Map()
+  for (const p of people) {
+    if (!byWin.has(p.wid)) byWin.set(p.wid, { wid: p.wid, name: p.name, label: p.window, sessions: [] })
+    byWin.get(p.wid).sessions.push(p)
+  }
+  windows = [...byWin.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+  let py = OFF_Y
+  for (let r0 = 0; r0 < windows.length; r0 += COLS) {
+    const row = windows.slice(r0, r0 + COLS), depth = row.some((w) => w.sessions.length > 2) ? POD_D2 : POD_D1
+    row.forEach((w, c) => { w.px = 0.3 + c * POD_W; w.py = py; w.pd = w.sessions.length > 2 ? POD_D2 : POD_D1; w.hue = hashOf(w.name) % 360 })
+    py += depth
+  }
+  W = Math.max(18.8, COLS * POD_W + 0.3)
+  D = py + 0.3
+  if (!cam.user) fit()
+
+  const live = new Set()
+  stats = { total: people.length, work: 0, wait: 0, subs: 0 }
+  for (const w of windows) {
+    w.sessions.forEach((p, k) => {
+      const rel = SEATS[k % SEATS.length]
+      const desk = [w.px + rel[0], w.py + rel[1]]
+      p.desk = desk
+      if (p.state === 'working') stats.work++
+      if (p.doing === 'asking' || p.doing === 'alert') stats.wait++
+      if (p.doing === 'idle' && p.since && Date.now() / 1000 - p.since > NAP_S) p.doing = 'napping'
+      let tgt
+      if (p.room === 'desk') { tgt = [desk[0] + 0.42, desk[1] - 0.32]; releaseSpots(p.id) }
+      else if (p.doing === 'napping') { const k = napIndex(p.id); tgt = [PILE[0] + pileX(k), PILE[1] + pileY(k)]; releaseSpots(p.id, 'pile') }
+      else { tgt = spotFor(p.room, p.id); releaseSpots(p.id, p.room) }
+      let e = ents.get(p.id)
+      if (!e) { e = { id: p.id, kind: 'session', x: tgt[0], y: tgt[1] }; ents.set(p.id, e) }
+      Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false })
+      live.add(p.id)
+      // A window's people stay together: subagents gather around their
+      // session wherever it is (its desk, the library, the server room) and
+      // show what each does by its pose and bubble, not by walking off alone.
+      const subs = p.subs || [], n = subs.length
+      subs.forEach((s, j) => {
+        stats.subs++
+        const sid = p.id + '/' + s.id
+        // At the desk: a row along its front, inside the pod. In a room: a
+        // half ring in front of the session.
+        const a = Math.PI * (0.1 + (n > 1 ? (0.8 * j) / (n - 1) : 0.4))
+        const st = p.room === 'desk'
+          ? [desk[0] + 0.2 + (j % 4) * 0.4, desk[1] + 0.98 + Math.floor(j / 4) * 0.28]
+          : [tgt[0] + Math.cos(a) * 0.75, tgt[1] + 0.2 + Math.sin(a) * 0.6]
+        let se = ents.get(sid)
+        if (!se) { se = { id: sid, kind: 'sub', x: DOOR[0], y: DOOR[1] }; ents.set(sid, se); lift.openUntil = performance.now() + 1500 }
+        Object.assign(se, { tx: st[0], ty: st[1], data: { ...s, parent: p }, hue: w.hue, leaving: false })
+        live.add(sid)
+      })
+    })
+  }
+  for (const [id, e] of ents) {
+    if (live.has(id)) continue
+    if (e.kind === 'sub' && !e.leaving) { e.leaving = true; e.tx = DOOR[0]; e.ty = DOOR[1]; releaseSpots(id) }
+    else if (e.kind === 'session') { ents.delete(id); releaseSpots(id) }
+  }
+  document.getElementById('s1').innerHTML = '세션 <b>' + stats.total + '</b>'
+  document.getElementById('s2').innerHTML = '일하는 중 <b>' + stats.work + '</b>'
+  document.getElementById('s3').innerHTML = '나를 기다림 <b>' + stats.wait + '</b>'
+  document.getElementById('s4').innerHTML = '서브에이전트 <b>' + stats.subs + '</b>'
+  const ask = document.getElementById('ask'); ask.innerHTML = ''
+  for (const p of people.filter((p) => p.doing === 'asking' || p.doing === 'alert')) {
+    const b = document.createElement('button'); b.className = p.doing === 'alert' ? 'x' : 'q'
+    b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name; b.onclick = () => openCard(p.id); ask.appendChild(b)
+  }
+}
+
+// ---------- camera ----------
+function resize() { DPR = devicePixelRatio || 1; VW = innerWidth; VH = innerHeight; cv.width = VW * DPR; cv.height = VH * DPR; if (!cam.user) fit() }
+function fit() {
+  cam.s = 1; cam.ox = 0; cam.oy = 0
+  const pts = [P(0, 0, 150), P(W, 0, 150), P(0, D), P(W, D)]
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
+  const top = 48, bottom = 48
+  // Before the page has a size (VW/VH 0) this would go negative.
+  cam.s = Math.max(0.1, Math.min((VW - 16) / (maxX - minX), (VH - top - bottom) / (maxY - minY)))
+  cam.ox = (VW - (maxX - minX) * cam.s) / 2 - minX * cam.s
+  cam.oy = top + (VH - top - bottom - (maxY - minY) * cam.s) / 2 - minY * cam.s
+}
+addEventListener('resize', resize)
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault(); cam.user = true
+  const k = Math.exp(-e.deltaY * 0.0015), ns = Math.min(4, Math.max(0.25, cam.s * k)), r = ns / cam.s
+  cam.ox = e.clientX - (e.clientX - cam.ox) * r; cam.oy = e.clientY - (e.clientY - cam.oy) * r; cam.s = ns
+}, { passive: false })
+let drag = null
+cv.addEventListener('mousedown', (e) => { drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false }; cv.classList.add('drag') })
+addEventListener('mouseup', (e) => {
+  cv.classList.remove('drag')
+  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id) }
+  drag = null
+})
+addEventListener('mousemove', (e) => {
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; cam.user = true; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy } }
+  hover(e)
+})
+cv.addEventListener('dblclick', () => { cam.user = false; fit() })
+function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(pane)) }
+
+// ---------- quick actions ----------
+// A click opens the session's card: what it last said, its choice dialog if
+// one is up (each option a button), one-press replies, a free reply, stop,
+// and the jump to its window. Replies go through that session's cc-mods as
+// the person's own prompt; a dialog choice is its digit key.
+const TOKEN = '__OFFICE_TOKEN__'
+const card = document.getElementById('card')
+let cardSid = null
+async function openCard(sid) {
+  cardSid = sid
+  card.style.display = 'block'
+  card.innerHTML = '<div class="sub">불러오는 중…</div>'
+  const d = await (await fetch('/detail?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()
+  if (cardSid !== sid) return
+  if (d.error) { card.innerHTML = '<div class="sub">' + esc(d.error) + '</div>'; return }
+  const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
+  card.innerHTML = ''
+  const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; card.appendChild(e); return e }
+  const close = add('button', 'x', '✕'); close.onclick = () => { card.style.display = 'none'; cardSid = null }
+  add('h2', '', esc(d.window + ' ' + d.name))
+  add('div', 'sub', DOING[me.doing || d.doing] || d.state)
+  if (d.text) add('div', 'said', esc(d.text.length > 1400 ? '…' + d.text.slice(-1400) : d.text)).scrollTop = 1e9
+  const msg = document.createElement('div'); msg.className = 'msg'
+  const send = async (body, label) => {
+    msg.className = 'msg'; msg.textContent = '보내는 중…'
+    try {
+      const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid, ...body }) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || r.status)
+      msg.textContent = '✓ ' + label
+      setTimeout(() => { if (cardSid === sid) openCard(sid) }, 1500)
+    } catch (e) { msg.className = 'msg err'; msg.textContent = '못 보냄: ' + e.message }
+  }
+  if (d.dialog) {
+    add('div', 'q', '🗳 ' + esc(d.dialog.question || '선택지'))
+    const row = add('div', 'row')
+    for (const o of d.dialog.options) { const b = document.createElement('button'); b.className = 'act pick'; b.textContent = o.n + '. ' + o.label; b.onclick = () => send({ kind: 'key', value: String(o.n) }, o.n + '번 선택'); row.appendChild(b) }
+  } else {
+    const row = add('div', 'row')
+    for (const t of d.suggestions) { const b = document.createElement('button'); b.className = 'act go'; b.textContent = t; b.onclick = () => send({ kind: 'reply', value: t }, '"' + t + '" 보냄'); row.appendChild(b) }
+    const ta = add('textarea'); ta.placeholder = '직접 답장… (⌘/Ctrl+Enter로 보내기)'
+    const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
+    ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) go() }
+    const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go'; b.textContent = '보내기'; b.onclick = go; r2.appendChild(b)
+  }
+  const nav = add('div', 'row')
+  if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.textContent = '✋ 멈추기 (Esc)'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b) }
+  const j = document.createElement('button'); j.className = 'act nav'; j.textContent = '↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j)
+  card.appendChild(msg)
+}
+
+// ---------- hover ----------
+const tip = document.getElementById('tip')
+const DOING = { napping: '😴 휴게실에 드러누워 자는 중 (한참 쉼)', reading: '📖 자료실에서 읽는 중', running: '⌨️ 서버실에서 명령 실행 중', calling: '🔌 서버실에서 외부 도구 호출 중', typing: '✏️ 책상에서 쓰는 중', delegating: '🐣 서브에이전트에게 맡기는 중', thinking: '🤔 턱 괴고 고민 중', asking: '❓ 답을 기다리는 중', alert: '❗ 확인이 필요함', idle: '☕ 쉬는 중' }
+function ago(sec) { if (!sec) return ''; const m = Math.round((Date.now() / 1000 - sec) / 60); return m < 1 ? '방금' : m < 60 ? m + '분째' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분째' }
+function hit(mx, my) {
+  let best = null, bd = 1e9
+  for (const e of ents.values()) { if (e.sx === undefined) continue; const d = Math.hypot(mx - e.sx, my - (e.sy - 24 * cam.s)); if (d < 28 * cam.s && d < bd) { bd = d; best = e } }
+  return best
+}
+function hover(e) {
+  const h = drag && drag.moved ? null : hit(e.clientX, e.clientY)
+  for (const x of ents.values()) x.hl = x === h
+  if (!h) { tip.style.display = 'none'; return }
+  const p = h.data
+  const rows = h.kind === 'sub'
+    ? ['<div class="t">🐣 ' + esc(p.desc || p.type) + '</div>', '<div>' + DOING[p.doing] + '</div>', '<div class="m">' + esc(p.parent.window + ' ' + p.parent.name) + '의 ' + esc(p.type) + '</div>', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '']
+    : ['<div class="t">' + esc(p.window + ' ' + p.name) + '</div>', '<div>' + DOING[p.doing] + (p.since ? ' · ' + ago(p.since) : '') + '</div>', p.title ? '<div class="m">' + esc(p.title) + '</div>' : '', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '', '<div class="m">' + (p.subs && p.subs.length ? '서브에이전트 ' + p.subs.length + '명 · ' : '') + (p.ctx != null ? 'context ' + p.ctx + '% · ' : '') + '클릭하면 답하기</div>']
+  tip.innerHTML = rows.join('')
+  tip.style.display = 'block'
+  tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'
+  tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
+
+// ---------- furniture ----------
+const BOOKS = ['#e86a5c', '#5c9de8', '#f2c14e', '#6cc27a', '#a77de8', '#f28f4e', '#4ec2c2']
+function shelf(x, y) {
+  box(x, y, 1.05, 0.38, 74, '#a8744f')
+  for (let r = 0; r < 3; r++) {
+    const z = 10 + r * 22
+    for (let b = 0; b < 7; b++) {
+      const u = 0.08 + b * 0.13, h = 14 + ((b * 3 + r + Math.round(x)) % 4) * 1.5
+      poly([P(x + u, y + 0.38, z), P(x + u + 0.11, y + 0.38, z), P(x + u + 0.11, y + 0.38, z + h), P(x + u, y + 0.38, z + h)], BOOKS[(b + r * 2 + Math.round(x * 3)) % BOOKS.length], LINE, 0.8)
+    }
+  }
+}
+function rack(x, y, t) {
+  box(x, y, 0.72, 0.62, 86, '#3d4a66')
+  for (let u = 0; u < 8; u++) {
+    const z = 10 + u * 9.5
+    poly([P(x + 0.06, y + 0.62, z), P(x + 0.66, y + 0.62, z), P(x + 0.66, y + 0.62, z + 6), P(x + 0.06, y + 0.62, z + 6)], '#2a3349', LINE, 0.6)
+    const on = Math.sin(t * (2 + ((u * 7 + Math.round(x * 3)) % 5)) + u) > -0.2
+    const [lx, ly] = P(x + 0.58, y + 0.62, z + 3)
+    circle(lx, ly, 1.6 * cam.s, on ? (u % 3 ? '#7dffb0' : '#ffd36b') : '#25402f', null)
+  }
+}
+function sofa(x, y) { box(x, y, 2.3, 0.75, 14, '#e27d8b'); box(x, y, 2.3, 0.22, 34, '#d56b7a'); box(x - 0.18, y, 0.2, 0.75, 24, '#d56b7a'); box(x + 2.3, y, 0.2, 0.75, 24, '#d56b7a') }
+function coffee(x, y, t) {
+  box(x, y, 0.62, 0.55, 46, '#e9e4da')
+  const [cx, cy] = P(x + 0.3, y + 0.55, 18); rrect(cx - 4 * cam.s, cy - 4 * cam.s, 8 * cam.s, 8 * cam.s, 2 * cam.s, '#7a4a2b')
+  const [sx, sy] = P(x + 0.3, y + 0.3, 50)
+  for (let k = 0; k < 3; k++) { const ph = (t * 0.6 + k / 3) % 1; g.globalAlpha = 1 - ph; circle(sx + Math.sin(ph * 6 + k) * 3 * cam.s, sy - ph * 22 * cam.s, (2 + ph * 3) * cam.s, '#ffffff', null); g.globalAlpha = 1 }
+}
+function plant(x, y) { box(x, y, 0.42, 0.42, 16, '#c9875a'); const [px, py] = P(x + 0.21, y + 0.21, 34); circle(px, py, 15 * cam.s, '#6fbf73'); circle(px - 8 * cam.s, py + 4 * cam.s, 9 * cam.s, '#5aa95f'); circle(px + 8 * cam.s, py + 3 * cam.s, 10 * cam.s, '#7fd083') }
+// The desk's front carries its window's name, written along the face, so a
+// name can only ever sit on its own desk.
+function nameplate(x, y, label, color) {
+  const [ox, oy] = P(x + 0.06, y, 20)
+  g.save()
+  g.setTransform(DPR, DPR * 0.5, 0, DPR, ox * DPR, oy * DPR)
+  const fs = Math.max(7, 9.5 * cam.s)
+  g.font = fs + 'px Jua, sans-serif'
+  let t = label
+  const room = 1.48 * (TW / 2) * cam.s
+  while (t.length > 3 && g.measureText(t).width > room) t = t.slice(0, -2) + '…'
+  const w = g.measureText(t).width + 8 * cam.s
+  g.beginPath(); g.roundRect(0, -fs * 0.15, w, fs * 1.25, 3 * cam.s); g.fillStyle = color; g.fill(); g.strokeStyle = LINE; g.lineWidth = cam.s; g.stroke()
+  g.fillStyle = '#2a2033'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(t, 4 * cam.s, fs * 0.05)
+  g.restore()
+}
+function deskBox(x, y, on, t, mug, label, color) {
+  box(x, y, 1.6, 0.7, 24, '#d9a46b')
+  if (label) nameplate(x, y + 0.7, label, color)
+  box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', 24)
+  if (on) { const [mx, my] = P(x + 1.32, y + 0.22, 32); g.globalAlpha = 0.35 + Math.sin(t * 6) * 0.15; circle(mx, my, 9 * cam.s, '#8fd1ff', null); g.globalAlpha = 1 }
+  if (mug) { const [ux, uy] = P(x + 0.25, y + 0.45, 24); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
+}
+function elevator(t) {
+  const x = 15.95, y = 0.15
+  box(x, y, 1.3, 1.05, 120, '#b8bfd6')
+  const open = Math.max(0, Math.min(1, (lift.openUntil - performance.now()) / 400)) * 0.28
+  const fy = y + 1.05
+  if (open > 0) poly([P(x + 0.15, fy, 4), P(x + 1.15, fy, 4), P(x + 1.15, fy, 96), P(x + 0.15, fy, 96)], '#fff6c9', null)
+  poly([P(x + 0.15, fy, 4), P(x + 0.65 - open, fy, 4), P(x + 0.65 - open, fy, 96), P(x + 0.15, fy, 96)], '#dfe3f0')
+  poly([P(x + 0.65 + open, fy, 4), P(x + 1.15, fy, 4), P(x + 1.15, fy, 96), P(x + 0.65 + open, fy, 96)], '#dfe3f0')
+  const [lx, ly] = P(x + 0.65, fy, 108)
+  rrect(lx - 16 * cam.s, ly - 7 * cam.s, 32 * cam.s, 13 * cam.s, 4 * cam.s, '#2a2b40')
+  text(stats.subs ? '▲ ' + stats.subs : '·', lx, ly, 10, '#ffd36b')
+  const [sx, sy] = P(x + 0.65, fy, 142)
+  text('🛗 서브에이전트', sx, sy, 12, '#fff8ee')
+}
+
+// ---------- chibi ----------
+const SKIN = '#ffe2c8', BLUSH = 'rgba(255,128,150,.55)'
+function chibi(e, t) {
+  if (e.data.doing === 'napping' && !e.walking) {
+    const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
+    const [bx, by] = P(e.x, e.y, layer * 9)
+    g.save(); g.translate(bx, by); g.rotate((hashOf(e.id) % 2 ? 1 : -1) * 1.35); g.translate(-bx, -by)
+    drawChibi(e, t, layer * 9)
+    g.restore()
+    const [hx, hy] = P(e.x, e.y, layer * 9 + 20)
+    e.sx = hx; e.sy = hy + 24 * cam.s
+    for (let q = 0; q < 2; q++) { const ph = (t * 0.45 + q / 2 + (hashOf(e.id) % 10) / 10) % 1; g.globalAlpha = 1 - ph; text('z', hx + ph * 12 * cam.s, hy - 18 * cam.s - ph * 16 * cam.s, 9 + q * 3, '#fff8ee'); g.globalAlpha = 1 }
+    return
+  }
+  drawChibi(e, t, 0)
+}
+function drawChibi(e, t, z0) {
+  const p = e.data, sub = e.kind === 'sub'
+  const [x, y] = P(e.x, e.y, z0)
+  e.sx = x; e.sy = y
+  const s = cam.s * (sub ? 0.68 : 1)
+  const h = hashOf(e.id)
+  const walking = e.walking
+  const bob = walking ? -Math.abs(Math.sin(t * 12)) * 3 : p.doing === 'typing' ? Math.sin(t * 22) * 0.6 : (p.doing === 'asking' || p.doing === 'alert') ? -Math.abs(Math.sin(t * 6)) * 4 : Math.sin(t * 2 + h) * 0.8
+  const body = hsl2hex((e.hue + (sub ? 25 : 0)) % 360, sub ? 60 : 62, sub ? 74 : 66)
+  const hair = hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
+  if (e.hl) { g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.ellipse(x, y, 19 * s, 8 * s, 0, 0, Math.PI * 2); g.fill() }
+  g.fillStyle = 'rgba(30,20,40,.22)'; g.beginPath(); g.ellipse(x, y, 13 * s, 5 * s, 0, 0, Math.PI * 2); g.fill()
+  const step = walking ? Math.sin(t * 12) * 3 : 0
+  circle(x - 5 * s, y - 2 * s - Math.max(0, step) * s, 3.6 * s, '#5b4b6b')
+  circle(x + 5 * s, y - 2 * s - Math.max(0, -step) * s, 3.6 * s, '#5b4b6b')
+  const by = y + bob * s
+  rrect(x - 9 * s, by - 24 * s, 18 * s, 19 * s, 7 * s, body)
+  const arm = (ax, ay) => circle(x + ax * s, by + ay * s, 3.4 * s, SKIN)
+  const d = walking ? 'walk' : p.doing
+  if (d === 'typing' || d === 'delegating') { arm(-8, -12 + Math.sin(t * 22) * 1.5); arm(8, -12 + Math.cos(t * 22) * 1.5) }
+  else if (d === 'reading') { rrect(x - 9 * s, by - 20 * s, 18 * s, 10 * s, 2 * s, '#e86a5c'); g.fillStyle = '#fff8ee'; g.fillRect(x - 7 * s, by - 18.5 * s, 6.5 * s, 7 * s); g.fillRect(x + 0.5 * s, by - 18.5 * s, 6.5 * s, 7 * s); arm(-9, -14); arm(9, -14) }
+  else if (d === 'running' || d === 'calling') { arm(-9, -12); arm(10 + Math.sin(t * 8) * 2, -20) }
+  else if (d === 'thinking') { arm(-9, -12); arm(5, -27) }
+  else if (d === 'idle') { arm(-9, -12); arm(9, -15); rrect(x + 6 * s, by - 22 * s, 7 * s, 8 * s, 2 * s, '#fff4e0') }
+  else if (d === 'napping') { arm(-10, -14); arm(10, -14) }
+  else if (d === 'walk') { arm(-9, -12 + Math.sin(t * 12) * 2); arm(9, -12 - Math.sin(t * 12) * 2) }
+  else { arm(-9, -12); arm(9, -12) }
+  // Asleep on the desk: the head sinks and tilts onto the arms.
+  const nap = p.doing === 'napping'
+  const hx = x + (p.doing === 'thinking' ? Math.sin(t * 1.5) * 1.5 * s : 0), hy = by - 36 * s
+  circle(hx, hy, 14 * s, SKIN)
+  g.beginPath(); g.arc(hx, hy, 14 * s, Math.PI * 1.05, Math.PI * 1.95); g.lineTo(hx + 12 * s, hy - 4 * s); g.quadraticCurveTo(hx, hy - 10 * s, hx - 12 * s, hy - 4 * s); g.closePath()
+  g.fillStyle = hair; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke()
+  if (sub) { g.beginPath(); g.moveTo(hx, hy - 14 * s); g.lineTo(hx + 3 * s, hy - 22 * s); g.stroke(); circle(hx + 3 * s, hy - 23 * s, 3 * s, '#ffd36b') }
+  else if (h % 3 === 0) { g.beginPath(); g.moveTo(hx - 1 * s, hy - 14 * s); g.quadraticCurveTo(hx + 7 * s, hy - 25 * s, hx + 4 * s, hy - 18 * s); g.stroke() }
+  else if (h % 3 === 1) { poly([[hx - 12 * s, hy - 7 * s], [hx - 10 * s, hy - 20 * s], [hx - 3 * s, hy - 13 * s]], hair); poly([[hx + 12 * s, hy - 7 * s], [hx + 10 * s, hy - 20 * s], [hx + 3 * s, hy - 13 * s]], hair) }
+  const look = p.doing === 'thinking' ? -2 : 0
+  const blink = ((t + (h % 97) / 23) % 3.7) < 0.12
+  const sleepy = nap
+  g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.lineCap = 'round'
+  if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(hx + (ex - 2) * s, hy - 1 * s); g.lineTo(hx + (ex + 2) * s, hy + 1 * s); g.lineTo(hx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
+  else if (blink || sleepy) { for (const ex of [-5, 5]) { g.beginPath(); g.arc(hx + ex * s, hy + 1 * s, 2.4 * s, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke() } }
+  else { const r = p.doing === 'asking' ? 2.6 : 2.1; circle(hx - 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx + 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx - 4.3 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null); circle(hx + 5.7 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null) }
+  g.fillStyle = BLUSH; g.beginPath(); g.ellipse(hx - 8.5 * s, hy + 5 * s, 3 * s, 1.8 * s, 0, 0, Math.PI * 2); g.ellipse(hx + 8.5 * s, hy + 5 * s, 3 * s, 1.8 * s, 0, 0, Math.PI * 2); g.fill()
+  g.beginPath()
+  if (p.doing === 'asking' || p.doing === 'alert') g.arc(hx, hy + 6 * s, 1.8 * s, 0, Math.PI * 2)
+  else g.arc(hx, hy + 4.5 * s, 2.2 * s, 0.15 * Math.PI, 0.85 * Math.PI)
+  g.stroke()
+  if (!nap) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
+}
+const ICON = { thinking: '…', reading: '📖', running: '>_', calling: '🔌', typing: '✏️', delegating: '🐣', asking: '?', alert: '!', idle: '☕' }
+function bubble(e, p, x, y, s, t, sleepy) {
+  if (sleepy) { for (let k = 0; k < 3; k++) { const ph = (t * 0.5 + k / 3) % 1; g.globalAlpha = 1 - ph; text('z', x + 10 * s + ph * 10 * s, y - ph * 18 * s, 10 + k * 2, '#fff8ee'); g.globalAlpha = 1 } return }
+  if (p.doing === 'thinking') {
+    circle(x + 9 * s, y + 4 * s, 2 * s, '#fff'); circle(x + 13 * s, y - 2 * s, 3 * s, '#fff')
+    rrect(x + 8 * s, y - 20 * s, 26 * s, 14 * s, 7 * s, '#fff')
+    const n = Math.floor(t * 2.5) % 4; text('.'.repeat(n || 1), x + 21 * s, y - 14 * s, 13 * (s / cam.s))
+    return
+  }
+  const ic = ICON[p.doing]; if (!ic || (e.kind === 'session' && (p.doing === 'typing' || p.doing === 'idle'))) return
+  const bg = p.doing === 'asking' ? '#ffcf5a' : p.doing === 'alert' ? '#ff7a7a' : '#ffffff'
+  const by = y - 14 * s + (p.doing === 'asking' || p.doing === 'alert' ? Math.sin(t * 6) * 2 * s : 0)
+  rrect(x - 12 * s, by - 10 * s, 24 * s, 18 * s, 8 * s, bg)
+  poly([[x - 3 * s, by + 8 * s], [x + 3 * s, by + 8 * s], [x, by + 13 * s]], bg, null)
+  text(ic, x, by - 1 * s, 12 * (s / cam.s), p.doing === 'alert' ? '#fff' : '#2a2033')
+}
+
+// ---------- frame ----------
+let last = performance.now(), lastDraw = 0
+function frame(now) {
+  requestAnimationFrame(frame)
+  if (now - lastDraw < 33) return // ~30 fps is plenty, and spares the pane's CPU
+  lastDraw = now
+  const dt = Math.min(0.1, (now - last) / 1000); last = now
+  const t = now / 1000
+  for (const [id, e] of ents) {
+    const dx = e.tx - e.x, dy = e.ty - e.y, dist = Math.hypot(dx, dy)
+    const sp = (e.kind === 'sub' ? 3.2 : 2.6) * dt
+    if (dist > 0.02) { const k = Math.min(1, sp / dist); e.x += dx * k; e.y += dy * k; e.walking = true } else { e.x = e.tx; e.y = e.ty; e.walking = false }
+    if (e.leaving && dist < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
+  }
+  g.setTransform(DPR, 0, 0, DPR, 0, 0)
+  g.clearRect(0, 0, VW, VH)
+  tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
+  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, 1, 1, 'rgba(160,120,80,.07)', null)
+  for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
+  for (const w of windows) {
+    const need = w.sessions.some((p) => p.doing === 'asking' || p.doing === 'alert')
+    tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, 55, 87), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
+    if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
+  }
+  box(-0.3, -0.55, W + 0.6, 0.25, 70, '#cfc7e6')
+  box(-0.55, -0.55, 0.25, D + 0.85, 70, '#c2b9dc')
+  for (let wx = 1.2; wx < W - 3; wx += 3.4) { poly([P(wx, -0.3, 22), P(wx + 1.6, -0.3, 22), P(wx + 1.6, -0.3, 58), P(wx, -0.3, 58)], '#bfe4ff'); poly([P(wx + 0.8, -0.3, 22), P(wx + 0.8, -0.3, 58)], null, '#fff', 1.4) }
+  for (const z of Object.values(ZONES)) { const [lx, ly] = P((z.x0 + z.x1) / 2, -0.3, 82); rrect(lx - 40 * cam.s, ly - 11 * cam.s, 80 * cam.s, 22 * cam.s, 10 * cam.s, '#fff8ee'); text(z.label, lx, ly, 13) }
+  const items = []
+  const add = (depth, fn) => items.push([depth, fn])
+  for (let k = 0; k < 4; k++) { const x = 0.55 + k * 1.17; add(x + 0.7, () => shelf(x, 0.0)) }
+  for (let k = 0; k < 5; k++) { const x = 5.85 + k * 0.95; add(x + 0.7, () => rack(x, 0.05, t)) }
+  add(11.6, () => coffee(11.05, 0.1, t))
+  add(13.6, () => sofa(12.1, 0.25))
+  add(15.3, () => plant(14.95, 0.2))
+  add(17.3, () => elevator(t))
+  for (const w of windows) {
+    w.sessions.forEach((p, k) => {
+      const [dx, dy] = p.desk
+      const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
+      add(dx + 0.8 + dy + 0.35, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78)))
+    })
+  }
+  for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
+  items.sort((a, b) => a[0] - b[0])
+  for (const [, fn] of items) fn()
+}
+
+async function tick() {
+  try { const r = await fetch('/state', { cache: 'no-store' }); apply((await r.json()).people) } catch { /* the server restarts: keep the last picture */ }
+}
+resize(); tick(); setInterval(tick, 2000); requestAnimationFrame(frame)
+</script>
+</body>
+</html>
