@@ -1,0 +1,24 @@
+#!/bin/sh
+# tmux `prefix O`: bring the office in front and open the next agent waiting
+# on you, with the keyboard in its reply box. Bound in ~/.tmux.conf:
+#   bind-key O run-shell -b '~/src/keyolk/cc-mods/bin/cc-office-next'
+# The office pane is the TWeb pane showing 127.0.0.1:<port> (cc-mods /office).
+port=${CC_OFFICE_PORT:-8796}
+pane=$(tweb panes --json 2>/dev/null | python3 -c '
+import json, sys
+port = sys.argv[1]
+for p in json.load(sys.stdin):
+    for t in (p.get("status") or {}).get("tabs", {}).get("tabs", []):
+        if ("127.0.0.1:" + port) in (t.get("url") or ""):
+            print(p["pane"], t["index"]); raise SystemExit
+' "$port")
+if [ -z "$pane" ]; then
+  tmux display-message "office is not open: run /office in a Claude session"
+  exit 0
+fi
+set -- $pane
+tmux switch-client -t "$1" 2>/dev/null
+tmux select-window -t "$1" \; select-pane -t "$1"
+tweb tab switch --pane "$1" "$2" >/dev/null 2>&1
+curl -s -m 2 -X POST "http://127.0.0.1:$port/next" >/dev/null 2>&1
+exit 0
