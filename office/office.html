@@ -48,6 +48,9 @@ canvas.drag { cursor: grabbing; }
 #help td { padding: 3px 10px 3px 0; }
 kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua, sans-serif; background: #fff; border: 2px solid var(--line); border-bottom-width: 3px; border-radius: 6px; padding: 0 5px; }
 #ask button.on { outline: 3px solid #fff; outline-offset: 1px; }
+#ask .zz { background: #4a4d6e; color: #cfcbe8; border: 2px dashed #8a86b0; box-shadow: none; }
+#ask .zz.loud { border-color: #ff7a7a; color: #ffd0d0; }
+#card button.snz { background: #e4e0f5; }
 #ask .next { background: #fff; color: #2a2033; border: 2px solid var(--line); border-radius: 12px; padding: 3px 10px; box-shadow: 0 2px 0 var(--line); }
 #card .key { display: inline-block; min-width: 16px; margin-right: 4px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; }
 #hint { position: absolute; right: 14px; top: 52px; color: var(--muted); font-size: 11px; z-index: 2; }
@@ -72,6 +75,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
+    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>이 agent를 30분 미루기 (Tab·N에서 빠짐, 다시 누르면 +30분)</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
     <tr><td><kbd>G</kbd></td><td>그 agent의 tmux 창으로 이동</td></tr>
     <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>답변 한 화면씩 (답장칸에서도)</td></tr>
@@ -148,6 +152,13 @@ const DOOR = [16.6, 1.55]
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
 
+// ---------- furnishing ----------
+const DESKS = ['wood', 'white', 'standing', 'dark', 'pastel']
+const DESK_COLOR = { wood: '#d9a46b', white: '#f1ece4', standing: '#c9ced9', dark: '#8a6a52', pastel: '#f5c6d0' }
+const DECOR = ['plant', 'shelf', 'beanbag', 'board', 'cat', 'cooler', 'arcade', 'lamp']
+// Where a pod's decor stands: the free seat of an odd-sized row.
+const decorAt = (w) => [w.px + 1.95, w.py + (w.sessions.length > 2 ? 2.15 : 0.85)]
+
 // ---------- walking: a grid, its blocked cells, A* ----------
 // The floor is cut into CELL-sized cells; desks, furniture and walls block
 // theirs, so a walk goes round them along the aisles between pods and rooms
@@ -166,6 +177,7 @@ function rebuildGrid() {
   for (let k = 0; k < 5; k++) mark(5.85 + k * 0.95, 0.05, 5.85 + k * 0.95 + 0.72, 0.67)
   mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(15.95, 0.15, 17.25, 1.0)
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
+  for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   grid = { w, h, block }
 }
 function freeCell(gx, gy) { return gx >= 0 && gy >= 0 && gx < grid.w && gy < grid.h && !grid.block[gy * grid.w + gx] }
@@ -254,7 +266,13 @@ function apply(people) {
   let py = OFF_Y
   for (let r0 = 0; r0 < windows.length; r0 += COLS) {
     const row = windows.slice(r0, r0 + COLS), depth = row.some((w) => w.sessions.length > 2) ? POD_D2 : POD_D1
-    row.forEach((w, c) => { w.px = 0.3 + c * POD_W; w.py = py; w.pd = w.sessions.length > 2 ? POD_D2 : POD_D1; w.hue = hashOf(w.name) % 360 })
+    row.forEach((w, c) => {
+      w.px = 0.3 + c * POD_W; w.py = py; w.pd = w.sessions.length > 2 ? POD_D2 : POD_D1; w.hue = hashOf(w.name) % 360
+      // Each window furnishes its own corner: a desk kind, a rug, and where a
+      // seat is free, one piece of decor. Fixed by name, so it stays put.
+      const hh = hashOf('style:' + w.name)
+      w.desk = DESKS[hh % DESKS.length]; w.rug = hh % 4; w.decor = w.sessions.length === 1 || w.sessions.length === 3 ? DECOR[(hh >>> 3) % DECOR.length] : null
+    })
     py += depth
   }
   W = Math.max(18.8, COLS * POD_W + 0.3)
@@ -317,8 +335,13 @@ function apply(people) {
 // Who needs an answer next: a confirmation (❗) before a question (❓), then
 // whoever has waited longest. N/Tab walks it; a sent reply moves on to the
 // next one by itself.
+// Set aside for a while (Z on its card, 30 minutes a press): out of the queue
+// and of N/Tab until then. Its chip stays, muted, and turns loud if it starts
+// asking for a confirmation meanwhile.
+let snoozedUntil = {}
+const isSnoozed = (id) => (snoozedUntil[id] || 0) > Date.now() / 1000
 function waiting() {
-  return [...ents.values()].filter((e) => e.kind === 'session' && (e.data.doing === 'asking' || e.data.doing === 'alert'))
+  return [...ents.values()].filter((e) => e.kind === 'session' && (e.data.doing === 'asking' || e.data.doing === 'alert') && !isSnoozed(e.id))
     .map((e) => e.data)
     .sort((a, b) => (a.doing === 'alert' ? 0 : 1) - (b.doing === 'alert' ? 0 : 1) || (a.since || 0) - (b.since || 0))
 }
@@ -329,6 +352,23 @@ function renderQueue() {
     const b = document.createElement('button'); b.className = (p.doing === 'alert' ? 'x' : 'q') + (p.id === cardSid ? ' on' : '')
     b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name + (p.since ? ' · ' + ago(p.since).replace('째', '') : ''); b.onclick = () => openCard(p.id); ask.appendChild(b)
   }
+  for (const [id, until] of Object.entries(snoozedUntil)) {
+    const e = ents.get(id); if (!e || until <= Date.now() / 1000) continue
+    const left = Math.ceil((until - Date.now() / 1000) / 60), loud = e.data.doing === 'alert'
+    const b = document.createElement('button'); b.className = 'zz' + (loud ? ' loud' : '') + (id === cardSid ? ' on' : '')
+    b.textContent = '💤 ' + e.data.name + ' · ' + left + '분' + (loud ? ' ❗' : ''); b.title = '눌러서 큐로 되돌리기'
+    b.onclick = () => snooze(id, 0); ask.appendChild(b)
+  }
+}
+async function snooze(id, mins) {
+  try {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: id, kind: 'snooze', value: mins }) })
+    const j = await r.json(); if (!r.ok) throw new Error(j.error)
+    if (mins > 0) snoozedUntil[id] = j.until; else delete snoozedUntil[id]
+    toast(mins > 0 ? '💤 ' + (ents.get(id)?.data.name || '') + ' ' + Math.round((j.until - Date.now() / 1000) / 60) + '분 미룸' : '큐로 되돌림')
+    renderQueue()
+    if (mins > 0 && cardSid === id) step(1, id)
+  } catch (e) { toast('못 미룸: ' + e.message) }
 }
 // The next (or previous) waiting agent after the open card; from the top when none is open.
 function step(dir, skip) {
@@ -414,6 +454,7 @@ addEventListener('keydown', (e) => {
   if (open && (k === 'r' || k === 'R' || k === '/' || k === 'ㄱ') && card.reply) return hit(() => card.reply.focus())
   if (open && (k === 's' || k === 'S' || k === 'ㄴ') && card.stop) return hit(() => card.stop.click())
   if (open && (k === 'a' || k === 'A' || k === 'ㅁ') && card.grant) return hit(() => card.grant.click())
+  if (open && (k === 'z' || k === 'Z' || k === 'ㅋ') && card.snooze) return hit(() => card.snooze.click())
   if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
   if (open && card.said) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
@@ -514,6 +555,7 @@ async function openCard(sid) {
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
       if (!ta.value && e.altKey && (e.key === 'a' || e.code === 'KeyA') && card.grant) { e.preventDefault(); card.grant.click(); return }
+      if (e.altKey && (e.key === 'z' || e.code === 'KeyZ') && card.snooze) { e.preventDefault(); card.snooze.click(); return }
       if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
@@ -524,6 +566,10 @@ async function openCard(sid) {
   card.stop = null
   if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.innerHTML = '<span class="key">S</span>✋ 멈추기'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b); card.stop = b }
   const j = document.createElement('button'); j.className = 'act nav'; j.innerHTML = '<span class="key">G</span>↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j); card.go = j
+  const zz = document.createElement('button'); zz.className = 'act snz'
+  const zLeft = isSnoozed(sid) ? Math.ceil((snoozedUntil[sid] - Date.now() / 1000) / 60) : 0
+  zz.innerHTML = '<span class="key">Z</span>💤 ' + (zLeft ? '30분 더 (지금 ' + zLeft + '분)' : '30분 미루기'); zz.onclick = () => snooze(sid, 30); nav.appendChild(zz); card.snooze = zz
+  if (zLeft) { const back = document.createElement('button'); back.className = 'act nav'; back.textContent = '↩ 큐로 되돌리기'; back.onclick = () => snooze(sid, 0); nav.appendChild(back) }
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
   card.appendChild(msg)
   // A dialog has no reply box; the card itself takes the keys then.
@@ -604,6 +650,28 @@ function coffee(x, y, t) {
   for (let k = 0; k < 3; k++) { const ph = (t * 0.6 + k / 3) % 1; g.globalAlpha = 1 - ph; circle(sx + Math.sin(ph * 6 + k) * 3 * cam.s, sy - ph * 22 * cam.s, (2 + ph * 3) * cam.s, '#ffffff', null); g.globalAlpha = 1 }
 }
 function plant(x, y) { box(x, y, 0.42, 0.42, 16, '#c9875a'); const [px, py] = P(x + 0.21, y + 0.21, 34); circle(px, py, 15 * cam.s, '#6fbf73'); circle(px - 8 * cam.s, py + 4 * cam.s, 9 * cam.s, '#5aa95f'); circle(px + 8 * cam.s, py + 3 * cam.s, 10 * cam.s, '#7fd083') }
+// A rug under the pod: stripes, checks, a round mat or bare floorboards.
+function rug(w, t) {
+  const x0 = w.px + 0.35, y0 = w.py + 0.5, ww = POD_W - 0.8, dd = w.pd - 0.8
+  const c1 = hsl2hex((w.hue + 30) % 360, 50, 78), c2 = hsl2hex((w.hue + 30) % 360, 45, 70)
+  if (w.rug === 0) for (let k = 0; k < 6; k++) tile(x0 + (k * ww) / 6, y0, ww / 6, dd, k % 2 ? c1 : c2, null)
+  else if (w.rug === 1) for (let a = 0; a < 4; a++) for (let b = 0; b < 3; b++) tile(x0 + (a * ww) / 4, y0 + (b * dd) / 3, ww / 4, dd / 3, (a + b) % 2 ? c1 : c2, null)
+  else if (w.rug === 2) { const [cx, cy] = P(x0 + ww / 2, y0 + dd / 2); g.fillStyle = c1; g.beginPath(); g.ellipse(cx, cy, ww * 0.42 * TW / 2 * cam.s * 1.2, dd * 0.42 * TH / 2 * cam.s * 1.6, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = c2; g.lineWidth = 3 * cam.s; g.stroke() }
+  else for (let k = 0; k < 8; k++) tile(x0, y0 + (k * dd) / 8, ww, dd / 8 - 0.02, k % 2 ? 'rgba(160,110,60,.10)' : 'rgba(160,110,60,.05)', null)
+}
+// One piece of decor in a pod's free seat.
+function decorPiece(w, t) {
+  const [x, y] = decorAt(w), h = hashOf('d' + w.name)
+  if (w.decor === 'plant') { box(x + 0.35, y + 0.2, 0.45, 0.45, 18, '#c9875a'); const [px, py] = P(x + 0.57, y + 0.42, 46); circle(px, py, 18 * cam.s, '#5aa95f'); circle(px - 10 * cam.s, py + 6 * cam.s, 12 * cam.s, '#6fbf73'); circle(px + 10 * cam.s, py + 4 * cam.s, 12 * cam.s, '#7fd083'); circle(px + 2 * cam.s, py - 12 * cam.s, 10 * cam.s, '#6fbf73') }
+  else if (w.decor === 'shelf') { box(x + 0.1, y + 0.1, 1.1, 0.3, 52, '#a8744f'); for (let r0 = 0; r0 < 2; r0++) for (let b = 0; b < 6; b++) { const u = 0.15 + b * 0.16; poly([P(x + u, y + 0.4, 8 + r0 * 22), P(x + u + 0.13, y + 0.4, 8 + r0 * 22), P(x + u + 0.13, y + 0.4, 24 + r0 * 22), P(x + u, y + 0.4, 24 + r0 * 22)], BOOKS[(b + r0 + h) % BOOKS.length], LINE, 0.8) } }
+  else if (w.decor === 'beanbag') { const [bx, by] = P(x + 0.6, y + 0.4); g.fillStyle = hsl2hex((w.hue + 160) % 360, 55, 62); g.beginPath(); g.ellipse(bx, by - 8 * cam.s, 24 * cam.s, 15 * cam.s, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke(); g.beginPath(); g.ellipse(bx - 4 * cam.s, by - 18 * cam.s, 13 * cam.s, 9 * cam.s, -0.3, 0, Math.PI * 2); g.fill(); g.stroke() }
+  else if (w.decor === 'board') { box(x + 0.15, y + 0.15, 1.0, 0.08, 56, '#e8ebf2', 6); box(x + 0.2, y + 0.12, 0.05, 0.12, 6, '#7a7f95'); box(x + 1.05, y + 0.12, 0.05, 0.12, 6, '#7a7f95'); g.strokeStyle = '#3d7fd8'; g.lineWidth = 1.5 * cam.s; const [a, b] = P(x + 0.3, y + 0.23, 48), [c, d] = P(x + 0.9, y + 0.23, 30); g.beginPath(); g.moveTo(a, b); g.quadraticCurveTo((a + c) / 2, b - 10 * cam.s, c, d); g.stroke(); const [e1, f1] = P(x + 0.4, y + 0.23, 26); g.strokeStyle = '#e86a5c'; g.strokeRect(e1, f1 - 8 * cam.s, 14 * cam.s, 8 * cam.s) }
+  else if (w.decor === 'cat') { box(x + 0.35, y + 0.2, 0.6, 0.45, 6, '#c0392b'); const [cx, cy] = P(x + 0.65, y + 0.42, 12); g.fillStyle = h % 2 ? '#f2a65a' : '#555a6e'; g.beginPath(); g.ellipse(cx, cy, 13 * cam.s, 8 * cam.s, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke(); circle(cx + 10 * cam.s, cy - 5 * cam.s, 6 * cam.s, g.fillStyle); poly([[cx + 6 * cam.s, cy - 9 * cam.s], [cx + 8 * cam.s, cy - 15 * cam.s], [cx + 10 * cam.s, cy - 10 * cam.s]], g.fillStyle); poly([[cx + 11 * cam.s, cy - 10 * cam.s], [cx + 14 * cam.s, cy - 15 * cam.s], [cx + 15 * cam.s, cy - 8 * cam.s]], g.fillStyle); const tail = Math.sin(t * 2.5) * 6; g.beginPath(); g.moveTo(cx - 12 * cam.s, cy); g.quadraticCurveTo(cx - 20 * cam.s, cy - 6 * cam.s + tail * cam.s, cx - 16 * cam.s, cy - 14 * cam.s); g.stroke(); const ph = (t * 0.4 + (h % 7) / 7) % 1; g.globalAlpha = 1 - ph; text('z', cx + 16 * cam.s + ph * 8 * cam.s, cy - 16 * cam.s - ph * 12 * cam.s, 8, '#6b6280'); g.globalAlpha = 1 }
+  else if (w.decor === 'cooler') { box(x + 0.45, y + 0.2, 0.42, 0.4, 40, '#e9eef5'); const [wx, wy] = P(x + 0.66, y + 0.4, 58); g.fillStyle = 'rgba(120,190,255,.75)'; g.beginPath(); g.ellipse(wx, wy, 9 * cam.s, 12 * cam.s, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke(); const b = (t * 0.7) % 1; circle(wx - 2 * cam.s, wy + 6 * cam.s - b * 14 * cam.s, 1.6 * cam.s, '#fff', null) }
+  else if (w.decor === 'arcade') { box(x + 0.4, y + 0.15, 0.55, 0.5, 58, '#6b4fbf'); const [sx, sy] = P(x + 0.68, y + 0.65, 44); rrect(sx - 10 * cam.s, sy - 9 * cam.s, 20 * cam.s, 13 * cam.s, 2 * cam.s, '#1b1d2f'); const blink = Math.floor(t * 3) % 3; for (let k = 0; k < 3; k++) circle(sx - 6 * cam.s + k * 6 * cam.s, sy - 3 * cam.s, 2 * cam.s, ['#ff6f91', '#ffd36b', '#7dffb0'][(k + blink) % 3], null); circle(sx - 4 * cam.s, sy + 12 * cam.s, 2.5 * cam.s, '#e86a5c'); circle(sx + 5 * cam.s, sy + 12 * cam.s, 2.5 * cam.s, '#5c9de8') }
+  else { box(x + 0.6, y + 0.3, 0.2, 0.2, 4, '#3a3f55'); const [lx, ly] = P(x + 0.7, y + 0.4, 4), [hx2, hy2] = P(x + 0.7, y + 0.4, 62); g.strokeStyle = '#3a3f55'; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(lx, ly); g.lineTo(hx2, hy2); g.stroke(); poly([[hx2 - 11 * cam.s, hy2 + 4 * cam.s], [hx2 + 11 * cam.s, hy2 + 4 * cam.s], [hx2 + 6 * cam.s, hy2 - 8 * cam.s], [hx2 - 6 * cam.s, hy2 - 8 * cam.s]], '#ffe7a3'); g.globalAlpha = 0.18; circle(hx2, hy2 + 20 * cam.s, 30 * cam.s, '#ffe7a3', null); g.globalAlpha = 1 }
+}
+
 // The desk's front carries its window's name, written along the face, so a
 // name can only ever sit on its own desk.
 function nameplate(x, y, label, color) {
@@ -620,16 +688,28 @@ function nameplate(x, y, label, color) {
   g.fillStyle = '#2a2033'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(t, 4 * cam.s, fs * 0.05)
   g.restore()
 }
-function deskBox(x, y, on, t, mug, label, color, rank = 0) {
-  box(x, y, 1.6, 0.7, 24, '#d9a46b')
+function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job = 'shell', away = false, seatHue = 0) {
+  // The empty chair behind the desk while its owner is elsewhere.
+  if (away) { box(x + 0.5, y - 0.45, 0.42, 0.36, 12, hsl2hex(seatHue, 45, 60)); box(x + 0.5, y - 0.45, 0.42, 0.08, 30, hsl2hex(seatHue, 45, 52)) }
+  const top = style === 'standing' ? 34 : 24
+  if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x, y, 1.6, 0.7, 4, DESK_COLOR[style], top - 4) }
+  else box(x, y, 1.6, 0.7, top, DESK_COLOR[style] || '#d9a46b')
   // Seniority piles up on the desk: papers, then a plant, then a trophy.
-  if (rank >= 2) for (let k = 0; k < Math.min(4, rank); k++) box(x + 0.08, y + 0.08, 0.36, 0.26, 2.5, k % 2 ? '#ffffff' : '#f3ecdf', 24 + k * 2.5)
-  if (rank >= 3) { const [px, py] = P(x + 0.7, y + 0.2, 30); rrect(px - 3 * cam.s, py - 1 * cam.s, 6 * cam.s, 6 * cam.s, 1.5 * cam.s, '#c9875a'); circle(px, py - 4 * cam.s, 5 * cam.s, '#6fbf73') }
+  if (rank >= 2) for (let k = 0; k < Math.min(4, rank); k++) box(x + 0.08, y + 0.08, 0.36, 0.26, 2.5, k % 2 ? '#ffffff' : '#f3ecdf', top + k * 2.5)
+  if (rank >= 3) { const [px, py] = P(x + 0.7, y + 0.2, top + 6); rrect(px - 3 * cam.s, py - 1 * cam.s, 6 * cam.s, 6 * cam.s, 1.5 * cam.s, '#c9875a'); circle(px, py - 4 * cam.s, 5 * cam.s, '#6fbf73') }
   if (rank >= 5) { const [tx, ty] = P(x + 0.95, y + 0.55, 30); rrect(tx - 3 * cam.s, ty - 9 * cam.s, 6 * cam.s, 8 * cam.s, 2 * cam.s, '#ffd36b'); rrect(tx - 4.5 * cam.s, ty - 1.5 * cam.s, 9 * cam.s, 3 * cam.s, 1 * cam.s, '#b8864a') }
   if (label) nameplate(x, y + 0.7, label, color)
-  box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', 24)
-  if (on) { const [mx, my] = P(x + 1.32, y + 0.22, 32); g.globalAlpha = 0.35 + Math.sin(t * 6) * 0.15; circle(mx, my, 9 * cam.s, '#8fd1ff', null); g.globalAlpha = 1 }
-  if (mug) { const [ux, uy] = P(x + 0.25, y + 0.45, 24); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
+  // What's on the desk follows the job: two screens, a laptop and a lamp, a
+  // wide screen, a little rack, a book pile, a phone.
+  const glow = (gx, gy, gz, r0) => { if (!on) return; const [mx, my] = P(gx, gy, gz); g.globalAlpha = 0.35 + Math.sin(t * 6) * 0.15; circle(mx, my, r0 * cam.s, '#8fd1ff', null); g.globalAlpha = 1 }
+  if (job === 'code') { box(x + 0.85, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); box(x + 1.2, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); glow(x + 1.0, y + 0.22, top + 8, 7); glow(x + 1.35, y + 0.22, top + 8, 7) }
+  else if (job === 'write') { box(x + 1.0, y + 0.2, 0.36, 0.26, 2, '#c7ccd8', top); poly([P(x + 1.0, y + 0.2, top + 2), P(x + 1.36, y + 0.2, top + 2), P(x + 1.36, y + 0.2, top + 14), P(x + 1.0, y + 0.2, top + 14)], '#d7dbe5'); glow(x + 1.18, y + 0.2, top + 8, 6); const [lx, ly] = P(x + 1.45, y + 0.15, top); g.strokeStyle = '#3a3f55'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(lx, ly); g.lineTo(lx - 4 * cam.s, ly - 16 * cam.s); g.lineTo(lx - 12 * cam.s, ly - 12 * cam.s); g.stroke(); circle(lx - 13 * cam.s, ly - 10 * cam.s, 4 * cam.s, '#ffd36b') }
+  else if (job === 'watch') { box(x + 0.75, y + 0.12, 0.75, 0.1, 15, '#3a3f55', top); glow(x + 1.12, y + 0.22, top + 8, 11) }
+  else if (job === 'ops') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); box(x + 1.65, y + 0.1, 0.32, 0.4, 34, '#3d4a66'); for (let u = 0; u < 3; u++) { const [lx, ly] = P(x + 1.9, y + 0.5, 8 + u * 9); circle(lx, ly, 1.5 * cam.s, Math.sin(t * 3 + u) > 0 ? '#7dffb0' : '#25402f', null) } }
+  else if (job === 'read') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); for (let k = 0; k < 3; k++) box(x + 0.55, y + 0.3, 0.32, 0.22, 3, BOOKS[k + 1], top + k * 3) }
+  else if (job === 'talk') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); box(x + 0.6, y + 0.35, 0.18, 0.12, 3, '#e86a5c', top) }
+  else { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); for (let k = 0; k < 2; k++) { const [cx, cy] = P(x + 0.6 + k * 0.12, y + 0.4, top); rrect(cx - 2.5 * cam.s, cy - 8 * cam.s, 5 * cam.s, 8 * cam.s, 1 * cam.s, k ? '#2ecc71' : '#e74c3c') } }
+  if (mug) { const [ux, uy] = P(x + 0.25, y + 0.45, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
 }
 function elevator(t) {
   const x = 15.95, y = 0.15
@@ -844,6 +924,7 @@ function drawChibi(e, t, z0) {
   if (!sub) face(p.job, fhx, hy, s, t)
   if (working) workFx(jk, p.doing, x, by, hx, hy, s, t, h)
   if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
+  if (!sub && isSnoozed(e.id)) { const zx = hx + 12 * s, zy = hy - 20 * s; rrect(zx - 9 * s, zy - 8 * s, 18 * s, 14 * s, 6 * s, '#4a4d6e', LINE, 1); text('💤', zx, zy - 1 * s, 9) }
   // While it reacts to the cursor, its face says it: the usual bubble steps aside.
   // The work effect already says what it does; the bubble is for the rest.
   if (!nap && !working && !(kind && rx > 0.35)) bubble(e, p, hx, hy - (sub ? 22 : 26) * s, s, t, sleepy)
@@ -963,6 +1044,7 @@ function frame(now) {
   for (const w of windows) {
     const need = w.sessions.some((p) => p.doing === 'asking' || p.doing === 'alert')
     tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, 55, 87), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
+    rug(w, t)
     if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
   }
   box(-0.3, -0.55, W + 0.6, 0.25, 70, '#cfc7e6')
@@ -978,13 +1060,15 @@ function frame(now) {
   add(15.3, () => plant(14.95, 0.2))
   add(17.3, () => elevator(t))
   for (const w of windows) {
+    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t)) }
     w.sessions.forEach((p, k) => {
       const [dx, dy] = p.desk
       const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
       // A desk sorts by its front-right corner: someone standing behind it
       // (smaller x+y than that) is drawn first and hidden by it, someone in
       // front is drawn after.
-      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank))
+      const away = p.room !== 'desk' || p.doing === 'napping'
+      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, away, (w.hue + 120 + k * 40) % 360))
     })
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
@@ -1004,7 +1088,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); apply((await r.json()).people) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); snoozedUntil = j.snoozed || {}; apply(j.people) } catch { /* the server restarts: keep the last picture */ }
 }
 resize(); tick(); setInterval(tick, 2000); requestAnimationFrame(frame)
 </script>
