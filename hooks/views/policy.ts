@@ -122,20 +122,38 @@ export function renderPolicy(els: Els, v: PolicyView): Node {
 
   const timed = Object.entries(v.timers).filter(([, t]) => t > v.now)
   const godOn = !!v.god && v.god > v.now
+  // A box of its own at the top, bordered: a one-line dim row read as a
+  // hint and went unseen (the person looked for the button and missed it).
   const godRow = v.onGod
     ? Box({
-        flexDirection: 'row',
-        columnGap: 2,
-        flexWrap: 'wrap',
+        flexDirection: 'column',
+        borderStyle: 'round',
+        borderColor: godOn ? C.bad : C.warn,
+        paddingX: 1,
         children: godOn
           ? [
-              Text({ bold: true, color: C.bad, children: ['⚡ GOD: everything allowed · ' + Math.ceil((v.god! - v.now) / 60_000) + 'm left'] }),
-              Button({ key: 'god-off', label: 'end god mode', plain: true, onPress: () => v.onGod!(), children: [Text({ color: C.accent, children: ['✕ end now, put the policy back'] })] }),
+              Box({
+                flexDirection: 'row',
+                columnGap: 2,
+                flexWrap: 'wrap',
+                children: [
+                  Text({ bold: true, color: C.bad, children: ['⚡ GOD MODE · everything allowed · ' + Math.ceil((v.god! - v.now) / 60_000) + 'm left'] }),
+                  Button({ key: 'god-off', label: 'end god mode', onPress: () => v.onGod!(), variant: 'primary', children: [Text({ children: ['✕ end now'] })] }),
+                ],
+              }),
+              Text({ color: C.muted, children: ['the policy from before comes back when it ends'] }),
             ]
           : [
-              Text({ color: C.muted, children: ['⚡ god mode: allow everything for'] }),
-              ...GOD_MINUTES.map((m) => Button({ key: 'god-' + m, label: 'god ' + m + 'm', plain: true, onPress: () => v.onGod!(m), children: [Text({ color: C.warn, children: [m + 'm'] })] })),
-              Text({ color: C.faint, children: ['then the policy before is put back'] }),
+              Box({
+                flexDirection: 'row',
+                columnGap: 2,
+                flexWrap: 'wrap',
+                children: [
+                  Text({ bold: true, color: C.warn, children: ['⚡ God mode'] }),
+                  ...GOD_MINUTES.map((m) => Button({ key: 'god-' + m, label: 'god ' + m + 'm', onPress: () => v.onGod!(m), children: [Text({ bold: true, children: [' ' + m + 'm '] })] })),
+                ],
+              }),
+              Text({ color: C.muted, children: ['allow every capability for a while; asks first, then puts the policy back'] }),
             ],
       })
     : undefined
