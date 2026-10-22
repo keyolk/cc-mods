@@ -27,3 +27,15 @@ export function parseBrowser(s: unknown): BrowserChoice | undefined {
 export function browserArgv(pane: string, choice: BrowserChoice): string[] {
   return choice === 'inherit' ? ['set-option', '-p', '-t', pane, '-u', '@browser'] : ['set-option', '-p', '-t', pane, '@browser', choice]
 }
+
+// Where links from this pane go, most specific first: TMUX_CHROME_BROWSER,
+// the pane's @browser, the window's, the global one, TMUX_CHROME_TWEB=1 as
+// tweb, else the Chrome tab group. The same order tmux-chrome's open uses;
+// answered here instead of asking `tmux-chrome browser`, which a tmux-chrome
+// build without that subcommand answers with its usage text. A value outside
+// the known ones is chrome, as there: a typo must not lose a URL.
+export function resolveBrowser(v: { env?: string; pane?: string; window?: string; global?: string; twebFlag?: string }): Browser {
+  const raw = [v.env, v.pane, v.window, v.global].map((x) => (x ?? '').trim()).find(Boolean) || (v.twebFlag && v.twebFlag !== '0' ? 'tweb' : '')
+  const c = parseBrowser(raw)
+  return c && c !== 'inherit' ? c : 'chrome'
+}
