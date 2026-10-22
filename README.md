@@ -265,6 +265,24 @@ answers there.
   printout pile for files it wrote, binders for exp archives, a framed picture
   for artifacts; piles grow with the count. Hover one for what and how many; a
   click opens the card with that shelf on top, every item in it (`/detail?kind=`).
+- **The desk opens**: a click on a desk (not on one of its things) opens its
+  drawers in the card, a tab a kind: 📥 받은 것, 📤 보낸 것, 📝 스크래치, 📄
+  파일, 🗂 exp, 🖼 아티팩트, each item a badge or chip one click away; `[`/`]`
+  switch tabs. A click on one thing opens the drawers at its tab.
+- **Rooms say what they are for**: a standing sign at each room's front names
+  it, says when a session comes there (reading and searching; running commands
+  and MCP calls; idle, napping after 10 minutes) and how many are there now.
+  The library has parquet, a long reading table with green lamps and a ladder;
+  the server room a raised perforated floor with a hazard stripe, an operator
+  console whose screens show what the people in the room are running and a
+  cable tray; the lounge a patterned carpet, a café table with donuts and a
+  vending machine. Over each arrived visitor a tag says what it reads (`📖
+  file`) or runs (`$ command`). What they do there differs too: turning pages,
+  pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
+  cable with sparks, a walkie-talkie for MCP calls; sipping coffee, stretching,
+  a donut, a handheld game.
+- **Zoom back**: `0`, a double click or the `⤢ 전체 보기` button (shown once
+  you have zoomed or panned) glides back to the whole office.
 - **tmux sessions are blocks**: each tmux session's windows get their own
   rows with a floor tint and a sign (`🗂 tmux 2 · 16명`), and a long cubicle
   partition (fabric below, frosted glass above) runs between blocks, with

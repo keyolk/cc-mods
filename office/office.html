@@ -43,6 +43,12 @@ canvas.drag { cursor: grabbing; }
 #card a.brand:hover, #card .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
 #card a.brand b { font-weight: 700; opacity: .85; }
 #card a.brand span { overflow: hidden; text-overflow: ellipsis; }
+#reset { position: fixed; right: 16px; top: 52px; display: none; font: inherit; font-size: 13px; background: var(--card); color: #2a2033; border: 2px solid var(--line); border-radius: 999px; padding: 3px 12px; cursor: pointer; box-shadow: 0 2px 0 var(--line); z-index: 5; }
+#reset:hover { filter: brightness(1.05); transform: translateY(-1px); }
+#reset kbd { font-size: 11px; }
+#card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+#card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
+#card .shelf .tabs button.on { background: #2a2033; color: #fff; }
 #card .shelf { background: #f3ecfb; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0 8px; }
 #card .shelf .h { font-size: 14px; margin-bottom: 6px; }
 #card .shelf .rel { max-height: 260px; overflow-y: auto; }
@@ -69,6 +75,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
 </header>
 <div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
+<button id="reset" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 <kbd>0</kbd></button>
 <canvas id="c"></canvas>
 <div id="ask"></div>
 <div id="tip"></div>
@@ -81,6 +88,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>책상 서랍 탭 이동 (받은 것 · 보낸 것 · 스크래치 …)</td></tr>
+    <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>이 agent를 30분 미루기 (Tab·N에서 빠짐, 다시 누르면 +30분)</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
@@ -155,15 +164,18 @@ function text(t, x, y, size, color = '#2a2033', align = 'center') {
 // sessions; a row is as deep as its deepest pod.
 const COLS = 5, POD_W = 3.7, POD_D1 = 2.4, POD_D2 = 3.7, OFF_Y = 4.6
 const ZONES = {
-  library: { x0: 0.3, x1: 5.3, floor: '#cfe8d6', label: '📚 자료실', spots: [] },
-  server: { x0: 5.6, x1: 10.6, floor: '#d3dbef', label: '🖥 서버실', spots: [] },
-  lounge: { x0: 10.9, x1: 15.6, floor: '#f8d9dc', label: '☕ 휴게실', spots: [] },
+  library: { x0: 0.3, x1: 5.3, floor: '#cfe8d6', label: '📚 자료실', when: '파일·코드·웹을 읽고 찾을 때', sign: '#2f6b4f', spots: [] },
+  server: { x0: 5.6, x1: 10.6, floor: '#d3dbef', label: '🖥 서버실', when: '명령 실행 · MCP 도구 호출 중', sign: '#2b3a67', spots: [] },
+  lounge: { x0: 10.9, x1: 15.6, floor: '#f8d9dc', label: '☕ 휴게실', when: '할 일 없이 대기 · 10분 넘으면 낮잠', sign: '#a8435a', spots: [] },
 }
 // Idle this long: asleep, lying in the pile in front of the sofa. The lounge
 // has no seat limit: the more idle sessions, the fuller (and funnier) it gets.
 const NAP_S = 10 * 60
 const PILE = [13.3, 1.55]
 for (const z of Object.values(ZONES)) for (const y of [1.75, 2.65, 3.55]) for (let x = z.x0 + 0.55; x < z.x1 - 0.4; x += 0.78) z.spots.push([x + (y === 2.65 ? 0.39 : 0), y])
+// The lounge's café table and vending machine take a corner of its floor.
+const CAFE = [14.35, 3.05], VEND = [15.0, 1.45]
+ZONES.lounge.spots = ZONES.lounge.spots.filter(([x, y]) => Math.hypot(x - CAFE[0] - 0.3, y - CAFE[1] - 0.3) > 0.75 && !(x > VEND[0] - 0.35 && y < VEND[1] + 0.95))
 const DOOR = [16.6, 1.55]
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
@@ -206,6 +218,9 @@ function rebuildGrid() {
   for (let k = 0; k < 4; k++) mark(0.55 + k * 1.17, 0, 0.55 + k * 1.17 + 1.05, 0.38)
   for (let k = 0; k < 5; k++) mark(5.85 + k * 0.95, 0.05, 5.85 + k * 0.95 + 0.72, 0.67)
   mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(15.95, 0.15, 17.25, 1.0)
+  mark(0.8, 0.85, 4.8, 1.3); mark(6.0, 0.9, 10.2, 1.3) // reading table, console desk
+  mark(CAFE[0], CAFE[1], CAFE[0] + 0.6, CAFE[1] + 0.6); mark(VEND[0], VEND[1], VEND[0] + 0.55, VEND[1] + 0.5)
+  for (const z of Object.values(ZONES)) { const cx = (z.x0 + z.x1) / 2; mark(cx - 0.9, 4.1, cx - 0.8, 4.2); mark(cx + 0.8, 4.1, cx + 0.9, 4.2) }
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
@@ -479,7 +494,16 @@ addEventListener('mousemove', (e) => {
   if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy } }
   hover(e)
 })
-cv.addEventListener('dblclick', () => { cam.user = false; fit() })
+cv.addEventListener('dblclick', resetView)
+// Back to the whole office, gliding there.
+function resetView() {
+  const s0 = cam.s, ox0 = cam.ox, oy0 = cam.oy
+  cam.user = false; fit()
+  camGo.s = cam.s; camGo.ox = cam.ox; camGo.oy = cam.oy
+  cam.s = s0; cam.ox = ox0; cam.oy = oy0; camGo.on = true
+}
+const resetBtn = document.getElementById('reset')
+resetBtn.onclick = resetView
 function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(pane)) }
 
 // ---------- keyboard ----------
@@ -494,6 +518,8 @@ addEventListener('keydown', (e) => {
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
+  if (k === '0') return hit(resetView)
+  if (open && card.shelfTab && (k === '[' || k === ']')) return hit(() => card.shelfTab(k === ']' ? 1 : -1))
   if (k === 'n' || k === 'N' || k === 'ㅜ') return hit(() => step(1))
   if (k === 'p' || k === 'P' || k === 'ㅔ') return hit(() => step(-1))
   if (open && /^[1-9]$/.test(k) && card.keys && card.keys[+k]) return hit(() => card.keys[+k].click())
@@ -559,12 +585,23 @@ async function openCard(sid, kind = null) {
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   // Opened from a thing on its desk: that shelf first, every item in it.
   if (d.shelf) {
-    const sh = SHELF[d.shelfKind] || { icon: '•', name: d.shelfKind }
-    const box2 = add('div', 'shelf', '<div class="h">' + sh.icon + ' ' + sh.name + ' · ' + d.shelf.length + '</div>')
+    // The desk's drawers: a tab a kind; out is its PRs, Slack replies, tickets.
+    const TABS = [['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['scratch', '📝 스크래치', (o) => o.bucket === 'scratch'], ['file', '📄 파일', (o) => o.bucket === 'file'], ['exp', '🗂 exp', (o) => o.bucket === 'exp'], ['artifact', '🖼 아티팩트', (o) => o.bucket === 'artifact']]
+    const box2 = add('div', 'shelf', '<div class="h">🗄 ' + esc(d.name) + '의 책상 서랍 <span class="m">[ ] 탭 이동</span></div>')
+    const tabs = document.createElement('div'); tabs.className = 'tabs'; box2.appendChild(tabs)
     const list = document.createElement('div'); list.className = 'rel'; box2.appendChild(list)
-    for (const o of d.shelf) list.appendChild(chip(o))
-    if (!d.shelf.length) list.innerHTML = '<span class="m">링크나 경로가 있는 항목이 없습니다</span>'
-  }
+    const avail = TABS.map(([k, label, f]) => [k, label, d.shelf.filter(f)]).filter(([, , items]) => items.length)
+    const want = ['pr', 'slack', 'ticket'].includes(kind) ? 'out' : kind
+    let cur = Math.max(0, avail.findIndex(([k]) => k === want))
+    const show = () => {
+      tabs.innerHTML = ''; list.innerHTML = ''
+      avail.forEach(([, label, items], i) => { const b = document.createElement('button'); b.className = i === cur ? 'on' : ''; b.textContent = label + ' ' + items.length; b.onclick = () => { cur = i; show() }; tabs.appendChild(b) })
+      if (!avail.length) { list.innerHTML = '<span class="m">책상이 비어 있습니다 (링크나 경로가 있는 항목이 없음)</span>'; return }
+      for (const o of avail[cur][2]) list.appendChild(chip(o))
+    }
+    card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show() } }
+    show()
+  } else card.shelfTab = null
   card.said = null
   if (d.text) {
     const said = add('div', 'said', linkify(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } }
@@ -650,8 +687,16 @@ function hit(mx, my) {
 // A thing on a desk under the pointer (characters win when both are).
 function hitStuff(mx, my) {
   let best = null, bd = 1e9
-  for (const h of deskHits) { const d = Math.hypot(mx - h.sx, my - h.sy); if (d < h.r && d < bd) { bd = d; best = h } }
-  return best
+  for (const h of deskHits) { if (h.poly) continue; const d = Math.hypot(mx - h.sx, my - h.sy); if (d < h.r && d < bd) { bd = d; best = h } }
+  if (best) return best
+  // No prop under it: the frontmost desk under it (the last drawn).
+  for (let i = deskHits.length - 1; i >= 0; i--) {
+    const h = deskHits[i]
+    if (!h.poly) continue
+    const path = new Path2D(); path.moveTo(...h.poly[0]); for (const pt of h.poly.slice(1)) path.lineTo(...pt); path.closePath()
+    if (g.isPointInPath(path, mx * DPR, my * DPR)) return h
+  }
+  return null
 }
 function hover(e) {
   // Over the card, the queue or the help, the office behind them is not hovered.
@@ -662,8 +707,9 @@ function hover(e) {
   cv.style.cursor = h || st ? 'pointer' : ''
   if (st) {
     const owner = ents.get(st.sid)?.data, sh = SHELF[st.kind]
-    const parts = st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
-    tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">클릭하면 목록 열기</div>'
+    const m = owner?.made || {}, outN = (m.pr || 0) + (m.slack || 0) + (m.ticket || 0)
+    const parts = st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
+    tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">' + (st.kind === 'desk' ? '클릭하면 서랍 열기' : '클릭하면 목록 열기') + '</div>'
     tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
     return
   }
@@ -696,6 +742,113 @@ async function openLink(v) {
   try { await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v }) }) } catch {}
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
+
+// ---------- rooms ----------
+// Each room says what it is for: a standing sign at its front with when a
+// session comes here and who is here now, its own floor, its own furniture,
+// and over each visitor what it is reading or running.
+const inRoom = (k) => [...ents.values()].filter((e) => e.kind !== 'sub' && e.data.room === k && Math.hypot(e.x - e.tx, e.y - e.ty) < 0.3)
+function zoneSign(z) {
+  const cx = (z.x0 + z.x1) / 2, key = Object.keys(ZONES).find((k) => ZONES[k] === z)
+  const here = inRoom(key).length
+  for (const dx of [-0.85, 0.85]) { const [a, b] = P(cx + dx, 4.15, 0), [c, d] = P(cx + dx, 4.15, 40); g.strokeStyle = '#5b4a3a'; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(a, b); g.lineTo(c, d); g.stroke() }
+  const [sx, sy] = P(cx, 4.15, 52)
+  const w = 150 * cam.s, h = 40 * cam.s
+  rrect(sx - w / 2, sy - h / 2, w, h, 9 * cam.s, z.sign)
+  rrect(sx - w / 2 + 3 * cam.s, sy - h / 2 + 3 * cam.s, w - 6 * cam.s, h - 6 * cam.s, 7 * cam.s, null, 'rgba(255,255,255,.35)', 1)
+  text(z.label + (here ? '  · ' + here + '명' : ''), sx, sy - 7 * cam.s, 13, '#fffaf0')
+  text(z.when, sx, sy + 9 * cam.s, 9, 'rgba(255,250,240,.85)')
+}
+// Floors: parquet in the library, raised tiles with a hazard stripe in the
+// server room, a soft patterned carpet in the lounge.
+function zoneFloors(t) {
+  const L = ZONES.library, S = ZONES.server, Lo = ZONES.lounge
+  for (let x = L.x0; x < L.x1 - 0.01; x += 0.5) for (let y = 0.4; y < 4.2; y += 0.25) tile(x + ((y * 4) % 2 ? 0.25 : 0), y, Math.min(0.5, L.x1 - x - ((y * 4) % 2 ? 0.25 : 0)), 0.25, ((x * 2 + y * 4) | 0) % 2 ? '#d9b98f' : '#cfae83', 'rgba(120,85,50,.18)')
+  tile(L.x0 + 0.6, 1.6, L.x1 - L.x0 - 1.2, 2.3, '#3f7a5c', null); tile(L.x0 + 0.7, 1.7, L.x1 - L.x0 - 1.4, 2.1, '#4f8f6c', null)
+  for (let x = S.x0; x < S.x1 - 0.01; x += 0.5) for (let y = 0.35; y < 4.2; y += 0.5) { tile(x, y, 0.5, 0.5, '#c9d0e0', 'rgba(70,80,110,.35)'); if (((x * 2 + y * 2) | 0) % 3 === 0) for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) { const [px, py] = P(x + 0.12 + a * 0.13, y + 0.12 + b * 0.13); circle(px, py, 1 * cam.s, 'rgba(70,80,110,.45)', null) } }
+  g.globalAlpha = 0.12 + Math.sin(t * 1.5) * 0.04; tile(S.x0, 0.35, S.x1 - S.x0, 3.9, '#5fa8ff', null); g.globalAlpha = 1
+  for (let x = S.x0; x < S.x1 - 0.01; x += 0.25) tile(x, 4.08, 0.25, 0.12, ((x * 4) | 0) % 2 ? '#f2c14e' : '#2a2033', null)
+  tile(Lo.x0, 0.35, Lo.x1 - Lo.x0, 3.9, '#f3c9cf', null)
+  for (let x = Lo.x0 + 0.25; x < Lo.x1; x += 0.6) for (let y = 0.6; y < 4.1; y += 0.6) { const [px, py] = P(x, y); g.fillStyle = 'rgba(255,255,255,.35)'; g.beginPath(); g.ellipse(px, py, 5 * cam.s, 2.5 * cam.s, 0, 0, Math.PI * 2); g.fill() }
+}
+// The library's long reading table with green banker's lamps.
+function readingTable(t) {
+  const x = 0.8, y = 0.85, w = 4.0, d = 0.45
+  for (const lx of [x + 0.05, x + w - 0.1]) box(lx, y + 0.05, 0.05, d - 0.1, 16, '#6e4a2f')
+  box(x, y, w, d, 4, '#8a5a3a', 16)
+  for (let k = 0; k < 4; k++) {
+    const lx = x + 0.45 + k * 1.0
+    box(lx, y + 0.12, 0.05, 0.05, 8, '#c9a227', 20)
+    const [hx, hy] = P(lx + 0.02, y + 0.15, 30)
+    poly([[hx - 9 * cam.s, hy + 2 * cam.s], [hx + 9 * cam.s, hy + 2 * cam.s], [hx + 6 * cam.s, hy - 4 * cam.s], [hx - 6 * cam.s, hy - 4 * cam.s]], '#2f8a5c')
+    const on = inRoom('library').length > 0
+    if (on) { g.globalAlpha = 0.22; circle(hx, hy + 10 * cam.s, 16 * cam.s, '#fff3b0', null); g.globalAlpha = 1 }
+    box(lx + 0.25, y + 0.15, 0.3, 0.2, 2, k % 2 ? '#f5efe2' : '#e9dcc4', 20)
+  }
+  // A rolling ladder against the shelves.
+  const [a, b] = P(4.2, 0.4, 0), [c, d2] = P(4.2, 0.12, 70), [e, f] = P(4.45, 0.4, 0), [g2, h] = P(4.45, 0.12, 70)
+  g.strokeStyle = '#8a5a3a'; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(a, b); g.lineTo(c, d2); g.moveTo(e, f); g.lineTo(g2, h); g.stroke()
+  for (let k = 1; k < 7; k++) { const u = k / 7, [p1, q1] = P(4.2, 0.4 - 0.28 * u, 70 * u), [p2, q2] = P(4.45, 0.4 - 0.28 * u, 70 * u); g.beginPath(); g.moveTo(p1, q1); g.lineTo(p2, q2); g.stroke() }
+}
+// The server room's operator console: three screens; the middle one scrolls
+// the command whoever is in the room is running.
+function consoleDesk(t) {
+  const x = 6.0, y = 0.9, w = 4.2, d = 0.4
+  box(x, y, w, d, 22, '#4a5170')
+  const runners = inRoom('server').filter((e) => e.data.detail || e.data.tool)
+  for (let k = 0; k < 3; k++) {
+    const mx = x + 0.35 + k * 1.35, my = y + 0.08
+    box(mx, my, 0.9, 0.08, 26, '#1c2033', 22)
+    const q = [P(mx + 0.04, my + 0.08, 25), P(mx + 0.86, my + 0.08, 25), P(mx + 0.86, my + 0.08, 46), P(mx + 0.04, my + 0.08, 46)]
+    poly(q, '#0e1a12', null)
+    const e = runners[k] || null
+    const lines = e ? ['$ ' + (e.data.detail || e.data.tool), e.data.name] : k === 1 ? ['$ _'] : ['ok', 'ok', 'ok']
+    g.save(); g.beginPath(); g.moveTo(...q[0]); for (const pt of q.slice(1)) g.lineTo(...pt); g.closePath(); g.clip()
+    const [ox, oy] = q[3], [ax, ay] = q[2], l = Math.hypot(ax - ox, ay - oy)
+    g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
+    g.font = Math.max(5, 7 * cam.s) + 'px ui-monospace, Menlo, monospace'; g.textAlign = 'left'; g.textBaseline = 'top'
+    const scroll = e ? (t * 6) % 10 : 0
+    lines.forEach((s2, i) => { g.fillStyle = i === 0 ? '#7dffb0' : '#9fb3a6'; g.fillText(String(s2).slice(0, 22), 3 * cam.s, (3 + i * 8 - scroll * 0) * cam.s) })
+    if (Math.floor(t * 2) % 2) { g.fillStyle = '#7dffb0'; g.fillRect(3 * cam.s, (3 + lines.length * 8) * cam.s, 4 * cam.s, 6 * cam.s) }
+    g.restore()
+  }
+  // A cable tray hanging over the racks.
+  const [c1, c2] = P(5.7, 0.75, 92), [c3, c4] = P(10.5, 0.75, 92)
+  g.strokeStyle = '#7a7f95'; g.lineWidth = 3 * cam.s; g.beginPath(); g.moveTo(c1, c2); g.lineTo(c3, c4); g.stroke()
+  for (let k = 0; k < 6; k++) { const [u1, u2] = P(5.9 + k * 0.85, 0.75, 92), [v1, v2] = P(5.9 + k * 0.85, 0.75, 104); g.strokeStyle = ['#e86a5c', '#5c9de8', '#f2c14e'][k % 3]; g.lineWidth = 1.4 * cam.s; g.beginPath(); g.moveTo(u1, u2); g.quadraticCurveTo(u1 + 6 * cam.s, u2 + 8 * cam.s, v1 + 20 * cam.s, v2 + 6 * cam.s); g.stroke() }
+}
+function cafeTable(x, y) {
+  box(x + 0.27, y + 0.27, 0.06, 0.06, 16, '#7a7f95')
+  const [cx, cy] = P(x + 0.3, y + 0.3, 17); g.fillStyle = '#fff8ee'; g.beginPath(); g.ellipse(cx, cy, 20 * cam.s, 10 * cam.s, 0, 0, Math.PI * 2); g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke()
+  // A box of donuts and two cups.
+  rrect(cx - 9 * cam.s, cy - 6 * cam.s, 12 * cam.s, 6 * cam.s, 1.5 * cam.s, '#ffd6e0')
+  for (let k = 0; k < 2; k++) circle(cx - 6 * cam.s + k * 6 * cam.s, cy - 5 * cam.s, 2.6 * cam.s, ['#e86a5c', '#a77de8'][k])
+  rrect(cx + 6 * cam.s, cy - 8 * cam.s, 4 * cam.s, 6 * cam.s, 1 * cam.s, '#fff'); rrect(cx + 11 * cam.s, cy - 5 * cam.s, 4 * cam.s, 6 * cam.s, 1 * cam.s, '#fff')
+}
+function vending(x, y, t) {
+  box(x, y, 0.55, 0.5, 62, '#e8505b')
+  const fy = y + 0.5, q = [P(x + 0.06, fy, 20), P(x + 0.38, fy, 20), P(x + 0.38, fy, 56), P(x + 0.06, fy, 56)]
+  poly(q, '#cfe9ff')
+  for (let r0 = 0; r0 < 4; r0++) for (let c = 0; c < 3; c++) { const [px, py] = P(x + 0.11 + c * 0.1, fy, 25 + r0 * 8); rrect(px - 2 * cam.s, py - 5 * cam.s, 4 * cam.s, 5 * cam.s, 1 * cam.s, BOOKS[(r0 * 3 + c) % BOOKS.length], null) }
+  const [bx, by] = P(x + 0.47, fy, 40); rrect(bx - 2 * cam.s, by - 6 * cam.s, 4 * cam.s, 12 * cam.s, 1 * cam.s, '#2a2033', null)
+  const [lx, ly] = P(x + 0.47, fy, 52); circle(lx, ly, 1.8 * cam.s, Math.floor(t) % 2 ? '#7dffb0' : '#2a5040', null)
+}
+// Over each visitor that has arrived: what it reads or runs, so a trip to
+// the library or the server room says why.
+function roomTags() {
+  for (const e of ents.values()) {
+    if (e.kind === 'sub' || e.walking || e.sx === undefined) continue
+    const room = e.data.room
+    if (room !== 'library' && room !== 'server') continue
+    const what = e.data.detail || e.data.tool
+    if (!what) continue
+    const label = (room === 'library' ? '📖 ' : '$ ') + String(what).replace(/^.*\//, '').slice(0, 20)
+    g.font = Math.max(7, 9 * cam.s) + 'px ' + (room === 'server' ? 'ui-monospace, Menlo, monospace' : 'Jua, sans-serif')
+    const w = g.measureText(label).width + 10 * cam.s, x = e.sx - w / 2, y = e.sy - 92 * cam.s
+    rrect(x, y, w, 14 * cam.s, 5 * cam.s, room === 'server' ? '#0e1a12' : '#fff8ee', LINE, 1)
+    g.fillStyle = room === 'server' ? '#7dffb0' : '#2a2033'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, e.sx, y + 7 * cam.s)
+  }
+}
 
 // ---------- what is on a desk ----------
 // The desk shows what the session took in and made (cc-mods' outputs):
@@ -957,7 +1110,12 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
   else if (job === 'read') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); for (let k = 0; k < 3; k++) box(x + 0.55, y + 0.3, 0.32, 0.22, 3, BOOKS[k + 1], top + k * 3) }
   else if (job === 'talk') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); box(x + 0.6, y + 0.35, 0.18, 0.12, 3, '#e86a5c', top) }
   else { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); for (let k = 0; k < 2; k++) { const [cx, cy] = P(x + 0.6 + k * 0.12, y + 0.4, top); rrect(cx - 2.5 * cam.s, cy - 8 * cam.s, 5 * cam.s, 8 * cam.s, 1 * cam.s, k ? '#2ecc71' : '#e74c3c') } }
-  if (who) deskStuff(x, y, top, who.made || {}, who.id)
+  if (who) {
+    // The desk itself: a click opens its drawers (in, out, scratch, …).
+    const sil = [P(x, y, top), P(x + 1.6, y, top), P(x + 1.6, y, 0), P(x + 1.6, y + 0.7, 0), P(x, y + 0.7, 0), P(x, y + 0.7, top)]
+    deskHits.push({ poly: sil, sid: who.id, kind: 'desk', n: 0 })
+    deskStuff(x, y, top, who.made || {}, who.id)
+  }
   if (mug) { const [ux, uy] = P(x + 0.72, y + 0.55, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
 }
 function elevator(t) {
@@ -1072,6 +1230,58 @@ function workFx(jk, doing, x, by, hx, hy, s, t, h) {
   else if (jk === 'lead') { const p = ph(0, 1.2); g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; circle(x + 13 * s + p * 4 * s, by - 24 * s, 3 * s, SKIN); g.beginPath(); g.moveTo(x + 15 * s + p * 4 * s, by - 25 * s); g.lineTo(x + 21 * s + p * 6 * s, by - 28 * s); g.stroke() }
   else { for (let k = 0; k < 4; k++) { const p = ph(k * 0.75, 1.3); g.globalAlpha = (1 - p) * 0.9; text(((h >> k) & 1) ? '1' : '0', x + (k - 1.5) * 7 * s, by - 26 * s - p * 30 * s, 9, '#2ecc71'); g.globalAlpha = 1 } }
 }
+// What a character does in a room, so the trip says why. Each has a few
+// variants, picked by who it is and changed every few seconds.
+//   library (reading): turns pages of an open book / reaches up and pulls one
+//     off the shelf / squints through a magnifier at a page;
+//   server room (running): types fast on a laptop with scrolling green lines
+//     / plugs a cable in, sparks at the end;
+//   server room (calling, MCP): talks into a walkie-talkie, signal arcs out;
+//   lounge (idle): sips coffee, steam / stretches both arms up / nibbles a
+//     donut / plays a handheld game.
+function roomPose(d, x, by, s, t, h, arm) {
+  const slot = Math.floor((t + (h % 97)) / 7), v = (h + slot) % 3
+  if (d === 'reading') {
+    if (v === 1) { const up = Math.abs(Math.sin(t * 1.4)); arm(-9, -12); arm(9, -30 - up * 6); rrect(x + 5 * s, by - (44 + up * 6) * s, 7 * s, 11 * s, 1.5 * s, BOOKS[h % BOOKS.length]); return }
+    rrect(x - 10 * s, by - 21 * s, 20 * s, 11 * s, 2 * s, BOOKS[(h >> 2) % BOOKS.length])
+    g.fillStyle = '#fff8ee'; g.fillRect(x - 8 * s, by - 19.5 * s, 7 * s, 8 * s); g.fillRect(x + 1 * s, by - 19.5 * s, 7 * s, 8 * s)
+    g.fillStyle = 'rgba(42,32,51,.35)'; for (let k = 0; k < 3; k++) { g.fillRect(x - 7 * s, by - (18 - k * 2.2) * s, 5 * s, 0.7 * s); g.fillRect(x + 2 * s, by - (18 - k * 2.2) * s, 5 * s, 0.7 * s) }
+    // A page turning over, right to left.
+    const ph = (t * 0.6 + (h % 10) / 10) % 1
+    if (ph < 0.35) { const u = ph / 0.35, wx = Math.cos(u * Math.PI) * 7 * s; g.fillStyle = '#ffffff'; g.strokeStyle = 'rgba(42,32,51,.4)'; g.lineWidth = 0.6 * cam.s; g.beginPath(); g.moveTo(x, by - 19.5 * s); g.lineTo(x + wx, by - (19.5 + Math.sin(u * Math.PI) * 3) * s); g.lineTo(x + wx, by - (11.5 + Math.sin(u * Math.PI) * 3) * s); g.lineTo(x, by - 11.5 * s); g.closePath(); g.fill(); g.stroke() }
+    arm(-10, -14); arm(10, -14)
+    if (v === 2) { const lx = x + 6 * s + Math.sin(t * 1.3) * 4 * s, ly = by - 16 * s; circle(lx, ly, 4.5 * s, 'rgba(190,230,255,.6)'); g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(lx + 3 * s, ly + 3 * s); g.lineTo(lx + 7 * s, ly + 7 * s); g.stroke() }
+    return
+  }
+  if (d === 'calling') {
+    arm(-9, -12); arm(8, -30)
+    rrect(x + 5 * s, by - 40 * s, 6 * s, 12 * s, 1.5 * s, '#2a2033'); g.strokeStyle = '#2a2033'; g.lineWidth = 1.2 * cam.s; g.beginPath(); g.moveTo(x + 9 * s, by - 40 * s); g.lineTo(x + 9 * s, by - 46 * s); g.stroke()
+    circle(x + 9 * s, by - 46.5 * s, 1.3 * s, Math.floor(t * 4) % 2 ? '#e86a5c' : '#5c2a2a', null)
+    for (let k = 0; k < 3; k++) { const ph = (t * 1.2 + k / 3) % 1; g.globalAlpha = 1 - ph; g.strokeStyle = '#5c9de8'; g.lineWidth = 1.4 * cam.s; g.beginPath(); g.arc(x + 9 * s, by - 46 * s, (4 + ph * 14) * s, -Math.PI * 0.8, -Math.PI * 0.2); g.stroke(); g.globalAlpha = 1 }
+    return
+  }
+  if (d === 'running') {
+    if (v === 1) {
+      // Plugging a cable into the rack behind: an arm out, a cable, sparks.
+      arm(-9, -12); arm(-14, -22)
+      g.strokeStyle = ['#e86a5c', '#5c9de8', '#f2c14e'][h % 3]; g.lineWidth = 1.8 * cam.s; g.beginPath(); g.moveTo(x - 14 * s, by - 22 * s); g.quadraticCurveTo(x - 6 * s, by - 2 * s, x + 6 * s, by - 6 * s); g.stroke()
+      if (Math.floor(t * 5) % 3 === 0) for (let k = 0; k < 4; k++) { const a = k * 1.6 + t; g.strokeStyle = '#ffd36b'; g.lineWidth = 1 * cam.s; g.beginPath(); g.moveTo(x - 16 * s, by - 23 * s); g.lineTo(x - 16 * s + Math.cos(a) * 5 * s, by - 23 * s + Math.sin(a) * 5 * s); g.stroke() }
+      return
+    }
+    // A laptop held out, green lines scrolling, both hands typing.
+    rrect(x - 11 * s, by - 17 * s, 22 * s, 3 * s, 1 * s, '#7a7f95')
+    rrect(x - 10 * s, by - 30 * s, 20 * s, 13 * s, 1.5 * s, '#1c2033')
+    g.fillStyle = '#7dffb0'; const off = (t * 10) % 3
+    for (let k = 0; k < 3; k++) g.fillRect(x - 8 * s, by - (28 - k * 3 - off) * s, (6 + ((h >> k) % 8)) * s, 1 * s)
+    arm(-8, -15 + Math.sin(t * 26) * 1.2); arm(8, -15 + Math.cos(t * 26) * 1.2)
+    return
+  }
+  // idle, in the lounge
+  if (v === 0) { const sip = Math.max(0, Math.sin(t * 0.9)); arm(-9, -12); arm(7, -15 - sip * 12); rrect(x + 4 * s, by - (22 + sip * 12) * s, 7 * s, 8 * s, 2 * s, '#fff4e0'); for (let k = 0; k < 2; k++) { const ph = (t * 0.7 + k / 2) % 1; g.globalAlpha = (1 - ph) * 0.8; circle(x + 7.5 * s + Math.sin(ph * 7) * 2 * s, by - (25 + sip * 12 + ph * 12) * s, (1.4 + ph * 1.6) * s, '#ffffff', null); g.globalAlpha = 1 } return }
+  if (v === 1) { const up = Math.max(0, Math.sin(t * 0.8)); arm(-9 - up * 3, -12 - up * 22); arm(9 + up * 3, -12 - up * 22); if (up > 0.9) text('~', x + 14 * s, by - 40 * s, 10, '#6b6280'); return }
+  if ((h & 4) === 0) { const bite = Math.floor(t * 0.7) % 4; arm(-9, -12); arm(7, -22); circle(x + 7 * s, by - 26 * s, 5 * s, '#f2b45a'); circle(x + 7 * s, by - 26 * s, 2 * s, '#fff4e0', null); if (bite > 0) circle(x + 11 * s, by - 29 * s, 2.5 * s, '#fff4e0', null); return }
+  rrect(x - 8 * s, by - 22 * s, 16 * s, 9 * s, 3 * s, '#6b4fbf'); rrect(x - 4 * s, by - 20.5 * s, 8 * s, 6 * s, 1 * s, Math.floor(t * 3) % 2 ? '#9ff0b5' : '#7dd3fc', null); arm(-9, -17 + Math.sin(t * 14) * 1); arm(9, -17 + Math.cos(t * 12) * 1)
+}
 function reactionOf(e) {
   const d = e.data.doing
   if (e.kind === 'sub') return 'shy'
@@ -1124,10 +1334,9 @@ function drawChibi(e, t, z0) {
   const arm = (ax, ay) => circle(x + ax * s, by + ay * s, 3.4 * s, SKIN)
   const d = walking ? 'walk' : p.doing
   if (d === 'typing' || d === 'delegating') { arm(-8, -12 + Math.sin(t * 22) * 1.5); arm(8, -12 + Math.cos(t * 22) * 1.5) }
-  else if (d === 'reading') { rrect(x - 9 * s, by - 20 * s, 18 * s, 10 * s, 2 * s, '#e86a5c'); g.fillStyle = '#fff8ee'; g.fillRect(x - 7 * s, by - 18.5 * s, 6.5 * s, 7 * s); g.fillRect(x + 0.5 * s, by - 18.5 * s, 6.5 * s, 7 * s); arm(-9, -14); arm(9, -14) }
-  else if (d === 'running' || d === 'calling') { arm(-9, -12); arm(10 + Math.sin(t * 8) * 2, -20) }
+  else if (d === 'reading' || d === 'running' || d === 'calling') roomPose(d, x, by, s, t, h, arm)
   else if (d === 'thinking') { arm(-9, -12); arm(5, -27) }
-  else if (d === 'idle') { arm(-9, -12); arm(9, -15); rrect(x + 6 * s, by - 22 * s, 7 * s, 8 * s, 2 * s, '#fff4e0') }
+  else if (d === 'idle') roomPose('idle', x, by, s, t, h, arm)
   else if (d === 'napping') { arm(-10, -14); arm(10, -14) }
   else if (d === 'walk') walkPose(jk, x, by, s, t, stepHz, arm)
   else { arm(-9, -12); arm(9, -12) }
@@ -1288,9 +1497,11 @@ function frame(now) {
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
   g.clearRect(0, 0, VW, VH)
   deskHits = []
+  resetBtn.style.display = cam.user ? 'block' : 'none'
   tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
   for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, 1, 1, 'rgba(160,120,80,.07)', null)
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
+  zoneFloors(t)
   for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, 40, 90), 'rgba(59,42,53,.12)')
   for (const w of windows) {
     const need = w.sessions.some((p) => p.doing === 'asking' || p.doing === 'alert')
@@ -1299,7 +1510,6 @@ function frame(now) {
     if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
   }
   walls(t)
-  for (const z of Object.values(ZONES)) { const [lx, ly] = P((z.x0 + z.x1) / 2, -0.3, 82); rrect(lx - 40 * cam.s, ly - 11 * cam.s, 80 * cam.s, 22 * cam.s, 10 * cam.s, '#fff8ee'); text(z.label, lx, ly, 13) }
   const items = []
   const add = (depth, fn) => items.push([depth, fn])
   for (let k = 0; k < 4; k++) { const x = 0.55 + k * 1.17; add(x + 0.7, () => shelf(x, 0.0)) }
@@ -1308,6 +1518,11 @@ function frame(now) {
   add(13.6, () => sofa(12.1, 0.25))
   add(15.3, () => plant(14.95, 0.2))
   add(17.3, () => elevator(t))
+  add(4.8 + 1.3, () => readingTable(t))
+  add(10.2 + 1.3, () => consoleDesk(t))
+  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]))
+  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t))
+  for (const z of Object.values(ZONES)) add((z.x0 + z.x1) / 2 + 0.9 + 4.2, () => zoneSign(z))
   for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))
   for (const w of windows) {
     if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t)) }
@@ -1326,6 +1541,7 @@ function frame(now) {
     add(0.2 + sc.y0 + 0.2, () => sectionSign(sc))
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
+  add(1e9, () => roomTags())
   items.sort((a, b) => a[0] - b[0])
   for (const [, fn] of items) fn()
 }

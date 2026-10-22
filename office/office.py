@@ -542,7 +542,7 @@ def related(sid: str, kind: str | None = None, limit: int = 10) -> list[dict]:
         return []
     made = {"created", "merged", "replied", "posted", "archived", "edited", "opened", "pushed", "Write", "Edit", "in the answer"}
     keep = [o for o in outs if o.get("kind") in ("pr", "slack", "ticket", "link", "artifact", "scratch", "file", "exp") and (o.get("url") or o.get("path"))]
-    if kind:
+    if kind and kind != "all":
         keep = [o for o in keep if bucket(o) == kind]
     keep.sort(key=lambda o: (0 if (o.get("detail") in made or o.get("kind") in ("pr", "artifact", "exp")) else 1, -(o.get("at") or 0)))
     seen, out = set(), []
@@ -561,7 +561,7 @@ def detail(sid: str, kind: str | None = None) -> dict:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "shelf": related(sid, kind, 40) if kind else None, "shelfKind": kind}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -691,7 +691,7 @@ class Handler(BaseHTTPRequestHandler):
 
             q = parse_qs(urlparse(self.path).query)
             sid, kind = (q.get("sid") or [""])[0], (q.get("kind") or [""])[0]
-            kind = kind if kind in ("in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
+            kind = kind if kind in ("desk", "in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             return self.send(200, json.dumps({"at": time.time(), "people": snapshot(), "snoozed": snoozed()}).encode(), "application/json")
