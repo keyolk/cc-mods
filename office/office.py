@@ -439,12 +439,18 @@ def recent_blocks(sid: str) -> list[str]:
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
-            f.seek(max(0, f.tell() - 300_000))
+            # A turn that hit a guard often goes on for a while (reading,
+            # trying other ways) before it asks: look back further than one tool
+            # result. Only asked for while the session waits on you.
+            f.seek(max(0, f.tell() - 1_500_000))
             raw = f.read().decode("utf-8", "replace")
     except OSError:
         return []
+    # Every guard's refusal: the session policy's ("BLOCKED by session
+    # policy: …") and the others', like the tmux pane guard's ("BLOCKED: tmux
+    # target … Agents may only use panes inside their own window …").
     out = []
-    for m in re.finditer(r"BLOCKED by session policy:[^\"]{0,600}", raw):
+    for m in re.finditer(r"BLOCKED(?: by session policy)?:[^\"]{0,600}", raw):
         out.append(m.group(0).replace("\\n", "\n").replace("\\`", "`"))
     return out[-4:]
 
