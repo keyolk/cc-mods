@@ -750,16 +750,15 @@ def act(body: dict) -> tuple[int, dict]:
             return 409, {"error": "no dialog with that choice on its screen now"}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
-    if kind == "snooze":
-        # value: minutes to add (30 by default, from now or from the current
-        # end), or 0 to put it back in the queue.
-        mins = int(value if value is not None else 30)
-        if mins <= 0:
-            set_snooze(sid, None)
-            return 200, {"ok": True, "sent": "back in the queue"}
-        until = max(time.time(), snoozed().get(sid, 0)) + mins * 60
-        set_snooze(sid, until)
-        return 200, {"ok": True, "sent": "snoozed", "until": until}
+    if kind == "mute":
+        # value: true to keep it quiet until the person speaks first, false
+        # to let it call again.
+        on = bool(value)
+        set_mute(sid, on)
+        return 200, {"ok": True, "sent": "muted until you speak" if on else "may call you again"}
+    # Speaking to it (a pick, a reply, a grant) lifts its silence.
+    if kind in ("key", "reply", "grant"):
+        set_mute(sid, False)
     if kind == "grant":
         return grant(sid)
     if kind == "open":
@@ -869,32 +868,87 @@ def rearrange(kind: str, me: dict, value) -> tuple[int, dict]:
     return 200, {"ok": True, "sent": r.stdout.strip()}
 
 
-# Agents the person set aside from the waiting queue, until when (epoch s).
-# Kept in a file so a reload or `prefix O` sees the same; expired ones drop.
-SNOOZE_FILE = os.path.expanduser("~/.claude/state/office/snooze.json")
+# Agents told to keep quiet until the person speaks to them first: out of the
+# waiting queue, no call for attention, whatever they wait on. Kept in a file
+# (sid -> since) so a reload or `prefix O` sees the same. Lifted by the person
+# speaking first: a reply, a pick or a grant from the office, or anything they
+# type to the session themselves (a human prompt in its transcript after
+# `since`; a plugin's asUser prompt counts, as the office's replies go that
+# way, a plugin's own notification does not).
+MUTE_FILE = os.path.expanduser("~/.claude/state/office/mute.json")
+_spoke: dict[str, tuple[int, float | None]] = {}
 
 
-def snoozed() -> dict:
+def _mute_file() -> dict:
     try:
-        with open(SNOOZE_FILE) as f:
+        with open(MUTE_FILE) as f:
             d = json.load(f) or {}
     except (OSError, ValueError):
         return {}
-    now = time.time()
-    return {k: v for k, v in d.items() if isinstance(v, (int, float)) and v > now}
+    return {k: v for k, v in d.items() if isinstance(v, (int, float))}
 
 
-def set_snooze(sid: str, until: float | None) -> dict:
-    d = snoozed()
-    if until:
-        d[sid] = until
+def set_mute(sid: str, on: bool) -> dict:
+    d = _mute_file()
+    if on:
+        d[sid] = d.get(sid) or time.time()
     else:
         d.pop(sid, None)
-    os.makedirs(os.path.dirname(SNOOZE_FILE), exist_ok=True)
-    tmp = SNOOZE_FILE + ".tmp"
+    os.makedirs(os.path.dirname(MUTE_FILE), exist_ok=True)
+    tmp = MUTE_FILE + ".tmp"
     with open(tmp, "w") as f:
         json.dump(d, f)
-    os.replace(tmp, SNOOZE_FILE)
+    os.replace(tmp, MUTE_FILE)
+    return d
+
+
+def last_spoke(sid: str) -> float | None:
+    """When the person last prompted this session (newest human prompt)."""
+    path = transcript(sid)
+    if not path:
+        return None
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    hit = _spoke.get(sid)
+    if hit and hit[0] == size:
+        return hit[1]
+    at = None
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 2_000_000))
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    for line in reversed(lines):
+        if b'"type":"user"' not in line and b'"type": "user"' not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        o = d.get("origin") or {}
+        content = (d.get("message") or {}).get("content")
+        if isinstance(content, list) and any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content):
+            continue
+        if d.get("isMeta") or not (o.get("kind") == "human" or (o.get("kind") == "plugin" and o.get("asUser"))):
+            continue
+        try:
+            at = datetime.fromisoformat(str(d.get("timestamp")).replace("Z", "+00:00")).timestamp()
+        except (ValueError, TypeError):
+            continue
+        break
+    _spoke[sid] = (size, at)
+    return at
+
+
+def muted() -> dict:
+    """sid -> since, with the ones the person has since spoken to lifted."""
+    d = _mute_file()
+    lifted = [sid for sid, since in d.items() if (last_spoke(sid) or 0) > since]
+    for sid in lifted:
+        d = set_mute(sid, False)
     return d
 
 
@@ -954,7 +1008,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             people = snapshot()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "snoozed": snoozed(), "talks": talks()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "muted": muted(), "talks": talks()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
