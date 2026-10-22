@@ -601,12 +601,18 @@ function drawChibi(e, t, z0) {
   const hair = age >= 2 ? '#d9d9e3' : age === 1 ? mix(hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, 34), '#cfcfda', 0.45) : hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
   if (e.hl) { g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.ellipse(x, y, 19 * s, 8 * s, 0, 0, Math.PI * 2); g.fill() }
   g.fillStyle = 'rgba(30,20,40,.22)'; g.beginPath(); g.ellipse(x, y, 13 * s, 5 * s, 0, 0, Math.PI * 2); g.fill()
+  // Facing: while walking, the body mirrors to the side it goes (its props
+  // with it), the face turns three-quarters that way, and walking away shows
+  // the back of the head. At rest it faces us again.
+  const back = walking && !!e.back, fdir = walking ? (e.faceX || 1) : 0
+  if (fdir < 0) { g.save(); g.translate(x, 0); g.scale(-1, 1); g.translate(-x, 0) }
   const step = walking ? Math.sin(t * stepHz) * 3 : 0
   circle(x - 5 * s, y - 2 * s - Math.max(0, step) * s, 3.6 * s, '#5b4b6b')
   circle(x + 5 * s, y - 2 * s - Math.max(0, -step) * s, 3.6 * s, '#5b4b6b')
   const by = y + bob * s
   rrect(x - 9 * s, by - 24 * s, 18 * s, 19 * s, 7 * s, body)
-  outfit(p.job, x, by, s, t, sub)
+  // A tie, a badge, a pen are on the front: not on someone walking away.
+  if (!back) outfit(p.job, x, by, s, t, sub)
   const arm = (ax, ay) => circle(x + ax * s, by + ay * s, 3.4 * s, SKIN)
   const d = walking ? 'walk' : p.doing
   if (d === 'typing' || d === 'delegating') { arm(-8, -12 + Math.sin(t * 22) * 1.5); arm(8, -12 + Math.cos(t * 22) * 1.5) }
@@ -617,35 +623,46 @@ function drawChibi(e, t, z0) {
   else if (d === 'napping') { arm(-10, -14); arm(10, -14) }
   else if (d === 'walk') walkPose(jk, x, by, s, t, stepHz, arm)
   else { arm(-9, -12); arm(9, -12) }
+  if (fdir < 0) g.restore()
   // Asleep on the desk: the head sinks and tilts onto the arms.
   const nap = p.doing === 'napping'
   const hx = x + (p.doing === 'thinking' ? Math.sin(t * 1.5) * 1.5 * s : (working || walking) && jk === 'watch' ? Math.sin(t * 2.2) * 2.5 * s : 0), hy = by - 36 * s
   circle(hx, hy, 14 * s, SKIN)
   g.beginPath(); g.arc(hx, hy, 14 * s, Math.PI * 1.05, Math.PI * 1.95); g.lineTo(hx + 12 * s, hy - 4 * s); g.quadraticCurveTo(hx, hy - 10 * s, hx - 12 * s, hy - 4 * s); g.closePath()
   g.fillStyle = hair; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.stroke()
+  if (back) {
+    circle(hx, hy, 14 * s, hair)
+    g.strokeStyle = mix(hair, '#000000', 0.25); g.lineWidth = 1.2 * cam.s
+    for (const k of [-5, 0, 5]) { g.beginPath(); g.moveTo(hx + k * s, hy - 8 * s); g.quadraticCurveTo(hx + (k + 2) * s, hy + 3 * s, hx + k * 0.8 * s, hy + 11 * s); g.stroke() }
+    if (!sub) hat(p.job, hx, hy, s, t, hair)
+    if (sub) { g.strokeStyle = LINE; g.lineWidth = 1.4 * cam.s; g.beginPath(); g.moveTo(hx, hy - 14 * s); g.lineTo(hx - 3 * s, hy - 22 * s); g.stroke(); circle(hx - 3 * s, hy - 23 * s, 3 * s, '#ffd36b') }
+    if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
+    return
+  }
   if (sub) { g.beginPath(); g.moveTo(hx, hy - 14 * s); g.lineTo(hx + 3 * s, hy - 22 * s); g.stroke(); circle(hx + 3 * s, hy - 23 * s, 3 * s, '#ffd36b') }
   else if (hat(p.job, hx, hy, s, t, hair)) { /* the hat covers the tuft */ }
   else if (h % 3 === 0) { g.beginPath(); g.moveTo(hx - 1 * s, hy - 14 * s); g.quadraticCurveTo(hx + 7 * s, hy - 25 * s, hx + 4 * s, hy - 18 * s); g.stroke() }
   else if (h % 3 === 1) { poly([[hx - 12 * s, hy - 7 * s], [hx - 10 * s, hy - 20 * s], [hx - 3 * s, hy - 13 * s]], hair); poly([[hx + 12 * s, hy - 7 * s], [hx + 10 * s, hy - 20 * s], [hx + 3 * s, hy - 13 * s]], hair) }
+  const fhx = hx + fdir * 3.2 * s
   const look = p.doing === 'thinking' ? -2 : 0
   const blink = ((t + (h % 97) / 23) % 3.7) < 0.12
   const sleepy = nap
   g.strokeStyle = LINE; g.lineWidth = 1.6 * cam.s; g.lineCap = 'round'
-  if (kind && rx > 0.35) reactFace(kind, hx, hy, s, t, since)
-  else if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(hx + (ex - 2) * s, hy - 1 * s); g.lineTo(hx + (ex + 2) * s, hy + 1 * s); g.lineTo(hx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
-  else if (blink || sleepy) { for (const ex of [-5, 5]) { g.beginPath(); g.arc(hx + ex * s, hy + 1 * s, 2.4 * s, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke() } }
-  else { const r = p.doing === 'asking' ? 2.6 : 2.1; circle(hx - 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx + 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(hx - 4.3 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null); circle(hx + 5.7 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null) }
+  if (kind && rx > 0.35) reactFace(kind, fhx, hy, s, t, since)
+  else if (p.doing === 'alert') { for (const ex of [-5, 5]) { g.beginPath(); g.moveTo(fhx + (ex - 2) * s, hy - 1 * s); g.lineTo(fhx + (ex + 2) * s, hy + 1 * s); g.lineTo(fhx + (ex - 2) * s, hy + 3 * s); g.stroke() } }
+  else if (blink || sleepy) { for (const ex of [-5, 5]) { g.beginPath(); g.arc(fhx + ex * s, hy + 1 * s, 2.4 * s, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke() } }
+  else { const r = p.doing === 'asking' ? 2.6 : 2.1; circle(fhx - 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(fhx + 5 * s, hy + (1 + look) * s, r * s, '#2a2033', null); circle(fhx - 4.3 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null); circle(fhx + 5.7 * s, hy + (0.2 + look) * s, 0.8 * s, '#fff', null) }
   const flush = kind === 'shy' || kind === 'eager' ? 1 + rx * 1.4 : 1
-  g.fillStyle = kind === 'shy' ? 'rgba(255,90,120,' + (0.55 + 0.3 * rx) + ')' : BLUSH; g.beginPath(); g.ellipse(hx - 8.5 * s, hy + 5 * s, 3 * s * flush, 1.8 * s * flush, 0, 0, Math.PI * 2); g.ellipse(hx + 8.5 * s, hy + 5 * s, 3 * s * flush, 1.8 * s * flush, 0, 0, Math.PI * 2); g.fill()
-  if (kind && rx > 0.35) { reactMouth(kind, hx, hy, s, t); reactExtras(kind, hx, hy, s, t, rx, since); return }
+  g.fillStyle = kind === 'shy' ? 'rgba(255,90,120,' + (0.55 + 0.3 * rx) + ')' : BLUSH; g.beginPath(); g.ellipse(fhx - (fdir > 0 ? 7 : 8.5) * s, hy + 5 * s, 3 * s * flush * (fdir > 0 ? 0.55 : 1), 1.8 * s * flush, 0, 0, Math.PI * 2); g.ellipse(fhx + (fdir < 0 ? 7 : 8.5) * s, hy + 5 * s, 3 * s * flush * (fdir < 0 ? 0.55 : 1), 1.8 * s * flush, 0, 0, Math.PI * 2); g.fill()
+  if (kind && rx > 0.35) { reactMouth(kind, fhx, hy, s, t); reactExtras(kind, fhx, hy, s, t, rx, since); return }
   g.beginPath()
-  if (p.doing === 'asking' || p.doing === 'alert') g.arc(hx, hy + 6 * s, 1.8 * s, 0, Math.PI * 2)
-  else g.arc(hx, hy + 4.5 * s, 2.2 * s, 0.15 * Math.PI, 0.85 * Math.PI)
+  if (p.doing === 'asking' || p.doing === 'alert') g.arc(fhx, hy + 6 * s, 1.8 * s, 0, Math.PI * 2)
+  else g.arc(fhx, hy + 4.5 * s, 2.2 * s, 0.15 * Math.PI, 0.85 * Math.PI)
   g.stroke()
-  if (age >= 2) { g.beginPath(); g.moveTo(hx - 9 * s, hy + 4 * s); g.quadraticCurveTo(hx, hy + 19 * s, hx + 9 * s, hy + 4 * s); g.quadraticCurveTo(hx, hy + 11 * s, hx - 9 * s, hy + 4 * s); g.fillStyle = '#ececf2'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke() }
-  if (age >= 1 && !sub) { g.strokeStyle = '#e8e8f0'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(hx - 6 * s, hy - 12 * s); g.lineTo(hx - 2 * s, hy - 10 * s); g.moveTo(hx + 3 * s, hy - 13 * s); g.lineTo(hx + 7 * s, hy - 10 * s); g.stroke() }
+  if (age >= 2) { g.beginPath(); g.moveTo(fhx - 9 * s, hy + 4 * s); g.quadraticCurveTo(fhx, hy + 19 * s, fhx + 9 * s, hy + 4 * s); g.quadraticCurveTo(fhx, hy + 11 * s, fhx - 9 * s, hy + 4 * s); g.fillStyle = '#ececf2'; g.fill(); g.strokeStyle = LINE; g.lineWidth = 1.2 * cam.s; g.stroke() }
+  if (age >= 1 && !sub) { g.strokeStyle = '#e8e8f0'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(fhx - 6 * s, hy - 12 * s); g.lineTo(fhx - 2 * s, hy - 10 * s); g.moveTo(fhx + 3 * s, hy - 13 * s); g.lineTo(fhx + 7 * s, hy - 10 * s); g.stroke() }
   if (age >= 3) { g.strokeStyle = '#8a5a3a'; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(x - 13 * s, y - 1 * s); g.lineTo(x - 12 * s, by - 20 * s); g.quadraticCurveTo(x - 12 * s, by - 25 * s, x - 8 * s, by - 24 * s); g.stroke() }
-  if (!sub) face(p.job, hx, hy, s, t)
+  if (!sub) face(p.job, fhx, hy, s, t)
   if (working) workFx(jk, p.doing, x, by, hx, hy, s, t, h)
   if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
   // While it reacts to the cursor, its face says it: the usual bubble steps aside.
@@ -749,6 +766,9 @@ function frame(now) {
     // Straight at the waypoint: a heading that lags behind the target made a
     // fast walker circle it forever. Reaching it within this frame's step
     // snaps to it and moves on to the next, so nobody overshoots.
+    // Which way it faces: the screen direction of this step. Right/left is
+    // (dx - dy), up the screen (away from us) is (dx + dy) < 0.
+    if (dist > 0.02) { const sx = dx - dy, sy = dx + dy; if (Math.abs(sx) > 1e-4) e.faceX = sx > 0 ? 1 : -1; e.back = sy < -Math.abs(sx) * 0.15 }
     if (dist > sp && dist > 0.02) { e.x += (dx / dist) * sp; e.y += (dy / dist) * sp; e.walking = true }
     else if (e.path && e.path.length > 1) { e.x = wp[0]; e.y = wp[1]; e.path.shift(); e.walking = true }
     else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }

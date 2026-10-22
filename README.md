@@ -207,6 +207,11 @@ answers there.
   where the line is clear, turns bend and the last steps ease in. Depth sorts
   a desk by its front corner, so someone behind a desk is hidden by it and
   someone in front is not covered.
+- **Facing** follows each step: walking right or left mirrors the body (what
+  it carries goes with it) and turns the face three-quarters that way (eyes,
+  mouth and the near cheek shift, the far cheek narrows); walking away (up the
+  screen) shows the back of the head with the hat, and no tie or badge. At
+  rest it faces us.
 - **Hover** and a character reacts to you: one waiting on you is eager
   (sparkly eyes, hops, hearts), one working is nervous (sweat drop, tiny
   pupils, a shiver), one idle or asleep is startled awake (`!`), a subagent
