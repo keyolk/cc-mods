@@ -1,6 +1,7 @@
 import { loginError, loginSplitArgv, needsTerminalLogin } from '../hooks/lib/mcpauth'
 import { closingAsk } from '../hooks/lib/proceed'
 import { forkEffect, forkPhase, forkPrompt, movedSection, setAsideMoved } from '../hooks/lib/fork'
+import { expFromAnswer, expFromTool, expNeedsYou, expPreview, expStatus, lastMessage, parseOpen, parseSums } from '../hooks/lib/exp'
 import { alertContexts, alertOf, rcaGrants, restoreArgvs } from '../hooks/lib/rca'
 import { identityText } from '../hooks/lib/identity'
 import { cockpitColumns } from '../hooks/lib/layout'
@@ -1451,4 +1452,29 @@ test('auth: the SSO cache file is named by sha1 of the start URL from org.json; 
   expect(sha1Hex('a'.repeat(100))).toBe('7f9000257a4918d7072655ea468540cdcbd42e0c')
   expect(parseOrg(JSON.stringify({ awsSsoStartUrl: ' https://d-1234567890.awsapps.com/start ' })).awsSsoStartUrl).toBe('https://d-1234567890.awsapps.com/start')
   expect(parseOrg('{}').awsSsoStartUrl).toBeUndefined()
+})
+
+test('exp: a session that writes into ~/exp/<date>_<topic> is linked to it; reading one is not; README Open, last message and sums parse', () => {
+  const dir = '/Users/a/exp/2026-10-14_vendor_17043'
+  expect(expFromTool('Write', { file_path: dir + '/attachments/probes.csv' }, 1).map((o) => [o.kind, o.path, o.detail])).toEqual([['exp', dir, 'archived']])
+  expect(expFromTool('Bash', { command: 'mkdir -p ~/exp/2026-10-14_vendor_17043/{attachments,drafts} && mv /tmp/x.gz "$HOME/exp/2026-10-14_vendor_17043/attachments/"' }, 1).map((o) => o.path)).toEqual(['~/exp/2026-10-14_vendor_17043'])
+  expect(expFromTool('Bash', { command: 'ls -la ~/exp/2026-10-14_vendor_17043' }, 1)).toEqual([])
+  expect(expFromTool('Bash', { command: 'cat x > ~/exp/2026-10-14_vendor_17043/work/x.txt' }, 1)).toHaveLength(1)
+  // Not a dated folder: not an archive.
+  expect(expFromTool('Write', { file_path: '/Users/a/exp/.gw/x' }, 1)).toEqual([])
+  expect(expFromAnswer('All kept in `' + dir + '/`.', 1).map((o) => [o.path, o.detail])).toEqual([[dir, 'named']])
+
+  const readme = '# T\n\n## Open\n- Attachments promised on 2026-10-21 — not delivered yet.\n- See `correspondence.md` for every message in/out.\n- Vendor asks for DEBUG logs.\n  | a | b |\n\n## Files\n- x'
+  expect(parseOpen(readme)).toEqual(['Attachments promised on 2026-10-21 — not delivered yet.', 'Vendor asks for DEBUG logs.'])
+  expect(parseOpen('# T\n## Files\n- x')).toEqual([])
+  const corr = '# C\n\n| time | dir | who | link | gist | files |\n|---|---|---|---|---|---|\n| 10-14 10:31 | out | me | l | reported | — |\n| 10-22 05:43 | in | Sam | l | asks for DEBUG logs | — |\n'
+  expect(lastMessage(corr)).toBe('10-22 05:43 · in · asks for DEBUG logs')
+
+  const sums = parseSums('a.gz: OK\nb.csv: FAILED\nc.log: FAILED open or read\n--ls\nSHA256SUMS\na.gz\nb.csv\nd.txt\n')!
+  expect(sums).toEqual({ ok: 1, failed: ['b.csv', 'c.log'], unlisted: ['d.txt'] })
+  expect(parseSums('')).toBeUndefined()
+  const c = { open: ['x'], sums, at: 1 }
+  expect(expStatus(c)).toBe('1 open · ⚠ 2 changed')
+  expect(expNeedsYou({ open: [], sums: { ok: 2, failed: [], unlisted: [] }, at: 1 })).toBe(false)
+  expect(expPreview(dir, c, readme)).toContain('not in SHA256SUMS: `d.txt`')
 })

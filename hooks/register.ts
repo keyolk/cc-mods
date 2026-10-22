@@ -55,6 +55,7 @@ import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from '
 import { clip, hhmm } from './lib/text'
 import { isMcpTool, looksDisconnected, mcpServerKey, normalizeServer } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
+import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseOpen, parseSums, type ExpCheck } from './lib/exp'
 import { focusWindowArgv, parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
 import { ORG_PATH, org, parseOrg, setOrg } from './lib/org'
 import { answerBody, freshItems, itemKey, parseAttention, parseRuns, resultPrompt, runOutputs, toastFor, type NarwhalItem, type NarwhalRun } from './lib/narwhal'
@@ -117,6 +118,8 @@ const mcpLoginA = atom({ plugin: 'cc-mods', key: 'mcpLogin' }, null as McpLogin 
 const slackA = atom({ plugin: 'cc-mods', key: 'slack' }, {} as Record<string, SlackThreadState>)
 // Threads followed up automatically (lib/slack.ts SlackFollow), mirrored to the store.
 const slackFollowA = atom({ plugin: 'cc-mods', key: 'slackFollow' }, {} as Record<string, SlackFollow>)
+// Archive folders' checks, by path (lib/exp.ts): recomputed, never stored.
+const expA = atom({ plugin: 'cc-mods', key: 'exp' }, {} as Record<string, ExpCheck>)
 const elsewhereA = atom({ plugin: 'cc-mods', key: 'elsewhere' }, { windows: [], todos: [] } as { windows: Elsewhere[]; todos: Todo[] })
 // What this session's narwhal runs need (lib/narwhal.ts): the items, and the
 // keys already told (toast) or dismissed, so a poll does not repeat them.
@@ -870,6 +873,9 @@ async function applyPolicy($: any, argv: string[], ttlMs?: number, revert?: stri
 
 async function addOutputs($: any, add: Output[]) {
   if (add.length === 0) return
+  // An archive folder spelled ~/exp/… is kept by its absolute path, one id.
+  add = add.map((o) => (o.kind === 'exp' && o.path?.startsWith('~/') ? { ...o, path: home + o.path.slice(1), id: 'exp:' + home + o.path.slice(1) } : o))
+  if (add.some((o) => o.kind === 'exp')) void refreshExp($, add.filter((o) => o.kind === 'exp').map((o) => o.path!))
   await update($, outputsA, (prev) => mergeOutputs(prev, add))
   const list = await read($, outputsA)
   await $.store.set(K.outputs(sid), list)
@@ -1409,8 +1415,28 @@ async function refreshElsewhere($: any) {
   await update($, elsewhereA, () => ({ windows, todos }))
 }
 
+// What each linked archive folder still owes, its sums, its last message
+// (lib/exp.ts). Run for the folders named, or every linked one.
+async function checkExp($: any, path: string): Promise<ExpCheck> {
+  const readme = await readText($, path + '/README.md')
+  const r = await $.process.run(['sh', '-c', SUMS_CHECK, path + '/attachments'], { timeoutMs: 20_000 }).catch(() => undefined)
+  return { open: parseOpen(readme), sums: r ? parseSums(r.stdout) : undefined, last: lastMessage(await readText($, path + '/correspondence.md')), at: Date.now() }
+}
+
+let expCheckedAt = 0
+async function refreshExp($: any, paths?: string[]) {
+  const all = ((await read($, outputsA)) as Output[]).filter((o) => o.kind === 'exp' && o.path).map((o) => o.path!)
+  const todo = paths ?? all
+  if (!todo.length) return
+  if (!paths) expCheckedAt = Date.now()
+  const got = await Promise.all(todo.map(async (p) => [p, await checkExp($, p)] as const))
+  await update($, expA, (cur) => ({ ...cur, ...Object.fromEntries(got) }))
+}
+
 async function refreshNeighbors($: any) {
   void refreshElsewhere($)
+  // Sums read every attachment: every few minutes, not every refresh.
+  if (Date.now() - expCheckedAt > 5 * 60_000) void refreshExp($)
   if (!isPaneId(pane)) return
   const r = await bridge($, 'neighbors', { pane, cwd })
   await update($, neighborsA, () => (Array.isArray(r.neighbors) ? r.neighbors : []))
@@ -1724,7 +1750,11 @@ const ARCHIVE_PEEK = [
 async function loadPreview($: any, o: Output) {
   let p: Preview = { kind: 'none', text: o.url ?? o.path ?? o.title }
   const path = o.path
-  if (path) {
+  if (o.kind === 'exp' && path) {
+    const c = await checkExp($, path)
+    await update($, expA, (cur) => ({ ...cur, [path]: c }))
+    p = { kind: 'markdown', text: expPreview(path, c, (await readText($, path + '/README.md'))?.slice(0, 20000)) }
+  } else if (path) {
     if (/\.png$/i.test(path)) p = { kind: 'image', path }
     else if (ARCHIVE.test(path)) {
       const r = await $.process.run(['sh', '-c', ARCHIVE_PEEK, 'sh', path], { timeoutMs: 8000 })
@@ -2820,7 +2850,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       ['flow', 'cockpit Chat tab: requests and conclusions, no tool calls'],
       ['graph', 'cockpit Work tab: request → subagents and background tasks'],
       ['side', 'side question that stays out of the main chat', '[question]'],
-      ['outputs', 'cockpit Outputs tab: PRs, artifacts, files, tickets, links, tasks', '[pr|artifact|scratch|ticket|link|bg]'],
+      ['outputs', 'cockpit Outputs tab: PRs, artifacts, files, tickets, links, tasks, archive folders', '[pr|artifact|scratch|ticket|link|bg|exp]'],
       ['policy', 'session policy (only a person can change it)', '[allow|block|inherit <cap> [scope] [15m] | mode <m>]'],
       ['cockpit', 'open/close the cockpit'],
       ['watch', 'Monitor events (cockpit Work tab)'],
@@ -3012,7 +3042,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       await update($, flowA, (fs) => [...fs, ...flowOf(e.answer, e.turnId, now)].slice(-FLOW_CAP))
       await update($, answersA, (a) => capAnswers({ ...a, [e.turnId]: e.answer }))
       void addOutputs($, textOutputs(e.answer, now).map((o) => ({ ...o, turnId: e.turnId })))
-      void namedFiles($, e.answer, now).then((fs) => addOutputs($, fs.map((o) => ({ ...o, turnId: e.turnId }))))
+      void namedFiles($, e.answer, now).then((fs) => addOutputs($, [...fs, ...expFromAnswer(e.answer, now)].map((o) => ({ ...o, turnId: e.turnId }))))
     }
     void loadUsage($)
     loadGoalSoon($, [3_000, 15_000])
@@ -3187,7 +3217,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const add = [...hintsFromCommand(command, repoFromGh), ...blocked]
     if (add.length) await update($, hintsA, (hs) => [...hs, ...add].slice(-200))
     if (blocked.length && interactive) $.ui.toast('Blocked by session policy: the Policy tab (5) grants ' + blocked[0]!.scope + ' with one press')
-    void addOutputs($, toolOutputs('Bash', e, result, Date.now()).map((o) => ({ ...o, turnId: currentTurn, agentId: e.agentId })))
+    void addOutputs($, [...toolOutputs('Bash', e, result, Date.now()), ...(result?.deny ? [] : expFromTool('Bash', e, Date.now()))].map((o) => ({ ...o, turnId: currentTurn, agentId: e.agentId })))
     if (result?.result?.backgroundTaskId) {
       const node: AgentNode = {
         id: 'bg:' + result.result.backgroundTaskId,
@@ -3216,7 +3246,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
 
   on('tool.call', { tool: /^(?!Bash$|AskUserQuestion$)/ }, async ($: any, e: any, next: any) => {
     const result = await approveGuard($, e, await next(e), () => next(e))
-    void addOutputs($, toolOutputs(e.tool, e, result, Date.now()).map((o) => ({ ...o, turnId: currentTurn, agentId: e.agentId })))
+    void addOutputs($, [...toolOutputs(e.tool, e, result, Date.now()), ...(result?.deny ? [] : expFromTool(e.tool, e, Date.now()))].map((o) => ({ ...o, turnId: currentTurn, agentId: e.agentId })))
     // A Slack send to a target outside the allow list is a candidate for it
     // (the guard asked or denied); the review channel never needs one.
     if (typeof result?.deny === 'string') await noteBlock($, result.deny, e.tool + (typeof e.channel_id === 'string' ? ' → ' + e.channel_id : ''))
@@ -4011,6 +4041,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       },
       onPr: (pr, action) => void (action === 'open' ? openUrl($, pr.url) : followUpPr($, pr)),
       onOpenUrl: (url) => void openUrl($, url),
+      exp: (await read($, expA)) as Record<string, ExpCheck>,
+      onExp: (o) => void loadPreview($, o).then(() => setUi({ view: 'outputs', outTab: 'exp', outSide: 'out', outSel: o.id })),
       webOn: ((await read($, webA)) as WebState).running,
       webLink: embedOn ? undefined : await webLinkBadge($),
       usage: ((await read($, usageA)) as { usage?: Usage }).usage,
@@ -4194,6 +4226,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         scope,
         selected: ui.outSel || undefined,
         preview: sel && preview?.id === sel.id ? preview.p : undefined,
+        exp: (await read($, expA)) as Record<string, ExpCheck>,
         width,
         now,
         onTab: (t) => setUi({ outTab: t, outSel: '' }),

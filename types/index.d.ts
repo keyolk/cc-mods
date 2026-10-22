@@ -39,6 +39,7 @@ declare module 'claude-code' {
       slackFollow: Record<string, { auto: boolean; lastRun?: string }>
       web: { running: boolean; engine?: string; url?: string; asked?: string; title?: string; shown?: boolean; floating?: boolean; error?: string }
       fork: { prompt: string; p: number; at: number; later: number } | null
+      exp: Record<string, any> // archive folder path -> ExpCheck (lib/exp.ts)
       ui: {
         flowFilter: string
         flowProgress: boolean

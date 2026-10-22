@@ -145,6 +145,29 @@ detail or the session window it came from; any order, case-insensitive. It
 narrows the kind tabs and both sides, and their counts: `slack infra` is
 Slack threads whose channel or title says infra, `abc-12` tickets by key.
 Esc leaves the field; ✕ clears it.
+## Archive folders (`~/exp/<date>_<topic>/`)
+
+What a session exchanged with an outside party (a vendor ticket, a Slack
+Connect thread) is kept in a dated folder under `~/exp/`, in the layout the
+`exp-archive` skill writes: `README.md` (with a `## Open` list of what is
+still owed), `correspondence.md` (one row per message in or out),
+`attachments/` with `SHA256SUMS`, `drafts/`, `work/`.
+
+- **Linked to the session** that writes into one: a Write/Edit under it, a
+  shell command that writes there (`mkdir`, `mv`, `cp`, `tee`, `>` …), or an
+  answer that names it. Reading one (`ls`, `cat`) does not link it. The link
+  is an `exp` output, so it is kept with the session and exported with it.
+- **In/Out › Archive** (`e`) lists them with what they owe and their sums;
+  the preview shows the Open items, the attachment check, the last message
+  and the README. `o` opens the folder, `r` reveals it in Finder.
+- **Now › Needs you** shows a folder while its Open list has items, or when
+  an attachment no longer matches `SHA256SUMS` (changed or gone) or a file in
+  `attachments/` has no sum. A press opens it in In/Out.
+
+Sends to Slack Connect are often made by hand, outside Claude's tools, so the
+folder, not the send, is what is tracked. Sums are checked when a folder is
+linked, when it is opened, and every five minutes.
+
 ## Organisation (`~/.config/cc-mods/org.json`)
 
 What the mod knows about where it runs is kept outside the repository, in
@@ -422,7 +445,7 @@ conflict, merged, changes requested) or a turn that wrote or asks stays (`❗ wa
 ```
 /cockpit   home
 /watch     Monitor events: which folded, which showed
-/flow  /graph  /side [question]  /outputs [pr|artifact|scratch|ticket|link|bg]
+/flow  /graph  /side [question]  /outputs [pr|artifact|scratch|ticket|link|bg|exp]
 /policy [allow|block|inherit <cap> [scope] [15m] | mode <m> | clear]
 /auth      refresh the credential radar and print it
 /title [label]   label this pane in tmux (empty clears)
