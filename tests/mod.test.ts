@@ -627,18 +627,35 @@ test('a session loaded with history rebuilds the cockpit from the transcript', a
 })
 
 test('the browser option sets this pane on start, /browser switches it, the end unsets it', { options: { browser: 'tweb-chrome' } } as any, async ($, on) => {
-  const runs = baseStubs(on, { pane: '%42' })
+  // tmux answers what it was told: the pane's @browser as last set, nothing for the window or global.
+  let paneBrowser = ''
+  const runs = baseStubs(on, {
+    pane: '%42',
+    run: (a) => {
+      if (a[0] !== 'tmux') return undefined
+      if (a[1] === 'set-option' && a.includes('@browser')) paneBrowser = a.includes('-u') ? '' : String(a.at(-1))
+      if (a[1] === 'show-options') return { code: 0, out: a[2] === '-p' ? paneBrowser + '\n' : '\n' }
+      if (String(a[1]).includes('tmux-chrome')) return { code: 0, out: 'Usage: tmux-chrome {switch|list}\n' }
+      return undefined
+    },
+  })
   mock.clock(on)
   on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
   on('store.keys', () => ({ value: [] }))
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
-  const opt = (a: string[]) => a[0] === 'tmux' && a.includes('@browser')
+  const opt = (a: string[]) => a[0] === 'tmux' && a[1] === 'set-option' && a.includes('@browser')
   expect(runs.filter(opt).at(-1)).toEqual(['tmux', 'set-option', '-p', '-t', '%42', '@browser', 'tweb-chrome'])
   const r: any = await $.command.run({ command: 'browser', args: 'tweb', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any)
   expect(runs.filter(opt).at(-1)).toEqual(['tmux', 'set-option', '-p', '-t', '%42', '@browser', 'tweb'])
-  expect(r.text).toMatch(/this session/)
+  expect(r.text).toBe('Links open in: TWeb (Electron) (this session)')
+  // Asked with nothing to set: read back from tmux, never tmux-chrome's usage text.
+  const now: any = await $.command.run({ command: 'browser', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any)
+  expect(now.text).toBe('Links open in: TWeb (Electron) (this session)')
+  expect(runs.some((a) => String(a[0]).endsWith('tmux-chrome'))).toBe(false)
   const bad: any = await $.command.run({ command: 'browser', args: 'firefox', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any)
   expect(bad.text).toMatch(/Unknown browser/)
+  const page: any = await $.command.run({ command: 'browser', args: 'tweb open google.com', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any)
+  expect(page.text).toMatch(/To open a page, \/web <url>/)
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
   expect(runs.filter(opt).at(-1)).toEqual(['tmux', 'set-option', '-p', '-t', '%42', '-u', '@browser'])
 })

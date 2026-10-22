@@ -21,7 +21,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, RenderElement } from 'claude-code'
 
-import { BROWSER_LABEL, browserArgv, parseBrowser, type BrowserChoice } from './lib/browser'
+import { BROWSER_LABEL, resolveBrowser, browserArgv, parseBrowser, type BrowserChoice } from './lib/browser'
 import { WEB_IDLE, engineForUrl, engineOfTarget, formatEngineRules, parseEngine, parseEngineRules, type EngineRule, urlPicks, urlsIn, type WebEngine, keyBytes, urlFromInput, sgrMouse, sgrWheel, toHex, type KeyMsg, type PointerMsg, type WebState } from './lib/web'
 import { WEB_SETTINGS_ROWS, pickRows, renderWeb, type WebSettings } from './views/web'
 import { renderWebSide } from './views/webside'
@@ -1997,11 +1997,17 @@ async function startWeb($: any, url: string, engine: WebEngine, rate: number, re
 // Which engine a link should go to when this session draws pages itself:
 // tmux-chrome's answer for this pane (pane, window, global @browser).
 async function webTarget($: any): Promise<string> {
-  try {
-    return (await $.process.run([home + '/.local/bin/tmux-chrome', 'browser'], { timeoutMs: 4000 })).stdout.trim()
-  } catch {
-    return ''
-  }
+  const opt = async (scope: string) =>
+    isPaneId(pane) ? ((await $.process.run(['tmux', 'show-options', scope, '-qv', '-t', pane, '@browser'], { timeoutMs: 3000 }).catch(() => undefined))?.stdout ?? '').trim() : ''
+  // $.env.get takes literal names, so the module's env reads can be listed.
+  const or = (p: Promise<unknown>) => p.then((v) => (typeof v === 'string' ? v : ''), () => '')
+  return resolveBrowser({
+    env: await or($.env.get('TMUX_CHROME_BROWSER')),
+    pane: await opt('-p'),
+    window: await opt('-w'),
+    global: await opt('-g'),
+    twebFlag: await or($.env.get('TMUX_CHROME_TWEB')),
+  })
 }
 
 async function openWeb($: any, url: string, engine?: WebEngine) {
@@ -3670,19 +3676,15 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const arg = e.args.trim()
     if (arg) {
       const choice = parseBrowser(arg)
-      if (!choice) return { text: 'Unknown browser "' + arg + '". Use tweb, tweb-chrome, tweb-webkit, chrome or inherit.' }
+      // `/browser tweb open google.com`: a page was wanted, not a setting.
+      if (!choice) return { text: 'Unknown browser "' + arg + '". Use tweb, tweb-chrome, tweb-webkit, chrome or inherit.' + (/\s/.test(arg) ? ' To open a page, /web <url>.' : '') }
       browser = choice
       await tmux($, [browserArgv(pane, choice)])
     }
-    // tmux-chrome is the one that decides, so ask it rather than echo our value:
-    // with inherit the window or global option may still pick TWeb.
-    let target = ''
-    try {
-      target = (await $.process.run([home + '/.local/bin/tmux-chrome', 'browser'], { timeoutMs: 4000 })).stdout.trim()
-    } catch {
-      target = ''
-    }
-    const label = (BROWSER_LABEL as Record<string, string>)[target] ?? (target || 'unknown (tmux-chrome missing?)')
+    // Resolved as tmux-chrome's open does, not echoed: with inherit the
+    // window or global option may still pick TWeb.
+    const target = await webTarget($)
+    const label = (BROWSER_LABEL as Record<string, string>)[target] ?? target
     return { text: 'Links open in: ' + label + (browser === 'inherit' ? ' (inherited)' : ' (this session)') }
   })
 

@@ -10,7 +10,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
-import { browserArgv, parseBrowser } from '../hooks/lib/browser'
+import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
 import { linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
 import { treeRows } from '../hooks/views/home'
 import { filterPalette, paletteItems } from '../hooks/lib/palette'
@@ -507,6 +507,15 @@ test('browser: choices parse, inherit unsets the pane option', async () => {
   expect(parseBrowser('firefox')).toBeUndefined()
   expect(browserArgv('%7', 'tweb')).toEqual(['set-option', '-p', '-t', '%7', '@browser', 'tweb'])
   expect(browserArgv('%7', 'inherit')).toEqual(['set-option', '-p', '-t', '%7', '-u', '@browser'])
+  // Resolved as tmux-chrome's open does: env, pane, window, global, the old flag, else chrome.
+  expect(resolveBrowser({})).toBe('chrome')
+  expect(resolveBrowser({ pane: 'tweb', window: 'chrome' })).toBe('tweb')
+  expect(resolveBrowser({ env: 'tweb-webkit', pane: 'tweb' })).toBe('tweb-webkit')
+  expect(resolveBrowser({ window: '', global: 'tweb-chrome' })).toBe('tweb-chrome')
+  expect(resolveBrowser({ twebFlag: '1' })).toBe('tweb')
+  expect(resolveBrowser({ twebFlag: '0' })).toBe('chrome')
+  expect(resolveBrowser({ pane: 'tweb-tauri' })).toBe('tweb-webkit')
+  expect(resolveBrowser({ pane: 'firefox' })).toBe('chrome')
 })
 
 test('web: anchor, SGR mouse and wheel, key bytes', async () => {
