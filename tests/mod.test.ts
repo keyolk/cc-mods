@@ -1710,6 +1710,29 @@ test('an MCP server login started from the cockpit finishes by itself when the c
   await ui.unmount()
 })
 
+test('a finished login clears that connector from Needs you at once, though the last claude mcp list still said it needed auth', async ($, on) => {
+  const files: Record<string, string> = { 'mcp-needs-auth-cache.json': JSON.stringify({ gestalt: { timestamp: 1 } }) }
+  // The list is read before the login and not again soon: it keeps saying so.
+  const list = 'gestalt: https://gestalt.tools.acme.io/mcp (HTTP) - ! Needs authentication\n'
+  baseStubs(on, { pane: '%42', files, run: (a) => (a[0] === 'claude' && a[2] === 'list' ? { code: 0, out: list } : undefined) })
+  on('mcp.call', () => ({ value: { content: [{ type: 'text', text: 'https://gestalt.tools.acme.io/oauth/authorize?x=1' }] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(0)
+  await clock.advance(0)
+  const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
+  expect(await ui.find({ key: 'home-auth-mcp:gestalt' })).toBeDefined()
+  await ui.press({ key: 'home-auth-mcp:gestalt' })
+  await clock.advance(0)
+  files['mcp-needs-auth-cache.json'] = '{}'
+  await clock.advance(3500)
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('gestalt: logged in')
+  expect(await ui.find({ key: 'home-auth-mcp:gestalt' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a claude.ai connector is authorized on claude.ai from the cockpit, without /mcp', async ($, on) => {
   const files: Record<string, string> = { 'mcp-needs-auth-cache.json': JSON.stringify({ 'claude.ai Clay': { timestamp: 1 } }) }
   let connected = false

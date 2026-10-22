@@ -1,4 +1,4 @@
-import { loginError, loginSplitArgv, needsTerminalLogin } from '../hooks/lib/mcpauth'
+import { loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin } from '../hooks/lib/mcpauth'
 import { closingAsk } from '../hooks/lib/proceed'
 import { forkEffect, forkPhase, forkPrompt, movedSection, setAsideMoved } from '../hooks/lib/fork'
 import { expFromAnswer, expFromTool, expNeedsYou, expPreview, expStatus, lastMessage, parseOpen, parseSums } from '../hooks/lib/exp'
@@ -1486,4 +1486,14 @@ test('exp: a session that writes into ~/exp/<date>_<topic> is linked to it; read
   expect(expStatus(c)).toBe('1 open · ⚠ 2 changed')
   expect(expNeedsYou({ open: [], sums: { ok: 2, failed: [], unlisted: [] }, at: 1 })).toBe(false)
   expect(expPreview(dir, c, readme)).toContain('not in SHA256SUMS: `d.txt`')
+})
+
+test('mcp login: a finished login marks that connector ok in the cached list, and only that one', () => {
+  const list = [
+    { id: 'mcp:portal', label: 'MCP portal', state: 'expired', detail: 'needs auth', fix: ['/mcp'] },
+    { id: 'mcp:gestalt', label: 'MCP gestalt', state: 'expired', detail: 'needs auth', fix: ['/mcp'] },
+  ]
+  const out = markLoggedIn(list, 'portal')
+  expect(out.map((i) => [i.id, i.state, i.fix])).toEqual([['mcp:portal', 'ok', undefined], ['mcp:gestalt', 'expired', ['/mcp']]])
+  expect(list[0]!.state).toBe('expired')
 })
