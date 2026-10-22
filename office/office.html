@@ -291,6 +291,7 @@ function rebuildGrid() {
   for (const bx of BOOTHS) { mark(bx, 0.05, bx + 0.6, 0.7); mark(bx - 0.03, 0.05, bx + 0.02, 0.85); mark(bx + 0.58, 0.05, bx + 0.63, 0.85) }
   mark(CAFE[0], CAFE[1], CAFE[0] + 0.6, CAFE[1] + 0.6); mark(VEND[0], VEND[1], VEND[0] + 0.55, VEND[1] + 0.5)
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
+  for (const w2 of windows) for (const p of w2.sessions) if (p.compacts) mark(p.desk[0] + MEMORY_AT[0], p.desk[1] + MEMORY_AT[1], p.desk[0] + MEMORY_AT[0] + 0.56, p.desk[1] + MEMORY_AT[1] + 0.2)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
   grid = { w, h, block }
@@ -1242,14 +1243,17 @@ function deskStuff(x, y, top, m, sid) {
 }
 
 // Summary boxes on the floor by the desk's left end: one per compaction.
+const MEMORY_AT = [1.15, -0.5]
 function memoryBoxes(x, y, who) {
   const n = Math.min(6, who.compacts || 0)
   if (!n) return
+  // Behind the desk's right end (MEMORY_AT), clear of the chair and of the
+  // desk beside it.
   for (let i = 0; i < n; i++) {
     const col = i % 2, layer = Math.floor(i / 2)
-    box(x - 0.34 + col * 0.02, y + 0.12 + col * 0.24, 0.26, 0.2, 9, i === n - 1 && justCompacted(who) ? '#f2c97d' : '#d9a46b', layer * 9)
+    box(x + MEMORY_AT[0] + col * 0.3, y + MEMORY_AT[1], 0.26, 0.2, 9, i === n - 1 && justCompacted(who) ? '#f2c97d' : '#d9a46b', layer * 9)
   }
-  const [lx, ly] = P(x - 0.21, y + 0.3, Math.ceil(n / 2) * 9 + 6)
+  const [lx, ly] = P(x + MEMORY_AT[0] + 0.28, y + MEMORY_AT[1] + 0.1, Math.ceil(n / 2) * 9 + 6)
   if ((who.compacts || 0) > 1) { rrect(lx - 8 * cam.s, ly - 6 * cam.s, 16 * cam.s, 11 * cam.s, 4 * cam.s, '#fff8ee', LINE, 0.8); text('×' + who.compacts, lx, ly - 0.5 * cam.s, 7, '#2a2033') }
   deskHits.push({ sx: lx, sy: ly + 8 * cam.s, r: 12 * cam.s, sid: who.id, kind: 'memory', n: who.compacts })
 }
@@ -1532,9 +1536,10 @@ function nameplate(x, y, label, color) {
   g.fillStyle = '#2a2033'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(t, 4 * cam.s, fs * 0.05)
   g.restore()
 }
+function emptyChair(x, y, seatHue) { box(x + 0.5, y - 0.45, 0.42, 0.36, 12, hsl2hex(seatHue, 45, 60)); box(x + 0.5, y - 0.45, 0.42, 0.08, 30, hsl2hex(seatHue, 45, 52)) }
 function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job = 'shell', away = false, seatHue = 0, who = null) {
   // The empty chair behind the desk while its owner is elsewhere.
-  if (away) { box(x + 0.5, y - 0.45, 0.42, 0.36, 12, hsl2hex(seatHue, 45, 60)); box(x + 0.5, y - 0.45, 0.42, 0.08, 30, hsl2hex(seatHue, 45, 52)) }
+  if (away) emptyChair(x, y, seatHue)
   const top = style === 'standing' ? 34 : 24
   if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x, y, 1.6, 0.7, 4, DESK_COLOR[style], top - 4) }
   else box(x, y, 1.6, 0.7, top, DESK_COLOR[style] || '#d9a46b')
@@ -1557,7 +1562,6 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
     const sil = [P(x, y, top), P(x + 1.6, y, top), P(x + 1.6, y, 0), P(x + 1.6, y + 0.7, 0), P(x, y + 0.7, 0), P(x, y + 0.7, top)]
     deskHits.push({ poly: sil, sid: who.id, kind: 'desk', n: 0 })
     deskStuff(x, y, top, who.made || {}, who.id)
-    memoryBoxes(x, y, who)
   }
   if (mug) { const [ux, uy] = P(x + 0.72, y + 0.55, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
 }
@@ -2167,43 +2171,72 @@ function frame(now) {
   }
   walls(t)
   const items = []
-  const add = (depth, fn) => items.push([depth, fn])
-  for (let k = 0; k < 4; k++) { const x = 0.55 + k * 1.17; add(x + 0.7, () => shelf(x, 0.0)) }
-  add(5.75 + 0.8 + 0.7, () => machine(5.75, 0.05, t))
-  for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t))
-  add(11.6, () => coffee(11.05, 0.1, t))
-  add(13.6, () => sofa(12.1, 0.25))
-  add(15.3, () => plant(14.95, 0.2))
+  // b: the floor box [x0, x1, y0, y1] the thing stands on, for the sort below.
+  const add = (depth, fn, b) => items.push([depth, fn, b])
+  for (let k = 0; k < 4; k++) { const x = 0.55 + k * 1.17; add(x + 0.7, () => shelf(x, 0.0), [x, x + 1.05, 0, 0.38]) }
+  add(5.75 + 0.8 + 0.7, () => machine(5.75, 0.05, t), [5.75, 6.55, 0.05, 0.7])
+  for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t), [bx - 0.03, bx + 0.63, 0.05, 0.7])
+  add(11.6, () => coffee(11.05, 0.1, t), [11.05, 11.67, 0.1, 0.65])
+  add(13.6, () => sofa(12.1, 0.25), [11.92, 14.6, 0.25, 1.0])
+  add(15.3, () => plant(14.95, 0.2), [14.95, 15.37, 0.2, 0.62])
   poolCrowd(add, t)
-  add(4.8 + 1.3, () => readingTable(t))
-  add(8.0 + 1.3, () => workbench(t))
-  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]))
-  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t))
+  add(4.8 + 1.3, () => readingTable(t), [0.8, 4.8, 0.85, 1.3])
+  add(8.0 + 1.3, () => workbench(t), [6.0, 8.0, 0.9, 1.3])
+  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
+  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t), [VEND[0], VEND[0] + 0.55, VEND[1], VEND[1] + 0.5])
   for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))
   for (const w of windows) {
-    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t)) }
+    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t), [ddx + 0.1, ddx + 1.2, ddy + 0.1, ddy + 0.65]) }
     w.sessions.forEach((p, k) => {
       const [dx, dy] = p.desk
       const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
-      // A desk sorts by its front-right corner: someone standing behind it
-      // (smaller x+y than that) is drawn first and hidden by it, someone in
-      // front is drawn after.
+      // Each with its floor box: drawSorted puts someone behind a desk
+      // before it and someone in front after, along the whole desk.
       const away = p.room !== 'desk' || p.doing === 'napping'
-      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, away, (w.hue + 120 + k * 40) % 360, p))
+      if (away) add(dx + 0.92 + dy - 0.09, () => emptyChair(dx, dy, (w.hue + 120 + k * 40) % 360), [dx + 0.5, dx + 0.92, dy - 0.45, dy - 0.09])
+      if (p.compacts) add(dx + 1.71 + dy - 0.3, () => memoryBoxes(dx, dy, p), [dx + MEMORY_AT[0], dx + MEMORY_AT[0] + 0.56, dy + MEMORY_AT[1], dy + MEMORY_AT[1] + 0.2])
+      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, false, (w.hue + 120 + k * 40) % 360, p), [dx, dx + 1.6, dy, dy + 0.7])
     })
   }
   for (const sc of sections) {
-    if (!sc.first) for (const [a, b] of partSegments(sc.y0)) add(b + sc.y0 + 0.1, () => partition(a, b, sc.y0, sc.hue))
+    if (!sc.first) for (const [a, b] of partSegments(sc.y0)) add(b + sc.y0 + 0.1, () => partition(a, b, sc.y0, sc.hue), [a, b, sc.y0, sc.y0 + 0.1])
   }
-  for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
+  for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t), [e.x - 0.16, e.x + 0.16, e.y - 0.16, e.y + 0.16])
   add(1e9, () => roomTags())
   add(1e9 + 1, () => marginLabels())
   add(1e9 + 2, () => drawPodDrag())
   add(1e9 - 2, () => drawThreads())
   add(1e9 + 3, () => drawFlights(t))
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
-  items.sort((a, b) => a[0] - b[0])
-  for (const [, fn] of items) fn()
+  drawSorted(items)
+}
+
+// Painter's order for the floor: one number per thing (x + y) cannot order a
+// long desk against someone sitting behind it, so each thing has its floor
+// box and every pair whose screen spans overlap is ordered by the boxes: if
+// one ends before the other starts along x or along y, it is behind. Those
+// pairs make a graph drawn in topological order (by x + y where nothing
+// decides). Overlays (keys < 0 or ≥ 1e8) go under and over everything.
+function drawSorted(items) {
+  const under = [], mid = [], over = []
+  for (const it of items) (it[0] < 0 ? under : it[0] >= 1e8 ? over : mid).push(it)
+  under.sort((a, b) => a[0] - b[0]); over.sort((a, b) => a[0] - b[0]); mid.sort((a, b) => a[0] - b[0])
+  const n = mid.length, box = mid.map((it) => it[2] || [it[0] / 2, it[0] / 2, it[0] / 2, it[0] / 2])
+  const sx0 = box.map((b) => b[0] - b[3]), sx1 = box.map((b) => b[1] - b[2])
+  const before = Array.from({ length: n }, () => [])
+  const E = 1e-3
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    if (sx1[i] <= sx0[j] || sx1[j] <= sx0[i]) continue // apart on screen
+    const A = box[i], B = box[j]
+    if (A[1] <= B[0] + E || A[3] <= B[2] + E) before[j].push(i)
+    else if (B[1] <= A[0] + E || B[3] <= A[2] + E) before[i].push(j)
+  }
+  const state = new Uint8Array(n), order = []
+  const visit = (k) => { if (state[k]) return; state[k] = 1; for (const p of before[k]) visit(p); state[k] = 2; order.push(k) }
+  for (let k = 0; k < n; k++) visit(k)
+  for (const [, fn] of under) fn()
+  for (const k of order) mid[k][1]()
+  for (const [, fn] of over) fn()
 }
 
 // `prefix O` in tmux (office.py /next) asks the page to open the next one
