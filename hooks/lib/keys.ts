@@ -18,6 +18,7 @@ export const K = {
   slackFollow: 'slack-follow', // Record<'channel:root', SlackFollow>, shared: threads followed up automatically
   slackSeen: 'slack-seen', // Record<'channel:root', ts>, shared: newest reply the person has seen
   policyTimers: (sid: string) => 'policy-timers:' + sid, // Record<label, { expiresAt, revert: string[] }>
+  god: (sid: string) => 'god:' + sid, // { until, before: Policy } while god mode is on (register.ts)
 } as const
 
 export const PANES = ['flow', 'graph', 'side', 'outputs', 'policy'] as const
