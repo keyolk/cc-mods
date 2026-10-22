@@ -526,6 +526,16 @@ def act(body: dict) -> tuple[int, dict]:
             return 409, {"error": "no dialog with that choice on its screen now"}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
+    if kind == "snooze":
+        # value: minutes to add (30 by default, from now or from the current
+        # end), or 0 to put it back in the queue.
+        mins = int(value if value is not None else 30)
+        if mins <= 0:
+            set_snooze(sid, None)
+            return 200, {"ok": True, "sent": "back in the queue"}
+        until = max(time.time(), snoozed().get(sid, 0)) + mins * 60
+        set_snooze(sid, until)
+        return 200, {"ok": True, "sent": "snoozed", "until": until}
     if kind == "grant":
         return grant(sid)
     if kind == "open":
@@ -556,6 +566,35 @@ def act(body: dict) -> tuple[int, dict]:
         os.replace(tmp, os.path.join(INBOX, sid + ".json"))
         return 200, {"ok": True, "sent": "reply"}
     return 400, {"error": "unknown action"}
+
+
+# Agents the person set aside from the waiting queue, until when (epoch s).
+# Kept in a file so a reload or `prefix O` sees the same; expired ones drop.
+SNOOZE_FILE = os.path.expanduser("~/.claude/state/office/snooze.json")
+
+
+def snoozed() -> dict:
+    try:
+        with open(SNOOZE_FILE) as f:
+            d = json.load(f) or {}
+    except (OSError, ValueError):
+        return {}
+    now = time.time()
+    return {k: v for k, v in d.items() if isinstance(v, (int, float)) and v > now}
+
+
+def set_snooze(sid: str, until: float | None) -> dict:
+    d = snoozed()
+    if until:
+        d[sid] = until
+    else:
+        d.pop(sid, None)
+    os.makedirs(os.path.dirname(SNOOZE_FILE), exist_ok=True)
+    tmp = SNOOZE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, SNOOZE_FILE)
+    return d
 
 
 # `prefix O` (tmux) bumps this; the page sees the bump and opens the next one.
@@ -603,7 +642,7 @@ class Handler(BaseHTTPRequestHandler):
             sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
             return self.send(200, json.dumps(detail(sid)).encode(), "application/json")
         if self.path.startswith("/state"):
-            return self.send(200, json.dumps({"at": time.time(), "people": snapshot()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": snapshot(), "snoozed": snoozed()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
@@ -615,6 +654,9 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
+        if self.path == "/brands.js":
+            with open(os.path.join(HERE, "brands.js"), "rb") as f:
+                return self.send(200, f.read(), "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
                 return self.send(200, f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()), "text/html; charset=utf-8")
