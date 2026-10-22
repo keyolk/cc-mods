@@ -216,7 +216,7 @@ test('god mode: one press allows every capability after a confirm, and the polic
   // The guard file now says everything is allowed.
   box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
   await clock.advance(30_000)
-  expect(JSON.stringify(await ui.drawn())).toContain('GOD: everything allowed')
+  expect(JSON.stringify(await ui.drawn())).toContain('GOD MODE · everything allowed')
   // Ended by the person: the mode and the scope from before are put back.
   const n = policyRuns().length
   await ui.press({ key: 'god-off' })
@@ -224,7 +224,7 @@ test('god mode: one press allows every capability after a confirm, and the polic
   // The stub CLI does not write: the file says what the restore made it.
   box.json = JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] })
   await clock.advance(30_000)
-  expect(JSON.stringify(await ui.drawn())).not.toContain('GOD: everything allowed')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('GOD MODE · everything allowed')
   // Again, and left alone: it ends by itself after its minutes.
   await ui.press({ key: 'god-15' })
   expect(policyRuns().filter((a) => a === 'allow prod_eks_write')).toHaveLength(2)
