@@ -746,15 +746,11 @@ function frame(now) {
     // Ease into the last stretch instead of stopping dead.
     const left = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (left < 0.5) sp *= 0.45 + left
-    if (dist > 0.02) {
-      const k = Math.min(1, sp / dist)
-      // Turn smoothly: the heading bends toward the waypoint rather than snapping.
-      const want = Math.atan2(dy, dx)
-      e.dir = e.dir === undefined ? want : e.dir + Math.atan2(Math.sin(want - e.dir), Math.cos(want - e.dir)) * Math.min(1, dt * 10)
-      const step = Math.min(dist, sp)
-      e.x += Math.cos(e.dir) * step * (k < 1 ? 1 : dist / Math.max(step, 1e-6)) ; e.y += Math.sin(e.dir) * step * (k < 1 ? 1 : dist / Math.max(step, 1e-6))
-      e.walking = true
-    } else if (e.path && e.path.length > 1) { e.path.shift() }
+    // Straight at the waypoint: a heading that lags behind the target made a
+    // fast walker circle it forever. Reaching it within this frame's step
+    // snaps to it and moves on to the next, so nobody overshoots.
+    if (dist > sp && dist > 0.02) { e.x += (dx / dist) * sp; e.y += (dy / dist) * sp; e.walking = true }
+    else if (e.path && e.path.length > 1) { e.x = wp[0]; e.y = wp[1]; e.path.shift(); e.walking = true }
     else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
     const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (e.leaving && dist2 < 0.05) { ents.delete(id); lift.openUntil = now + 1200 }
