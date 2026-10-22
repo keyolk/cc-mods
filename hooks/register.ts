@@ -84,6 +84,8 @@ const ssoCacheFile = (h: string) => {
   const url = org().awsSsoStartUrl
   return url ? h + '/.aws/sso/cache/' + sha1Hex(url) + '.json' : undefined
 }
+// The office server's port (office/office.py); 8787 is taken by cco here.
+const OFFICE_PORT = 8796
 const IDLE_MS = 30 * 60_000
 const RADAR_MS = 5 * 60_000
 const PR_POLL_MS = 90_000
@@ -1489,6 +1491,34 @@ async function refreshExp($: any, paths?: string[]) {
   await update($, expA, (cur) => ({ ...cur, ...Object.fromEntries(got) }))
 }
 
+// The office (office/office.py, /office): a reply the person sent this
+// session from its quick-action card waits in a file named by session id;
+// it goes in as their own prompt, so the model reads it as typed. Taken once
+// (removed before submitting); one older than two minutes is dropped.
+let officeBusy = false
+async function officeInbox($: any) {
+  if (officeBusy || !home) return
+  const file = home + '/.claude/state/office/inbox/' + sid + '.json'
+  if (!(await $.fs.exists(file).catch(() => false))) return
+  officeBusy = true
+  try {
+    const raw = await readText($, file)
+    await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
+    let msg: { text?: unknown; at?: unknown } = {}
+    try {
+      msg = JSON.parse(raw ?? '{}')
+    } catch {
+      return
+    }
+    const text = typeof msg.text === 'string' ? msg.text.trim() : ''
+    if (!text || Date.now() / 1000 - Number(msg.at ?? 0) > 120) return
+    $.ui.toast('office: "' + clip(text, 60) + '"')
+    await $.prompt.submit({ text, asUser: true }).catch(() => $.ui.toast('office: could not send the reply; type it here'))
+  } finally {
+    officeBusy = false
+  }
+}
+
 async function refreshNeighbors($: any) {
   void refreshElsewhere($)
   // Sums read every attachment: every few minutes, not every refresh.
@@ -2879,6 +2909,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         })
         .catch(() => {})
       $.clock.every(60_000, () => void refreshNeighbors($))
+      $.clock.every(2_000, () => void officeInbox($))
       // Elapsed times on running work only move if something redraws; do it
       // while anything is running, and not at all otherwise.
       $.clock.every(5_000, async () => {
@@ -2925,6 +2956,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       ['yank', 'copy the last (or n-th last) answer to the clipboard and a tmux buffer', '[n]'],
       ['fold', 'fold finished tool calls to one line (/focus is built in)'],
       ['route', 'let Jev pick each turn\'s effort (and model): on, off, model on|off', '[on|off|model on|off]'],
+      ['office', 'every session in tmux as a character in a quarter-view office; click one to answer it', ''],
       ['web', 'open a page in the cockpit Web tab (TWeb drawn in this pane); no argument shows the tab, "close" stops it', '[url | close | --electron|--chrome|--webkit url]'],
       ['browser', 'where this session opens links: TWeb (Electron), TWeb on your Chrome or on WebKit, or the Chrome tab group', '[tweb|tweb-chrome|tweb-webkit|chrome|inherit]'],
     ]
@@ -3622,6 +3654,22 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     if (!/^[a-z][\w+.-]*:/i.test(url)) url = 'https://' + url
     const err = await openWeb($, url, engine)
     return { text: err || 'Opening ' + url + (embedOn ? ' in the Web tab (6).' : ' in a TWeb pane beside this one.') }
+  })
+
+  // The office: every session in tmux as a character in a quarter-view
+  // office, with a quick-action card per session (office/office.py). The
+  // server is shared by all sessions and outlives this one; started here when
+  // nothing answers on its port.
+  on('command.run', { command: 'office' }, async ($: any) => {
+    const url = 'http://127.0.0.1:' + OFFICE_PORT + '/'
+    const up = async () => (await $.process.run(['/usr/bin/curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '2', url], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout.trim() === '200'
+    if (!(await up())) {
+      // Started detached, then given a moment (the sleep) to bind before the check.
+      await $.process.run(['sh', '-c', 'mkdir -p "$(dirname "$2")"; nohup python3 "$0" --port "$1" >"$2" 2>&1 & sleep 1.5', $.plugin.root + '/office/office.py', String(OFFICE_PORT), home + '/.claude/state/office/server.log'], { timeoutMs: 6000 })
+    }
+    if (!(await up())) return { text: 'The office server did not start; see ~/.claude/state/office/server.log' }
+    const err = await openWeb($, url, 'electron')
+    return { text: err || 'Opening the office (' + url + ') beside this one.' }
   })
 
   // Pointer and keys over the Web tab's region, from views/web-region.ts.

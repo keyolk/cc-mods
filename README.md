@@ -168,6 +168,38 @@ Sends to Slack Connect are often made by hand, outside Claude's tools, so the
 folder, not the send, is what is tracked. Sums are checked when a folder is
 linked, when it is opened, and every five minutes.
 
+## Office (`/office`)
+
+Every Claude Code session in tmux as a chibi in a quarter-view office, in a
+TWeb pane beside this one, live (2 s). `office/office.py` serves it on
+`127.0.0.1:8796`, shared by all sessions; `/office` starts it when nothing
+answers there.
+
+- **One pod per tmux window**: its sessions sit at its desks side by side, the
+  window name on each desk's front.
+- **Where a session stands** follows its last tool call (its transcript):
+  📚 library while reading, 🖥 server room while running a command or an MCP
+  tool, its desk while writing (typing) or with no tool (chin in hand, `…`),
+  `?` / `!` over its head while it waits on you.
+- **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
+  minutes they lie down in a pile in front of the sofa, asleep.
+- **Subagents** (`<project>/<sid>/subagents/agent-*.jsonl`, live while written
+  in the last 45 s) are small ones with an antenna: they come up the elevator,
+  stand with their session (a row in front of its desk, or around it in a
+  room), show their own work by pose and bubble, and leave by the elevator.
+- **Quick actions**: a click on a character (or a `❓`/`❗` chip at the bottom)
+  opens its card: what it last said, and
+  - a choice dialog on its screen (a permission prompt, AskUserQuestion): each
+    option a button, which sends that digit to its pane while the dialog is up;
+  - otherwise one-press replies (`1번으로 해 주세요` for the numbered choices
+    its answer ends on, yes/no for a question, `계속 진행해 주세요`) and a free
+    reply. The text waits in `~/.claude/state/office/inbox/<sid>.json` and that
+    session's cc-mods submits it as your own prompt (2 s poll, dropped after 2
+    minutes), so vim mode or a draft in the box cannot garble it;
+  - `✋ stop` (Escape) while it works, and `↗` to its window (`cc-focus`).
+- Every POST needs the token the server writes into its page and a local
+  `Host`: another site in the browser cannot drive a session through it.
+
 ## Organisation (`~/.config/cc-mods/org.json`)
 
 What the mod knows about where it runs is kept outside the repository, in

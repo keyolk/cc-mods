@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""cc-office: every Claude Code session in tmux as a little worker in an office.
+
+Serves office.html and /state on 127.0.0.1 only. A session is a tmux pane with
+@cc_pane_session (published by cc-mods); where its worker stands comes from the
+last tool call in its transcript:
+
+  Read/Grep/Glob/WebFetch/WebSearch -> library     (reading)
+  Bash/Monitor/BashOutput           -> server room (running a command)
+  Edit/Write/NotebookEdit           -> desk        (writing)
+  Agent/Task/Workflow               -> desk, subagents ride the elevator
+  working with no tool for a while  -> desk, chin in hand (thinking)
+  waiting/ask, action               -> desk, a "?" or "!" over the head
+  done / idle                       -> lounge
+
+Usage: office.py [--port 8787]
+"""
+
+import glob
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FMT = "|".join(
+    [
+        "#{pane_id}",
+        "#{session_name}",
+        "#{window_index}",
+        "#{window_name}",
+        "#{@cc_pane_session}",
+        "#{@cc_pane_state}",
+        "#{@cc_pane_since}",
+        "#{@cc_attention}",
+        "#{@title}",
+        "#{@cc_agents}",
+        "#{@cc_ctx}",
+        "#{window_id}",
+    ]
+)
+
+READ = {"Read", "Grep", "Glob", "WebFetch", "WebSearch", "LS", "ToolSearch"}
+RUN = {"Bash", "Monitor", "BashOutput", "KillShell", "TaskStop"}
+WRITE = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
+DELEGATE = {"Agent", "Task", "Workflow", "SendMessage"}
+
+_paths: dict[str, str] = {}
+
+
+def transcript(sid: str) -> str | None:
+    if sid not in _paths:
+        hits = glob.glob(os.path.expanduser("~/.claude/projects/*/" + sid + ".jsonl"))
+        if not hits:
+            return None
+        _paths[sid] = max(hits, key=os.path.getmtime)
+    return _paths[sid]
+
+
+def last_tool(sid: str) -> dict:
+    """The newest tool call in the transcript's tail, and whether it returned."""
+    path = transcript(sid)
+    return last_tool_in(path) if path else {}
+
+
+def last_tool_in(path: str) -> dict:
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 96_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()[1:]
+    except OSError:
+        return {}
+    tool, detail, at, done = None, "", None, False
+    for line in lines:
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        content = (d.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if b.get("type") == "tool_use":
+                tool, at, done = b.get("name"), d.get("timestamp"), False
+                inp = b.get("input") or {}
+                detail = str(inp.get("description") or inp.get("file_path") or inp.get("pattern") or inp.get("command") or inp.get("url") or "")[:80]
+            elif b.get("type") == "tool_result" and tool:
+                done = True
+    return {"tool": tool, "detail": detail, "at": at, "done": done}
+
+
+# A subagent counts as out while its transcript was written this recently.
+SUB_LIVE_S = 45
+SUB_CAP = 8
+
+
+def subagents(sid: str) -> list[dict]:
+    """The session's subagents still working: <project>/<sid>/subagents/agent-*.jsonl,
+    each with its .meta.json (description, agentType), and what each is doing."""
+    path = transcript(sid)
+    if not path:
+        return []
+    now = time.time()
+    out = []
+    for f in glob.glob(os.path.join(os.path.dirname(path), sid, "subagents", "agent-*.jsonl")):
+        try:
+            mt = os.path.getmtime(f)
+        except OSError:
+            continue
+        if now - mt > SUB_LIVE_S:
+            continue
+        aid = os.path.basename(f)[len("agent-") : -len(".jsonl")]
+        meta = {}
+        try:
+            with open(f[: -len(".jsonl")] + ".meta.json") as m:
+                meta = json.load(m)
+        except (OSError, ValueError):
+            pass
+        t = last_tool_in(f)
+        where, doing = room("working", "none", t)
+        out.append({"id": aid, "desc": str(meta.get("description") or "")[:80], "type": meta.get("agentType") or "agent", "room": where, "doing": doing, "tool": t.get("tool"), "detail": t.get("detail"), "at": mt})
+    out.sort(key=lambda a: -a["at"])
+    return out[:SUB_CAP]
+
+
+def room(state: str, attention: str, t: dict) -> tuple[str, str]:
+    tool = t.get("tool") or ""
+    if state == "working":
+        if not t.get("done"):
+            if tool in READ:
+                return "library", "reading"
+            if tool in RUN:
+                return "server", "running"
+            if tool in WRITE:
+                return "desk", "typing"
+            if tool in DELEGATE:
+                return "desk", "delegating"
+            if tool.startswith("mcp__"):
+                return "server", "calling"
+        return "desk", "thinking"
+    if attention == "action":
+        return "desk", "alert"
+    if attention == "ask":
+        return "desk", "asking"
+    return "lounge", "idle"
+
+
+def snapshot() -> list[dict]:
+    try:
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F", FMT], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    seen, people = set(), []
+    for line in out.splitlines():
+        p = line.split("|")
+        if len(p) < 12 or not p[4] or p[4] in seen:
+            continue
+        seen.add(p[4])
+        pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid = p[:12]
+        t = last_tool(sid)
+        where, doing = room(state, attn, t)
+        people.append(
+            {
+                "id": sid,
+                "pane": pane,
+                "window": sess + ":" + idx,
+                "wid": wid,
+                "name": wname,
+                "title": title,
+                "state": state,
+                "attention": attn,
+                "since": int(since) if since.isdigit() else None,
+                "agents": int(agents) if agents.isdigit() else 0,
+                "ctx": int(ctx) if ctx.isdigit() else None,
+                "room": where,
+                "doing": doing,
+                "tool": t.get("tool"),
+                "detail": t.get("detail"),
+                "subs": subagents(sid) if state == "working" else [],
+            }
+        )
+    return people
+
+
+# ---- quick actions -------------------------------------------------------
+#
+# A click answers a session from the office. Two ways, by what it waits on:
+# - a choice dialog on its screen (a permission prompt, AskUserQuestion):
+#   the option's digit is sent to its pane, and only while the dialog is up;
+# - anything else: the text goes to ~/.claude/state/office/inbox/<sid>.json,
+#   and that session's cc-mods submits it as the person's own prompt, so vim
+#   mode or a half-typed draft cannot garble it.
+# Every POST needs the token this server printed into its page, and a local
+# Host: another site in the browser cannot drive a session through it.
+
+TOKEN = secrets.token_urlsafe(24)
+INBOX = os.path.expanduser("~/.claude/state/office/inbox")
+OPTION = re.compile(r"^\s*([❯›>]\s*)?(\d)[.)]\s+(.+?)\s*$")
+
+
+def capture(pane: str) -> list[str]:
+    try:
+        out = subprocess.run(["tmux", "capture-pane", "-p", "-J", "-t", pane, "-S", "-40"], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [l.rstrip() for l in out.splitlines()]
+
+
+def dialog(lines: list[str]) -> dict | None:
+    """A numbered choice with a cursor (❯) near the bottom of the screen."""
+    tail = [l for l in lines if l.strip()][-18:]
+    opts, cursor, first = [], False, None
+    for i, l in enumerate(tail):
+        m = OPTION.match(l)
+        if not m:
+            continue
+        n = int(m.group(2))
+        if n == 1:
+            opts, cursor, first = [], False, i
+        if opts and n != opts[-1]["n"] + 1:
+            continue
+        opts.append({"n": n, "label": m.group(3)[:90]})
+        cursor = cursor or bool(m.group(1))
+    if len(opts) < 2 or not cursor or first is None:
+        return None
+    question = next((tail[j].strip() for j in range(first - 1, -1, -1) if tail[j].strip() and not OPTION.match(tail[j])), "")
+    return {"question": question[:160], "options": opts}
+
+
+def last_text(sid: str) -> str:
+    """The session's last answer, from the transcript's tail."""
+    path = transcript(sid)
+    if not path:
+        return ""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 200_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()[1:]
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        m = d.get("message") or {}
+        if m.get("role") != "assistant" or not isinstance(m.get("content"), list):
+            continue
+        txt = "\n".join(b.get("text", "") for b in m["content"] if b.get("type") == "text").strip()
+        if txt:
+            return txt[-2500:]
+    return ""
+
+
+ASKS = re.compile(r"[?？]\s*$|까요[?？.]?\s*$|할지|주세요[.]?\s*$")
+
+
+def suggestions(text: str) -> list[str]:
+    """Replies one press can send: numbered picks the answer offers, and a
+    yes/no when it ends on a question."""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    tail = lines[-14:]
+    out: list[str] = []
+    nums = [m.group(1) for l in tail if (m := re.match(r"^(\d)[.)]\s", l))]
+    if 1 < len(nums) <= 5 and lines and ASKS.search(lines[-1]):
+        out += [n + "번으로 해 주세요" for n in nums]
+    if lines and ASKS.search(lines[-1]):
+        out += ["네, 진행해 주세요", "아니요, 잠깐 기다려 주세요"]
+    out.append("계속 진행해 주세요")
+    return list(dict.fromkeys(out))[:6]
+
+
+def detail(sid: str) -> dict:
+    me = next((p for p in snapshot() if p["id"] == sid), None)
+    if not me:
+        return {"error": "no such session"}
+    text = last_text(sid)
+    return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text)}
+
+
+def act(body: dict) -> tuple[int, dict]:
+    sid, kind, value = str(body.get("sid") or ""), body.get("kind"), body.get("value")
+    me = next((p for p in snapshot() if p["id"] == sid), None)
+    if not me:
+        return 404, {"error": "no such session"}
+    pane = me["pane"]  # from tmux, never from the request
+    if kind == "key":
+        d = dialog(capture(pane))
+        if not d or not any(str(o["n"]) == str(value) for o in d["options"]):
+            return 409, {"error": "no dialog with that choice on its screen now"}
+        subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
+        return 200, {"ok": True, "sent": "key " + str(value)}
+    if kind == "stop":
+        if me["state"] != "working":
+            return 409, {"error": "it is not working"}
+        subprocess.run(["tmux", "send-keys", "-t", pane, "Escape"], timeout=3)
+        return 200, {"ok": True, "sent": "Escape"}
+    if kind == "reply":
+        text = str(value or "").strip()
+        if not text or len(text) > 4000:
+            return 400, {"error": "empty or too long"}
+        os.makedirs(INBOX, exist_ok=True)
+        tmp = os.path.join(INBOX, sid + ".json.tmp")
+        with open(tmp, "w") as f:
+            json.dump({"text": text, "at": time.time()}, f)
+        os.replace(tmp, os.path.join(INBOX, sid + ".json"))
+        return 200, {"ok": True, "sent": "reply"}
+    return 400, {"error": "unknown action"}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def send(self, code: int, body: bytes, kind: str):
+        self.send_response(code)
+        self.send_header("Content-Type", kind)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def local(self) -> bool:
+        host = self.headers.get("Host", "")
+        return host in (f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}")
+
+    def do_POST(self):
+        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path != "/act":
+            return self.send(403, b"forbidden", "text/plain")
+        try:
+            body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 20_000)) or b"{}")
+        except ValueError:
+            return self.send(400, b"bad json", "text/plain")
+        code, out = act(body)
+        self.send(code, json.dumps(out).encode(), "application/json")
+
+    def do_GET(self):
+        if not self.local():
+            return self.send(403, b"forbidden", "text/plain")
+        if self.path.startswith("/detail"):
+            from urllib.parse import parse_qs, urlparse
+
+            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
+            return self.send(200, json.dumps(detail(sid)).encode(), "application/json")
+        if self.path.startswith("/state"):
+            return self.send(200, json.dumps({"at": time.time(), "people": snapshot()}).encode(), "application/json")
+        if self.path.startswith("/focus"):
+            # A click on a worker: bring its pane in front (cc-focus switches
+            # the clients and selects the window), the notification's action.
+            from urllib.parse import parse_qs, urlparse
+
+            pane = (parse_qs(urlparse(self.path).query).get("pane") or [""])[0]
+            focus = os.path.expanduser("~/.local/bin/cc-focus")
+            if pane.startswith("%") and pane[1:].isdigit() and os.access(focus, os.X_OK):
+                subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return self.send(204, b"", "text/plain")
+            return self.send(400, b"bad pane", "text/plain")
+        if self.path in ("/", "/index.html"):
+            with open(os.path.join(HERE, "office.html"), "rb") as f:
+                return self.send(200, f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()), "text/html; charset=utf-8")
+        self.send(404, b"not found", "text/plain")
+
+
+def main():
+    port = 8787
+    if "--port" in sys.argv:
+        port = int(sys.argv[sys.argv.index("--port") + 1])
+    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
