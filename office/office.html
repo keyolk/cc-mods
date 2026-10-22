@@ -43,6 +43,9 @@ canvas.drag { cursor: grabbing; }
 #card a.brand:hover, #card .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
 #card a.brand b { font-weight: 700; opacity: .85; }
 #card a.brand span { overflow: hidden; text-overflow: ellipsis; }
+#card .shelf { background: #f3ecfb; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0 8px; }
+#card .shelf .h { font-size: 14px; margin-bottom: 6px; }
+#card .shelf .rel { max-height: 260px; overflow-y: auto; }
 #card .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
@@ -125,6 +128,14 @@ function box(x, y, w, d, h, c, z0 = 0) {
   poly([P(x + w, y, z0), P(x + w, y + d, z0), P(x + w, y + d, z1), P(x + w, y, z1)], dark(c, 0.18))
   poly([P(x, y, z1), P(x + w, y, z1), P(x + w, y + d, z1), P(x, y + d, z1)], light(c, 0.22))
 }
+// A thin slab (a sheet, a tray) with a light outline: the heavy LINE on every
+// sheet of a pile turns it into a dark block.
+function sheet(x, y, w, d, h, c, z0 = 0, stroke = 'rgba(59,42,53,.35)') {
+  const z1 = z0 + h
+  poly([P(x, y + d, z0), P(x + w, y + d, z0), P(x + w, y + d, z1), P(x, y + d, z1)], dark(c, 0.08), stroke, 0.6)
+  poly([P(x + w, y, z0), P(x + w, y + d, z0), P(x + w, y + d, z1), P(x + w, y, z1)], dark(c, 0.2), stroke, 0.6)
+  poly([P(x, y, z1), P(x + w, y, z1), P(x + w, y + d, z1), P(x, y + d, z1)], c, stroke, 0.6)
+}
 function rrect(x, y, w, h, r, fill, stroke = LINE, lw = 1.4) {
   g.beginPath(); g.roundRect(x, y, w, h, Math.max(0, r))
   if (fill) { g.fillStyle = fill; g.fill() }
@@ -156,6 +167,20 @@ for (const z of Object.values(ZONES)) for (const y of [1.75, 2.65, 3.55]) for (l
 const DOOR = [16.6, 1.55]
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
+// tmux sessions: a block of rows each, SECTION_GAP apart for the partition.
+const SECTION_GAP = 0.7
+let sections = []
+// The partition's openings: an aisle at these pod boundaries.
+const partGaps = () => [1, 3].map((k) => 0.3 + k * POD_W)
+function partSegments(y) {
+  const segs = [], gaps = partGaps()
+  for (let x = 0.2; x < W - 0.3; x += 1) {
+    const x1 = Math.min(x + 1, W - 0.3)
+    if (gaps.some((gx) => x1 > gx - 0.45 && x < gx + 0.45)) continue
+    segs.push([x, x1])
+  }
+  return segs
+}
 
 // ---------- furnishing ----------
 const DESKS = ['wood', 'white', 'standing', 'dark', 'pastel']
@@ -183,6 +208,7 @@ function rebuildGrid() {
   mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(15.95, 0.15, 17.25, 1.0)
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
+  for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
   grid = { w, h, block }
 }
 function freeCell(gx, gy) { return gx >= 0 && gy >= 0 && gx < grid.w && gy < grid.h && !grid.block[gy * grid.w + gx] }
@@ -268,9 +294,24 @@ function apply(people) {
     byWin.get(p.wid).sessions.push(p)
   }
   windows = [...byWin.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+  // Each tmux session gets its own block of rows, a long partition before it
+  // (with gaps to walk through) and a sign with its name.
   let py = OFF_Y
-  for (let r0 = 0; r0 < windows.length; r0 += COLS) {
-    const row = windows.slice(r0, r0 + COLS), depth = row.some((w) => w.sessions.length > 2) ? POD_D2 : POD_D1
+  sections = []
+  const groups = []
+  for (const w of windows) { const ts = w.label.split(':')[0]; if (!groups.length || groups.at(-1).name !== ts) groups.push({ name: ts, wins: [] }); groups.at(-1).wins.push(w) }
+  const rows = []
+  groups.forEach((gr, gi) => {
+    if (gi > 0) py += SECTION_GAP
+    const sec = { name: gr.name, y0: py - (gi > 0 ? SECTION_GAP / 2 : 0.25), n: gr.wins.reduce((a, w) => a + w.sessions.length, 0), hue: hashOf('tmux:' + gr.name) % 360, first: gi === 0 }
+    for (let r0 = 0; r0 < gr.wins.length; r0 += COLS) {
+      const row = gr.wins.slice(r0, r0 + COLS)
+      rows.push([row, py]); py += row.some((w) => w.sessions.length > 2) ? POD_D2 : POD_D1
+    }
+    sec.y1 = py; sections.push(sec)
+  })
+  for (const [row, ry] of rows) {
+    py = ry
     row.forEach((w, c) => {
       w.px = 0.3 + c * POD_W; w.py = py; w.pd = w.sessions.length > 2 ? POD_D2 : POD_D1; w.hue = hashOf(w.name) % 360
       // Each window furnishes its own corner: a desk kind, a rug, and where a
@@ -278,8 +319,8 @@ function apply(people) {
       const hh = hashOf('style:' + w.name)
       w.desk = DESKS[hh % DESKS.length]; w.rug = hh % 4; w.decor = w.sessions.length === 1 || w.sessions.length === 3 ? DECOR[(hh >>> 3) % DECOR.length] : null
     })
-    py += depth
   }
+  py = sections.length ? sections.at(-1).y1 : OFF_Y
   W = Math.max(18.8, COLS * POD_W + 0.3)
   D = py + 0.3
   if (!cam.user) fit()
@@ -431,7 +472,7 @@ let drag = null
 cv.addEventListener('mousedown', (e) => { drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false }; cv.classList.add('drag') })
 addEventListener('mouseup', (e) => {
   cv.classList.remove('drag')
-  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id) }
+  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st) openCard(st.sid, st.kind) }
   drag = null
 })
 addEventListener('mousemove', (e) => {
@@ -490,14 +531,23 @@ addEventListener('keydown', (e) => {
 const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
 let cardSid = null
-async function openCard(sid) {
+// One related item: a brand badge for a well-known place, else an icon chip.
+const CHIP_ICON = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
+function chip(o) {
+  const a = document.createElement('a'), b = o.url && brandOf(o.url)
+  if (b) { a.className = 'brand'; a.style.setProperty('--bc', BRAND_ICON[b.icon][0]); a.innerHTML = brandSvg(b.icon) + '<b>' + b.label + '</b><span>' + esc(o.title && o.title !== o.url ? o.title : b.short) + '</span>' }
+  else a.textContent = (CHIP_ICON[o.kind] || '•') + ' ' + o.title
+  a.title = o.url || o.path; a.onclick = () => openLink(o.url || o.path)
+  return a
+}
+async function openCard(sid, kind = null) {
   cardSid = sid
   card.style.display = 'block'
   for (const e of ents.values()) e.sel = e.id === sid
   lookAt(ents.get(sid))
   renderQueue()
   card.innerHTML = '<div class="sub">불러오는 중…</div>'
-  const d = await (await fetch('/detail?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()
+  const d = await (await fetch('/detail?sid=' + encodeURIComponent(sid) + (kind ? '&kind=' + kind : ''), { cache: 'no-store' })).json()
   if (cardSid !== sid) return
   if (d.error) { card.innerHTML = '<div class="sub">' + esc(d.error) + '</div>'; return }
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
@@ -507,6 +557,14 @@ async function openCard(sid) {
   card.keys = []
   add('h2', '', esc(d.window + ' ' + d.name))
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
+  // Opened from a thing on its desk: that shelf first, every item in it.
+  if (d.shelf) {
+    const sh = SHELF[d.shelfKind] || { icon: '•', name: d.shelfKind }
+    const box2 = add('div', 'shelf', '<div class="h">' + sh.icon + ' ' + sh.name + ' · ' + d.shelf.length + '</div>')
+    const list = document.createElement('div'); list.className = 'rel'; box2.appendChild(list)
+    for (const o of d.shelf) list.appendChild(chip(o))
+    if (!d.shelf.length) list.innerHTML = '<span class="m">링크나 경로가 있는 항목이 없습니다</span>'
+  }
   card.said = null
   if (d.text) {
     const said = add('div', 'said', linkify(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } }
@@ -524,13 +582,7 @@ async function openCard(sid) {
   // What it made or was handed: PRs, threads, tickets, files — one click away.
   if (d.related && d.related.length) {
     const rel = add('div', 'rel')
-    const icon = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
-    for (const o of d.related) {
-      const a = document.createElement('a'), b = o.url && brandOf(o.url)
-      if (b) { a.className = 'brand'; a.style.setProperty('--bc', BRAND_ICON[b.icon][0]); a.innerHTML = brandSvg(b.icon) + '<b>' + b.label + '</b><span>' + esc(o.title && o.title !== o.url ? o.title : b.short) + '</span>' }
-      else a.textContent = (icon[o.kind] || '•') + ' ' + o.title
-      a.title = o.url || o.path; a.onclick = () => openLink(o.url || o.path); rel.appendChild(a)
-    }
+    if (!d.shelf) for (const o of d.related) rel.appendChild(chip(o))
   }
   const msg = document.createElement('div'); msg.className = 'msg'
   const send = async (body, label) => {
@@ -595,11 +647,26 @@ function hit(mx, my) {
   for (const e of ents.values()) { if (e.sx === undefined) continue; const d = Math.hypot(mx - e.sx, my - (e.sy - 24 * cam.s)); if (d < 28 * cam.s && d < bd) { bd = d; best = e } }
   return best
 }
+// A thing on a desk under the pointer (characters win when both are).
+function hitStuff(mx, my) {
+  let best = null, bd = 1e9
+  for (const h of deskHits) { const d = Math.hypot(mx - h.sx, my - h.sy); if (d < h.r && d < bd) { bd = d; best = h } }
+  return best
+}
 function hover(e) {
   // Over the card, the queue or the help, the office behind them is not hovered.
   const overUi = e.target && e.target.closest && e.target.closest('#card, #ask, #help, header')
   const h = drag && drag.moved || overUi ? null : hit(e.clientX, e.clientY)
   for (const x of ents.values()) x.hl = x === h
+  const st = !h && !(drag && drag.moved) && !overUi && hitStuff(e.clientX, e.clientY)
+  cv.style.cursor = h || st ? 'pointer' : ''
+  if (st) {
+    const owner = ents.get(st.sid)?.data, sh = SHELF[st.kind]
+    const parts = st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
+    tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">클릭하면 목록 열기</div>'
+    tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
+    return
+  }
   if (!h) { tip.style.display = 'none'; return }
   const p = h.data
   const rows = h.kind === 'sub'
@@ -629,6 +696,89 @@ async function openLink(v) {
   try { await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v }) }) } catch {}
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
+
+// ---------- what is on a desk ----------
+// The desk shows what the session took in and made (cc-mods' outputs):
+//   a two-tier tray, the lower one what it was handed (PRs, threads, tickets,
+//   links from you or that it read), the upper one what it sent out (its PRs
+//   in GitHub black, Slack replies in aubergine, tickets in Jira blue);
+//   a scratch pad pile, a binder per exp archive, a framed picture per
+//   artifact, a printout pile for files it wrote.
+// Each is a hit region: hover names it, a click opens that shelf in the card.
+const SHELF = {
+  in: { icon: '📥', name: '받은 것' }, pr: { icon: '📤', name: '보낸 PR' }, slack: { icon: '💬', name: 'Slack 답장' }, ticket: { icon: '🎫', name: '만든 티켓' },
+  scratch: { icon: '📝', name: '스크래치' }, file: { icon: '📄', name: '고친 파일' }, exp: { icon: '🗂', name: 'exp 아카이브' }, artifact: { icon: '🖼', name: '아티팩트' },
+}
+let deskHits = []
+const hitAt = (gx, gy, gz, r, sid, kind, n) => { const [sx, sy] = P(gx, gy, gz); deskHits.push({ sx, sy, r: r * cam.s, sid, kind, n }) }
+function deskStuff(x, y, top, m, sid) {
+  const n = (k) => m[k] || 0
+  // The tray: lower tier (in), upper tier (out).
+  const out = n('pr') + n('slack') + n('ticket')
+  if (n('in') || out) {
+    const tx = x + 0.06, ty = y + 0.36, tw = 0.4, td = 0.28
+    sheet(tx, ty, tw, td, 1.5, '#9aa0b5', top, 'rgba(59,42,53,.6)')
+    for (let k = 0; k < Math.min(5, n('in')); k++) sheet(tx + 0.03, ty + 0.03, tw - 0.06, td - 0.06, 1.2, k === Math.min(5, n('in')) - 1 ? '#fffdf6' : '#efe9dc', top + 1.5 + k * 1.2)
+    if (out) {
+      for (const [cx, cy] of [[tx, ty + td - 0.03], [tx + tw - 0.03, ty + td - 0.03]]) sheet(cx, cy, 0.03, 0.03, 10, '#8d93a8', top, null)
+      sheet(tx, ty, tw, td, 1.2, '#b4bacd', top + 10, 'rgba(59,42,53,.6)')
+      const order = [...Array(Math.min(3, n('ticket'))).fill('#0052cc'), ...Array(Math.min(3, n('slack'))).fill('#4a154b'), ...Array(Math.min(4, n('pr'))).fill('#24292f')]
+      order.forEach((c, k) => sheet(tx + 0.04, ty + 0.04, tw - 0.08, td - 0.08, 1.4, c, top + 11.2 + k * 1.4))
+      if (n('pr')) { const [gx, gy] = P(tx + tw / 2, ty + td / 2, top + 11.2 + order.length * 1.4 + 0.5); g.save(); g.translate(gx - 5 * cam.s, gy - 5 * cam.s); g.scale(10 * cam.s / 24, 10 * cam.s / 24); g.fillStyle = '#fff'; g.fill(new Path2D(BRAND_ICON.github[1])); g.restore() }
+      hitAt(tx + tw / 2, ty + td / 2, top + 16, 12, sid, n('pr') ? 'pr' : n('slack') ? 'slack' : 'ticket', out)
+    }
+    if (n('in')) hitAt(tx + tw / 2, ty + td, top + 4, 11, sid, 'in', n('in'))
+  }
+  // Scratch pad pile, back left: one sheet a few files, yellow pads.
+  if (n('scratch')) {
+    const h = Math.min(7, 1 + Math.floor(n('scratch') / 3))
+    for (let k = 0; k < h; k++) sheet(x + 0.08 + (k % 2) * 0.02, y + 0.06, 0.3, 0.24, 1.6, k % 2 ? '#fff3a8' : '#ffe98a', top + k * 1.6)
+    hitAt(x + 0.23, y + 0.18, top + h * 1.6, 11, sid, 'scratch', n('scratch'))
+  }
+  // Files it wrote: a printout pile with blue lines.
+  if (n('file')) {
+    const h = Math.min(5, 1 + Math.floor(n('file') / 4))
+    for (let k = 0; k < h; k++) sheet(x + 0.42, y + 0.08, 0.26, 0.2, 1.4, '#f7fbff', top + k * 1.4)
+    const [lx, ly] = P(x + 0.44, y + 0.18, top + h * 1.4); g.strokeStyle = '#9cc3f0'; g.lineWidth = 1 * cam.s; for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(lx + k * 2 * cam.s, ly - 1 * cam.s + k * 1.5 * cam.s); g.lineTo(lx + 8 * cam.s + k * 2 * cam.s, ly + 3 * cam.s + k * 1.5 * cam.s); g.stroke() }
+    hitAt(x + 0.55, y + 0.18, top + h * 1.4, 10, sid, 'file', n('file'))
+  }
+  // exp archives: standing binders, front.
+  if (n('exp')) {
+    for (let k = 0; k < Math.min(3, n('exp')); k++) box(x + 0.5 + k * 0.07, y + 0.4, 0.06, 0.24, 13, ['#c0392b', '#2e86de', '#27ae60'][k], top)
+    hitAt(x + 0.58, y + 0.52, top + 8, 10, sid, 'exp', n('exp'))
+  }
+  // Artifacts: a little framed picture on a stand, front right.
+  if (n('artifact')) {
+    const fx = x + 1.3, fy = y + 0.55
+    const q = [P(fx, fy, top + 2), P(fx + 0.24, fy, top + 2), P(fx + 0.24, fy, top + 18), P(fx, fy, top + 18)]
+    poly(q, '#c9875a'); const iq = [P(fx + 0.03, fy, top + 4), P(fx + 0.21, fy, top + 4), P(fx + 0.21, fy, top + 16), P(fx + 0.03, fy, top + 16)]
+    const gr = g.createLinearGradient(iq[3][0], iq[3][1], iq[1][0], iq[1][1]); gr.addColorStop(0, '#ff9ec7'); gr.addColorStop(0.5, '#ffd36b'); gr.addColorStop(1, '#7dd3fc'); poly(iq, gr, null)
+    const [sx2, sy2] = P(fx + 0.12, fy, top + 8); circle(sx2, sy2, 2 * cam.s, '#fff', null)
+    if (n('artifact') > 1) text('×' + n('artifact'), q[1][0] + 5 * cam.s, q[1][1] + 2 * cam.s, 8, '#3b2a35')
+    hitAt(fx + 0.12, fy, top + 10, 11, sid, 'artifact', n('artifact'))
+  }
+}
+
+// ---------- tmux sections ----------
+// A cubicle partition: a fabric lower half in the section's colour, a frosted
+// glass top and a cap rail.
+function partition(x0, x1, y, hue) {
+  box(x0, y, x1 - x0, 0.1, 22, hsl2hex(hue, 35, 62))
+  const gl = [P(x0, y + 0.1, 22), P(x1, y + 0.1, 22), P(x1, y + 0.1, 40), P(x0, y + 0.1, 40)]
+  poly(gl, 'rgba(225,240,255,.55)', 'rgba(59,42,53,.5)', 1)
+  box(x0, y, x1 - x0, 0.1, 2, '#f4efe6', 40)
+}
+// A standing sign at the section's left end: the tmux session and its count.
+function sectionSign(sc) {
+  const [sx, sy] = P(0.25, sc.y0 + 0.25, 46)
+  const label = '🗂 tmux ' + sc.name + ' · ' + sc.n + '명'
+  g.font = Math.max(8, 12 * cam.s) + 'px Jua, sans-serif'
+  const w = g.measureText(label).width + 18 * cam.s
+  const [bx, by] = P(0.25, sc.y0 + 0.25, 0)
+  g.strokeStyle = LINE; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(bx, by); g.lineTo(sx, sy); g.stroke()
+  rrect(sx - 6 * cam.s, sy - 22 * cam.s, w, 22 * cam.s, 6 * cam.s, hsl2hex(sc.hue, 55, 70))
+  text(label, sx - 6 * cam.s + w / 2, sy - 11 * cam.s, 12, '#2a2033')
+}
 
 // ---------- walls ----------
 // The back wall (the face at y = -0.3) and the left wall (x = -0.3): wainscot
@@ -787,14 +937,13 @@ function nameplate(x, y, label, color) {
   g.fillStyle = '#2a2033'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(t, 4 * cam.s, fs * 0.05)
   g.restore()
 }
-function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job = 'shell', away = false, seatHue = 0) {
+function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job = 'shell', away = false, seatHue = 0, who = null) {
   // The empty chair behind the desk while its owner is elsewhere.
   if (away) { box(x + 0.5, y - 0.45, 0.42, 0.36, 12, hsl2hex(seatHue, 45, 60)); box(x + 0.5, y - 0.45, 0.42, 0.08, 30, hsl2hex(seatHue, 45, 52)) }
   const top = style === 'standing' ? 34 : 24
   if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x, y, 1.6, 0.7, 4, DESK_COLOR[style], top - 4) }
   else box(x, y, 1.6, 0.7, top, DESK_COLOR[style] || '#d9a46b')
-  // Seniority piles up on the desk: papers, then a plant, then a trophy.
-  if (rank >= 2) for (let k = 0; k < Math.min(4, rank); k++) box(x + 0.08, y + 0.08, 0.36, 0.26, 2.5, k % 2 ? '#ffffff' : '#f3ecdf', top + k * 2.5)
+  // Seniority: a plant, then a trophy.
   if (rank >= 3) { const [px, py] = P(x + 0.7, y + 0.2, top + 6); rrect(px - 3 * cam.s, py - 1 * cam.s, 6 * cam.s, 6 * cam.s, 1.5 * cam.s, '#c9875a'); circle(px, py - 4 * cam.s, 5 * cam.s, '#6fbf73') }
   if (rank >= 5) { const [tx, ty] = P(x + 0.95, y + 0.55, 30); rrect(tx - 3 * cam.s, ty - 9 * cam.s, 6 * cam.s, 8 * cam.s, 2 * cam.s, '#ffd36b'); rrect(tx - 4.5 * cam.s, ty - 1.5 * cam.s, 9 * cam.s, 3 * cam.s, 1 * cam.s, '#b8864a') }
   if (label) nameplate(x, y + 0.7, label, color)
@@ -808,7 +957,8 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
   else if (job === 'read') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); for (let k = 0; k < 3; k++) box(x + 0.55, y + 0.3, 0.32, 0.22, 3, BOOKS[k + 1], top + k * 3) }
   else if (job === 'talk') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); box(x + 0.6, y + 0.35, 0.18, 0.12, 3, '#e86a5c', top) }
   else { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); for (let k = 0; k < 2; k++) { const [cx, cy] = P(x + 0.6 + k * 0.12, y + 0.4, top); rrect(cx - 2.5 * cam.s, cy - 8 * cam.s, 5 * cam.s, 8 * cam.s, 1 * cam.s, k ? '#2ecc71' : '#e74c3c') } }
-  if (mug) { const [ux, uy] = P(x + 0.25, y + 0.45, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
+  if (who) deskStuff(x, y, top, who.made || {}, who.id)
+  if (mug) { const [ux, uy] = P(x + 0.72, y + 0.55, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
 }
 function elevator(t) {
   const x = 15.95, y = 0.15
@@ -1137,9 +1287,11 @@ function frame(now) {
   if (camGo.on) { const a = Math.min(1, dt * 6); cam.s += (camGo.s - cam.s) * a; cam.ox += (camGo.ox - cam.ox) * a; cam.oy += (camGo.oy - cam.oy) * a; if (Math.abs(camGo.ox - cam.ox) + Math.abs(camGo.oy - cam.oy) + Math.abs(camGo.s - cam.s) * 100 < 0.5) camGo.on = false }
   g.setTransform(DPR, 0, 0, DPR, 0, 0)
   g.clearRect(0, 0, VW, VH)
+  deskHits = []
   tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
   for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, 1, 1, 'rgba(160,120,80,.07)', null)
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
+  for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, 40, 90), 'rgba(59,42,53,.12)')
   for (const w of windows) {
     const need = w.sessions.some((p) => p.doing === 'asking' || p.doing === 'alert')
     tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, 55, 87), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
@@ -1166,8 +1318,12 @@ function frame(now) {
       // (smaller x+y than that) is drawn first and hidden by it, someone in
       // front is drawn after.
       const away = p.room !== 'desk' || p.doing === 'napping'
-      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, away, (w.hue + 120 + k * 40) % 360))
+      add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, away, (w.hue + 120 + k * 40) % 360, p))
     })
+  }
+  for (const sc of sections) {
+    if (!sc.first) for (const [a, b] of partSegments(sc.y0)) add(b + sc.y0 + 0.1, () => partition(a, b, sc.y0, sc.hue))
+    add(0.2 + sc.y0 + 0.2, () => sectionSign(sc))
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t))
   items.sort((a, b) => a[0] - b[0])

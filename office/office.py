@@ -309,6 +309,7 @@ def snapshot() -> list[dict]:
                 "detail": t.get("detail"),
                 "subs": subagents(sid) if state == "working" else [],
                 "tools": tc["total"],
+                "made": desk_items(sid),
                 "mix": tc["by"],
                 "job": job_of(tc["by"]),
                 "rank": rank_of(tc["total"]),
@@ -483,7 +484,54 @@ def grant(sid: str) -> tuple[int, dict]:
 
 # ---- what the session made and was handed (cc-mods' export) ---------------
 
-def related(sid: str) -> list[dict]:
+# What a session's desk holds, from its cc-mods outputs export: what it was
+# handed (the in-tray) and what it made, by kind. Cached by the file's mtime.
+_desk: dict = {}
+IN_DETAIL = {"from your prompt", "read", "mentioned", "in a branch or PR", None}
+
+
+def bucket(o: dict) -> str | None:
+    k, d = o.get("kind"), o.get("detail")
+    if k == "pr":
+        return "pr" if d in ("created", "edited", "commented", "merged", "pushed", "opened") else "in"
+    if k == "slack":
+        return "slack" if d in ("replied", "posted") else "in"
+    if k == "ticket":
+        return "ticket" if d in ("created", "updated") else "in"
+    if k == "link":
+        return "in"
+    if k in ("artifact", "scratch", "exp", "bg", "commit"):
+        return k
+    if k == "file":
+        return "file"
+    return None
+
+
+def desk_items(sid: str) -> dict:
+    files = sorted(glob.glob(os.path.expanduser("~/.claude/outputs/*/" + sid + ".json")))
+    if not files:
+        return {}
+    try:
+        m = os.path.getmtime(files[-1])
+        if _desk.get(sid, (None,))[0] == m:
+            return _desk[sid][1]
+        with open(files[-1]) as f:
+            outs = (json.load(f) or {}).get("outputs") or []
+    except (OSError, ValueError):
+        return {}
+    n: dict = {}
+    seen = set()
+    for o in outs:
+        b, key = bucket(o), o.get("id") or o.get("url") or o.get("path")
+        if not b or key in seen:
+            continue
+        seen.add(key)
+        n[b] = n.get(b, 0) + 1
+    _desk[sid] = (m, n)
+    return n
+
+
+def related(sid: str, kind: str | None = None, limit: int = 10) -> list[dict]:
     files = sorted(glob.glob(os.path.expanduser("~/.claude/outputs/*/" + sid + ".json")))
     if not files:
         return []
@@ -494,6 +542,8 @@ def related(sid: str) -> list[dict]:
         return []
     made = {"created", "merged", "replied", "posted", "archived", "edited", "opened", "pushed", "Write", "Edit", "in the answer"}
     keep = [o for o in outs if o.get("kind") in ("pr", "slack", "ticket", "link", "artifact", "scratch", "file", "exp") and (o.get("url") or o.get("path"))]
+    if kind:
+        keep = [o for o in keep if bucket(o) == kind]
     keep.sort(key=lambda o: (0 if (o.get("detail") in made or o.get("kind") in ("pr", "artifact", "exp")) else 1, -(o.get("at") or 0)))
     seen, out = set(), []
     for o in keep:
@@ -501,17 +551,17 @@ def related(sid: str) -> list[dict]:
         if k in seen:
             continue
         seen.add(k)
-        out.append({"kind": o.get("kind"), "title": str(o.get("title") or "")[:70], "url": o.get("url"), "path": o.get("path"), "detail": o.get("detail")})
-    return out[:10]
+        out.append({"kind": o.get("kind"), "bucket": bucket(o), "title": str(o.get("title") or "")[:70], "url": o.get("url"), "path": o.get("path"), "detail": o.get("detail")})
+    return out[:limit]
 
 
-def detail(sid: str) -> dict:
+def detail(sid: str, kind: str | None = None) -> dict:
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid)}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "shelf": related(sid, kind, 40) if kind else None, "shelfKind": kind}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -639,8 +689,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/detail"):
             from urllib.parse import parse_qs, urlparse
 
-            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
-            return self.send(200, json.dumps(detail(sid)).encode(), "application/json")
+            q = parse_qs(urlparse(self.path).query)
+            sid, kind = (q.get("sid") or [""])[0], (q.get("kind") or [""])[0]
+            kind = kind if kind in ("in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
+            return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             return self.send(200, json.dumps({"at": time.time(), "people": snapshot(), "snoozed": snoozed()}).encode(), "application/json")
         if self.path.startswith("/focus"):

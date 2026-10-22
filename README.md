@@ -257,6 +257,18 @@ answers there.
   arcade cabinet or a floor lamp (walkers go round it). What is on the desk
   follows the job: two screens for code, a laptop and a lamp for writing, a
   wide screen for watching, a little rack for ops, a book pile for reading.
+- **Desks show the work**: what a session took in and made (its cc-mods
+  outputs) sits on its desk. A two-tier tray: the lower tier what it was
+  handed (PRs, threads, tickets, links from you or that it read), the upper
+  tier what it sent out (its PRs in GitHub black with the logo, Slack replies
+  in aubergine, tickets in Jira blue). A yellow pad pile for scratch files, a
+  printout pile for files it wrote, binders for exp archives, a framed picture
+  for artifacts; piles grow with the count. Hover one for what and how many; a
+  click opens the card with that shelf on top, every item in it (`/detail?kind=`).
+- **tmux sessions are blocks**: each tmux session's windows get their own
+  rows with a floor tint and a sign (`🗂 tmux 2 · 16명`), and a long cubicle
+  partition (fabric below, frosted glass above) runs between blocks, with
+  aisles to walk through.
 - **Walls** look like an office: wainscot and a skirting board, windows with
   blinds and a radiator under each (warm in the cold months), a clock by the
   lift and a status board over the library (sessions, working, waiting, who
