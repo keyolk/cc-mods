@@ -18,6 +18,7 @@ Usage: office.py [--port 8787]
 """
 
 import glob
+from datetime import datetime
 import html
 import json
 import os
@@ -140,19 +141,30 @@ def born(sid: str) -> float | None:
 def tool_counts(sid: str) -> dict:
     path = transcript(sid)
     if not path:
-        return {"total": 0, "by": {}}
-    st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0})
+        return {"total": 0, "by": {}, "compacts": 0, "compactAt": None, "preTokens": None}
+    st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0, "compacts": 0, "compactAt": None, "preTokens": None})
     try:
         size = os.path.getsize(path)
         if size < st["off"]:
-            st.update(off=0, by={}, total=0)
+            st.update(off=0, by={}, total=0, compacts=0, compactAt=None, preTokens=None)
         with open(path, "rb") as f:
             f.seek(st["off"])
             chunk = f.read()
     except OSError:
-        return {"total": st["total"], "by": st["by"]}
+        return {k: st[k] for k in ("total", "by", "compacts", "compactAt", "preTokens")}
     end = chunk.rfind(b"\n") + 1  # a half-written last line waits for next time
     for line in chunk[:end].splitlines():
+        # A compaction leaves a compact_boundary entry: how many, the last
+        # one's time and how full it was before.
+        if b'"compact_boundary"' in line:
+            try:
+                d = json.loads(line)
+                st["compacts"] += 1
+                st["compactAt"] = datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+                st["preTokens"] = (d.get("compactMetadata") or {}).get("preTokens")
+            except (ValueError, TypeError):
+                pass
+            continue
         if b'"tool_use"' not in line:
             continue
         try:
@@ -164,7 +176,7 @@ def tool_counts(sid: str) -> dict:
                 st["by"][kind_of(b.get("name") or "")] = st["by"].get(kind_of(b.get("name") or ""), 0) + 1
                 st["total"] += 1
     st["off"] += end
-    return {"total": st["total"], "by": st["by"]}
+    return {"total": st["total"], "by": st["by"], "compacts": st["compacts"], "compactAt": st["compactAt"], "preTokens": st["preTokens"]}
 
 
 def kind_of(tool: str) -> str:
@@ -291,6 +303,16 @@ def owner() -> str:
     return name or (os.environ.get("USER", "") or "my").split(".")[0].capitalize()
 
 
+# Compacting right now: Claude Code says so at the bottom of its pane. Only
+# asked of working panes, a few short captures per refresh.
+def compacting(pane: str) -> bool:
+    try:
+        out = subprocess.run(["tmux", "capture-pane", "-p", "-t", pane, "-S", "-12"], capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return bool(re.search(r"Compacting conversation", out, re.I))
+
+
 def snapshot() -> list[dict]:
     try:
         out = subprocess.run(["tmux", "list-panes", "-a", "-F", FMT], capture_output=True, text=True, timeout=3).stdout
@@ -326,6 +348,9 @@ def snapshot() -> list[dict]:
                 "subs": subagents(sid) if state == "working" else [],
                 "tools": tc["total"],
                 "made": desk_items(sid),
+                "compacts": tc["compacts"],
+                "compactAt": tc["compactAt"],
+                "compacting": state == "working" and compacting(pane),
                 "mix": tc["by"],
                 "job": job_of(tc["by"]),
                 "rank": rank_of(tc["total"]),
