@@ -480,10 +480,10 @@ function apply(people) {
 // and of N/Tab until then. Its chip stays, muted, and turns loud if it starts
 // asking for a confirmation meanwhile.
 // Set aside (office.py mute): sid -> {since, until}; until null is "until you
-// speak first" (taped), a time is a plain 💤 for a while.
+// speak first" (zipped), a time is a plain 💤 for a while.
 let mutedSince = {}
 const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
-const isTaped = (id) => !!mutedSince[id] && !mutedSince[id].until
+const isZipped = (id) => !!mutedSince[id] && !mutedSince[id].until
 const wantsToTalk = (p) => p.doing === 'asking' || p.doing === 'alert'
 function waiting() {
   return [...ents.values()].filter((e) => e.kind === 'session' && wantsToTalk(e.data) && !isMuted(e.id))
@@ -1973,7 +1973,7 @@ function afterCompactFx(p, hx, hy, s, t) {
   g.fillStyle = '#fff8ee'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, hx, ly)
   g.globalAlpha = 1
 }
-// Muted: tape over the mouth. With something to say it strains: cheeks puffed,
+// Muted: the mouth zipped shut. With something to say it strains: cheeks puffed,
 // a hand up and waving, a hop, and a muffled bubble ("음! 음음!") that goes
 // nowhere; the longer it holds it in, the redder it gets.
 function mutedFx(p, x, by, fhx, hy, s, t, h) {
@@ -1988,12 +1988,19 @@ function mutedFx(p, x, by, fhx, hy, s, t, h) {
     g.strokeStyle = LINE; g.lineWidth = 1 * cam.s
     for (let i = 0; i < 2; i++) { g.beginPath(); g.arc(x + 11 * s, by - 34 * s, (6 + i * 3) * s, -1.2 + w * 0.05, -0.4 + w * 0.05); g.stroke() }
   }
-  // The tape: an X of two strips across the mouth.
-  for (const r of [0.35, -0.35]) {
-    g.save(); g.translate(fhx, hy + 5 * s); g.rotate(r)
-    rrect(-7 * s, -1.8 * s, 14 * s, 3.6 * s, 1 * s, '#f1e3c4', 'rgba(59,42,53,.6)', 0.8)
-    g.restore()
-  }
+  // A zipper across the mouth: a row of teeth, a pull tab at one end that
+  // jiggles when it strains to speak.
+  const zw = 9 * s, zy = hy + 5 * s, strain = want ? Math.sin(t * 12 + h) : 0
+  g.strokeStyle = '#7a7f95'; g.lineWidth = 2.6 * cam.s; g.lineCap = 'round'
+  g.beginPath(); g.moveTo(fhx - zw, zy); g.quadraticCurveTo(fhx, zy + 1.5 * s + strain * 0.6 * s, fhx + zw, zy); g.stroke()
+  g.strokeStyle = '#c9ced9'; g.lineWidth = 1 * cam.s
+  for (let i = -3; i <= 3; i++) { const tx = fhx + i * 2.4 * s, ty = zy + (1 - (i / 3) ** 2) * 0.75 * s; g.beginPath(); g.moveTo(tx, ty - 1.6 * s); g.lineTo(tx, ty + 1.6 * s); g.stroke() }
+  const px = fhx + zw + 0.5 * s, py = zy
+  g.save(); g.translate(px, py); g.rotate(0.35 + strain * 0.35)
+  rrect(-1.2 * s, -0.6 * s, 2.4 * s, 6.5 * s, 1 * s, '#e0b84a', 'rgba(59,42,53,.7)', 0.8)
+  circle(0, 4.3 * s, 0.7 * s, '#7a5a1e', null)
+  g.restore()
+  g.lineCap = 'butt'
   if (!want) return
   // The muffled bubble: a sound that cannot get out.
   const bx = fhx - 16 * s, byy = hy - 30 * s + Math.sin(t * 7 + h) * 1.5 * s
@@ -2108,7 +2115,7 @@ function drawChibi(e, t, z0) {
   else if (!sub && justCompacted(p)) afterCompactFx(p, hx, hy, s, t)
   else if (!sub && !nap && !(kind && rx > 0.35)) contextHead(p.ctx, hx, hy, fhx, s, t, h, hair)
   if (!sub && rank >= 4) { const cy = hy - 21 * s; poly([[hx - 7 * s, cy + 3 * s], [hx - 7 * s, cy - 3 * s], [hx - 3.5 * s, cy], [hx, cy - 5 * s], [hx + 3.5 * s, cy], [hx + 7 * s, cy - 3 * s], [hx + 7 * s, cy + 3 * s]], rank >= 5 ? '#ffd36b' : '#d8dde8') }
-  if (!sub && isTaped(e.id)) mutedFx(p, x, by, fhx, hy, s, t, h)
+  if (!sub && isZipped(e.id)) mutedFx(p, x, by, fhx, hy, s, t, h)
   else if (!sub && isMuted(e.id)) { const zx = hx + 12 * s, zy = hy - 20 * s; rrect(zx - 9 * s, zy - 8 * s, 18 * s, 14 * s, 6 * s, '#4a4d6e', LINE, 1); text(wantsToTalk(p) ? '💤!' : '💤', zx, zy - 1 * s, 9) }
   // While it reacts to the cursor, its face says it: the usual bubble steps aside.
   // The work effect already says what it does; the bubble is for the rest.
@@ -2175,7 +2182,7 @@ function bubble(e, p, x, y, s, t, sleepy) {
   // Compacting, or just done: the head says so itself (compactingFx, afterCompactFx).
   if (e.kind === 'session' && (p.compacting || justCompacted(p))) return
   // Muted with something to say: mutedFx draws its muffled bubble instead.
-  if (e.kind === 'session' && isTaped(e.id) && wantsToTalk(p)) return
+  if (e.kind === 'session' && isZipped(e.id) && wantsToTalk(p)) return
   if (sleepy) { for (let k = 0; k < 3; k++) { const ph = (t * 0.5 + k / 3) % 1; g.globalAlpha = 1 - ph; text('z', x + 10 * s + ph * 10 * s, y - ph * 18 * s, 10 + k * 2, '#fff8ee'); g.globalAlpha = 1 } return }
   if (p.doing === 'thinking') {
     circle(x + 9 * s, y + 4 * s, 2 * s, '#fff'); circle(x + 13 * s, y - 2 * s, 3 * s, '#fff')
