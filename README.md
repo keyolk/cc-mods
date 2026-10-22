@@ -250,6 +250,12 @@ else the first name of your account's full name, else your login name.
   each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
   previous): the camera glides and zooms to it and a ring and arrow mark it.
   A reply or a dialog pick moves on to the next one by itself.
+- **No double answers**: a card says at once, under its title, when the
+  session is working (the tool, for how long) or when a reply sent from the
+  office has not been taken yet (`📨`), kept current as it changes; quick
+  replies dim while it works. A reply then is refused once with that reason
+  (the server checks the session's state and its inbox); pressing again sends
+  it anyway, as a queued follow-up.
 - **Snooze**: `Z` takes the open agent out of the queue for 30 minutes (again
   adds 30 more); it shows as a muted `💤 name · N분` chip and a 💤 over its
   head, and a click on the chip puts it back. Kept in
