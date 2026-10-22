@@ -296,6 +296,14 @@ else the first name of your account's full name, else your login name.
   m` / `x s`; keyolk/tmc#18). The windows are resolved from tmux by the
   sessions they hold, never taken from the page; `OFFICE_TMC` points at
   another tmc.
+- **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
+  images, Markdown, text, JSON; an exp folder's README) opens in a viewer
+  beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
+  paths in that session's outputs are served (`/file`), in a sandbox with no
+  reach into the office page. claude.ai artifacts and GitHub refuse to be
+  framed, so links open outside, where that session's own links go:
+  `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
+  Chrome (signed in) or the tab group.
 - **Answers read as Markdown**: headings, nested lists, tables, code blocks,
   quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row

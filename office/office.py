@@ -577,6 +577,42 @@ def related(sid: str, kind: str | None = None, limit: int = 10) -> list[dict]:
     return out[:limit]
 
 
+# A file a session made or was handed, shown inside the office. Only paths in
+# that session's outputs (or under one of its exp folders) are served, never a
+# path the page makes up. Served in a sandbox (an opaque origin, no access to
+# the office page or its token), so an HTML report can run its scripts without
+# reaching the office's actions.
+VIEW_TYPES = {".html": "text/html", ".htm": "text/html", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".log": "text/plain",
+              ".json": "application/json", ".csv": "text/plain", ".yaml": "text/plain", ".yml": "text/plain"}
+VIEW_MAX = 20 * 1024 * 1024
+
+
+def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
+    path = os.path.realpath(os.path.expanduser(path))
+    known = [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
+    if not any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known):
+        return 403, b"not one of this session's files", "text/plain", {}
+    if os.path.isdir(path):
+        readme = os.path.join(path, "README.md")
+        if not os.path.isfile(readme):
+            return 404, b"a folder without README.md", "text/plain", {}
+        path = readme
+    kind = VIEW_TYPES.get(os.path.splitext(path)[1].lower())
+    if not kind:
+        return 415, b"not a type the office shows", "text/plain", {}
+    try:
+        if os.path.getsize(path) > VIEW_MAX:
+            return 413, b"too big to show here", "text/plain", {}
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError as e:
+        return 404, str(e).encode(), "text/plain", {}
+    if kind.startswith("text/") or kind == "application/json":
+        kind += "; charset=utf-8"
+    return 200, body, kind, {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
+
+
 def detail(sid: str, kind: str | None = None) -> dict:
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
@@ -611,10 +647,19 @@ def act(body: dict) -> tuple[int, dict]:
     if kind == "grant":
         return grant(sid)
     if kind == "open":
-        # A link from the card: http(s) to the person's browser, a local path
-        # revealed in Finder. Nothing else.
+        # A link from the card: http(s) where that session's own links go, a
+        # local path revealed in Finder. Nothing else. The session's links go
+        # through tmux-chrome-open with its pane: its @browser (pane, window,
+        # global) picks TWeb on Electron, TWeb on your Chrome (where claude.ai
+        # artifacts open signed in) or the window's Chrome tab group, the same
+        # place a link it opens itself lands. Without tmux-chrome, the default
+        # browser.
         v = str(value or "")
         if re.match(r"^https?://", v):
+            opener = os.path.expanduser("~/.local/bin/tmux-chrome-open")
+            if os.access(opener, os.X_OK):
+                subprocess.Popen([opener, v], env={**os.environ, "TMUX_PANE": pane}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return 200, {"ok": True, "sent": "opened where " + me["name"] + "'s links go"}
             subprocess.Popen(["open", v])
             return 200, {"ok": True, "sent": "opened"}
         p = os.path.expanduser(v)
@@ -722,10 +767,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def send(self, code: int, body: bytes, kind: str):
+    def send(self, code: int, body: bytes, kind: str, extra: dict | None = None):
         self.send_response(code)
         self.send_header("Content-Type", kind)
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -753,6 +800,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, b"forbidden", "text/plain")
         if self.path.startswith("/next"):
             return self.send(200, json.dumps({"n": NEXT["n"]}).encode(), "application/json")
+        if self.path.startswith("/file"):
+            from urllib.parse import parse_qs, urlparse
+
+            q = parse_qs(urlparse(self.path).query)
+            code, body, kind, extra = viewable((q.get("sid") or [""])[0], (q.get("path") or [""])[0])
+            return self.send(code, body, kind, extra)
         if self.path.startswith("/detail"):
             from urllib.parse import parse_qs, urlparse
 

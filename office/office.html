@@ -61,6 +61,16 @@ canvas.drag { cursor: grabbing; }
 /* In the header row with the counts, so it never covers the office or the card. */
 #reset { display: none; font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #reset:hover { filter: brightness(1.05); transform: translateY(-1px); }
+#viewer { position: fixed; left: 16px; top: 52px; bottom: 64px; right: 420px; display: none; flex-direction: column; z-index: 6; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); overflow: hidden; }
+#viewer .bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 2px solid var(--line); font-size: 13px; }
+#viewer .bar .m { flex: 1; color: #6b6280; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#viewer .bar button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 10px; cursor: pointer; }
+#viewer .body { flex: 1; overflow: auto; background: #fff; }
+#viewer iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+#viewer img { max-width: 100%; display: block; margin: 0 auto; }
+#viewer pre { margin: 0; padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+#viewer .said { max-height: none; margin: 0; border-radius: 0; font-size: 13px; padding: 12px 16px; }
+#card .rel a.view::after { content: ' 👁'; }
 #movebar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 10px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 8px 14px; font-size: 14px; }
 #movebar button { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 2px 10px; cursor: pointer; }
 #movebar button.ok { background: #9ff0b5; }
@@ -108,6 +118,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>책상 서랍 탭 이동 (받은 것 · 보낸 것 · 스크래치 …)</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
+    <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>이 agent를 30분 미루기 (Tab·N에서 빠짐, 다시 누르면 +30분)</td></tr>
@@ -565,6 +576,8 @@ addEventListener('keydown', (e) => {
   const k = e.key
   const open = card.style.display === 'block'
   const hit = (fn) => { e.preventDefault(); fn() }
+  if (viewer.path && k === 'Escape') return hit(closeViewer)
+  if (viewer.path && (k === 'o' || k === 'O' || k === 'ㅐ')) return hit(() => openLink(viewer.path))
   if (pendingMove && k === 'Enter') return hit(doMove)
   if (pendingMove && k === 'Escape') return hit(cancelMove)
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
@@ -616,7 +629,8 @@ function chip(o) {
   const a = document.createElement('a'), b = o.url && brandOf(o.url)
   if (b) { a.className = 'brand'; a.style.setProperty('--bc', BRAND_ICON[b.icon][0]); a.innerHTML = brandSvg(b.icon) + '<b>' + b.label + '</b><span>' + esc(o.title && o.title !== o.url ? o.title : b.short) + '</span>' }
   else a.textContent = (CHIP_ICON[o.kind] || '•') + ' ' + o.title
-  a.title = o.url || o.path; a.onclick = () => openLink(o.url || o.path)
+  a.title = o.url || o.path; a.onclick = () => (o.path && canView(o.path) ? viewFile(o.path) : openLink(o.url || o.path))
+  if (o.path && canView(o.path)) a.classList.add('view')
   return a
 }
 async function openCard(sid, kind = null) {
@@ -663,7 +677,7 @@ async function openCard(sid, kind = null) {
   } else card.shelfTab = null
   card.said = null
   if (d.text) {
-    const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } }
+    const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v)) viewFile(v); else openLink(v) } }
     // Opens at the end, where the question usually is; the keys scroll it.
     said.style.scrollBehavior = 'auto'; said.scrollTop = 1e9; said.style.scrollBehavior = ''
     card.said = said
@@ -876,6 +890,30 @@ function md(src) {
   flush()
   return out.join('')
 }
+// ---------- the viewer ----------
+// A file the session made, shown beside the card: HTML, SVG, PDF in a sandboxed
+// frame, images as they are, Markdown rendered, text as text. `↗ 밖으로` opens
+// it where links go (the browser, TWeb, Finder); Esc closes it.
+const VIEW_EXT = /\.(html?|svg|png|jpe?g|gif|webp|pdf|md|txt|log|json|csv|ya?ml)$/i
+const canView = (p) => VIEW_EXT.test(p) || /\/exp\/[^/]+\/?$/.test(p)
+const viewer = document.createElement('div'); viewer.id = 'viewer'; document.body.appendChild(viewer)
+async function viewFile(path) {
+  const url = '/file?sid=' + encodeURIComponent(cardSid) + '&path=' + encodeURIComponent(path)
+  const name = path.split('/').filter(Boolean).pop()
+  viewer.innerHTML = '<div class="bar"><b>👁 ' + esc(name) + '</b><span class="m">' + esc(path) + '</span><button class="out"><kbd>O</kbd> ↗ 밖으로</button><button class="x">✕</button></div><div class="body"></div>'
+  viewer.style.display = 'flex'
+  viewer.querySelector('.x').onclick = closeViewer
+  viewer.querySelector('.out').onclick = () => openLink(path)
+  viewer.path = path
+  const body = viewer.querySelector('.body')
+  if (/\.(html?|pdf|svg)$/i.test(path)) { body.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="' + url + '"></iframe>'; return }
+  if (/\.(png|jpe?g|gif|webp)$/i.test(path)) { body.innerHTML = '<img src="' + url + '">'; return }
+  const r = await fetch(url, { cache: 'no-store' }), t = await r.text()
+  if (!r.ok) { body.innerHTML = '<div class="said"><p>✕ ' + esc(t) + '</p></div>'; return }
+  body.innerHTML = /\.md$/i.test(path) || canView(path) && !VIEW_EXT.test(path) ? '<div class="said">' + md(t) + '</div>' : /\.json$/i.test(path) ? '<pre>' + esc((() => { try { return JSON.stringify(JSON.parse(t), null, 2) } catch { return t } })()) + '</pre>' : '<pre>' + esc(t) + '</pre>'
+  body.querySelector('.said') && (body.querySelector('.said').onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); openLink(a.dataset.open) } })
+}
+function closeViewer() { viewer.style.display = 'none'; viewer.innerHTML = ''; viewer.path = null }
 async function openLink(v) {
   try { await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v }) }) } catch {}
 }
