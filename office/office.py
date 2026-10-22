@@ -171,12 +171,74 @@ def tool_counts(sid: str) -> dict:
             d = json.loads(line)
         except ValueError:
             continue
+        # Only the assistant's own turns: a proxy can log each API request
+        # into the transcript too (type api-request-blob), which repeats every
+        # earlier tool call without a time.
+        if d.get("type") != "assistant":
+            continue
         for b in (d.get("message") or {}).get("content") or []:
             if isinstance(b, dict) and b.get("type") == "tool_use":
                 st["by"][kind_of(b.get("name") or "")] = st["by"].get(kind_of(b.get("name") or ""), 0) + 1
                 st["total"] += 1
+                if b.get("name") == "SendMessage":
+                    note_talk(sid, b, d.get("timestamp"))
     st["off"] += end
     return {"total": st["total"], "by": st["by"], "compacts": st["compacts"], "compactAt": st["compactAt"], "preTokens": st["preTokens"]}
+
+
+# Sessions talking to each other: every SendMessage a session sends, read
+# from the sender's transcript as its tool calls are counted. The recipient is
+# named as the peer listing names it ("tweb-5a", "gavin-jeong-7d [ref]"), so it
+# is resolved through Claude Code's session registry (~/.claude/sessions/
+# <pid>.json: name, sessionId, messagingSocketPath). Kept for TALK_KEEP.
+TALK_KEEP = 15 * 60
+_talks: dict[str, dict] = {}
+_registry: dict = {"at": 0.0, "by": {}}
+
+
+def registry() -> dict:
+    if time.time() - _registry["at"] < 5:
+        return _registry["by"]
+    by: dict[str, dict] = {}
+    for f in glob.glob(os.path.expanduser("~/.claude/sessions/*.json")):
+        try:
+            with open(f) as fh:
+                d = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        sid = d.get("sessionId")
+        if not sid:
+            continue
+        for key in (d.get("name"), d.get("messagingSocketPath"), "uds:" + str(d.get("messagingSocketPath") or ""), sid):
+            if key:
+                by[str(key)] = {"sid": sid, "name": d.get("name") or sid[:8]}
+    _registry.update(at=time.time(), by=by)
+    return by
+
+
+def note_talk(sid: str, block: dict, ts) -> None:
+    inp = block.get("input") or {}
+    to = re.sub(r"\s*\[[^\]]*\]$", "", str(inp.get("to") or "")).strip()
+    try:
+        at = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return
+    if time.time() - at > TALK_KEEP or not to:
+        return
+    text = str(inp.get("summary") or inp.get("message") or "")
+    _talks[str(block.get("id") or (sid + str(at)))] = {"id": str(block.get("id") or ""), "from": sid, "toName": to, "text": text[:160], "at": at}
+
+
+def talks() -> list[dict]:
+    now, reg = time.time(), registry()
+    out = []
+    for k, t in list(_talks.items()):
+        if now - t["at"] > TALK_KEEP:
+            _talks.pop(k, None)
+            continue
+        hit = reg.get(t["toName"]) or next((v for n, v in reg.items() if v["sid"].startswith(t["toName"])), None)
+        out.append({**t, "to": hit["sid"] if hit else None, "fromName": next((v["name"] for v in reg.values() if v["sid"] == t["from"]), t["from"][:8])})
+    return sorted(out, key=lambda t: t["at"])
 
 
 def kind_of(tool: str) -> str:
@@ -891,7 +953,8 @@ class Handler(BaseHTTPRequestHandler):
             kind = kind if kind in ("desk", "in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
-            return self.send(200, json.dumps({"at": time.time(), "people": snapshot(), "snoozed": snoozed()}).encode(), "application/json")
+            people = snapshot()
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "snoozed": snoozed(), "talks": talks()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.

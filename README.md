@@ -250,6 +250,13 @@ else the first name of your account's full name, else your login name.
   each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
   previous): the camera glides and zooms to it and a ring and arrow mark it.
   A reply or a dialog pick moves on to the next one by itself.
+- **Sessions talking**: a message one session sends another (SendMessage,
+  read from the sender's transcript; the recipient's peer name resolved
+  through `~/.claude/sessions/<pid>.json`) flies across as a paper plane on an
+  arc; on landing a bubble over the recipient says who sent what. One to a
+  session not in the office flies off past the wall. The last 15 minutes are
+  kept: hovering a character (or opening its card) draws dashed threads to
+  whom it talked, with a count, and its card lists them (`→` sent, `←` got).
 - **A head as full as its context**: past 50% a scribble of thoughts hangs
   over it, past 65% the hair stands up and it sweats, past 80% papers, `?` and
   gears orbit it and it steams, past 90% the eyes spiral and pages fly off.
