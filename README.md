@@ -173,20 +173,23 @@ linked, when it is opened, and every five minutes.
 Every Claude Code session in tmux as a chibi in a quarter-view office, in a
 TWeb pane beside this one, live (2 s). `office/office.py` serves it on
 `127.0.0.1:8796`, shared by all sessions; `/office` starts it when nothing
-answers there.
+answers there. It is named after you (`🏢 Gavin네 사무실`): `OFFICE_OWNER`,
+else the first name of your account's full name, else your login name.
 
 - **One pod per tmux window**: its sessions sit at its desks side by side, the
   window name on each desk's front.
 - **Where a session stands** follows its last tool call (its transcript):
-  📚 library while reading, 🖥 server room while running a command or an MCP
-  tool, its desk while writing (typing) or with no tool (chin in hand, `…`),
+  📚 library while reading, 🛠 workshop while running a command, 📞 a phone
+  booth during an MCP call, its desk while writing (typing) or with no tool (chin in hand, `…`),
   `?` / `!` over its head while it waits on you.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
   minutes they lie down in a pile in front of the sofa, asleep.
 - **Subagents** (`<project>/<sid>/subagents/agent-*.jsonl`, live while written
-  in the last 45 s) are small ones with an antenna: they come up the elevator,
-  stand with their session (a row in front of its desk, or around it in a
-  room), show their own work by pose and bubble, and leave by the elevator.
+  in the last 45 s) are small ones with an antenna from the crowd squeezed
+  into the back corner behind a low partition (`🐣 N` on its door, fewer while
+  some are out): the door opens, one walks out to its session and stands with
+  it (a row in front of its desk, or around it in a room) on a dotted tether,
+  shows its own work by pose and bubble, and walks back in when done.
 - **Personality** from its own transcript, every tool call counted once
   (read incrementally): its **job** is the kind of tool it uses most beside
   Bash — 📣 communicator (Slack: headset), 📝 writer (Docs/Artifact: beret,
@@ -257,6 +260,64 @@ answers there.
   arcade cabinet or a floor lamp (walkers go round it). What is on the desk
   follows the job: two screens for code, a laptop and a lamp for writing, a
   wide screen for watching, a little rack for ops, a book pile for reading.
+- **Desks show the work**: what a session took in and made (its cc-mods
+  outputs) sits on its desk. A two-tier tray: the lower tier what it was
+  handed (PRs, threads, tickets, links from you or that it read), the upper
+  tier what it sent out (its PRs in GitHub black with the logo, Slack replies
+  in aubergine, tickets in Jira blue). A yellow pad pile for scratch files, a
+  printout pile for files it wrote, binders for exp archives, a framed picture
+  for artifacts; piles grow with the count. Hover one for what and how many; a
+  click opens the card with that shelf on top, every item in it (`/detail?kind=`).
+- **The desk opens**: a click on a desk (not on one of its things) opens its
+  drawers in the card, a tab a kind: 📥 받은 것, 📤 보낸 것, 📝 스크래치, 📄
+  파일, 🗂 exp, 🖼 아티팩트, each item a badge or chip one click away; `[`/`]`
+  switch tabs. A click on one thing opens the drawers at its tab.
+- **Rooms say what they are for**: each room's name, when a session comes
+  there and how many are there now sit in the margin above the building, each
+  at its own height, joined to its room by an elbow line; the tmux sessions'
+  names sit left of the left wall the same way, over a band in their colour
+  along its top. Hovering a room's floor lights it up and lists who is there.
+  The library has parquet, a long reading table with green lamps and a ladder;
+  the workshop a concrete floor with a hazard stripe, a tool pegboard, a bench
+  whose terminal shows what the people in the room are running and a machine
+  whose gears turn and steam while someone is there; the phone booths a navy
+  carpet and three booths (an `ON AIR` lamp, the handset off the hook while
+  used), the logo and name of the service on the line over the caller; the
+  lounge a patterned carpet, a café table with donuts and a
+  vending machine. Over a visitor, while you hover its room or it, a tag says what it reads
+  (`📖 file`) or runs (`$ command`), or which service it calls. What they do there differs too: turning pages,
+  pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
+  cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
+  a donut, a handheld game.
+- **Move windows by dragging**: drag a desk (its whole tmux window) onto
+  another pod to merge it into that window, or onto another tmux session's
+  block to send it there. The drop asks first (`⏎` moves, `Esc` drops it),
+  then the office runs tmc's own moves, `tmc window merge|send` (the TUI's `x
+  m` / `x s`; keyolk/tmc#18). The windows are resolved from tmux by the
+  sessions they hold, never taken from the page; `OFFICE_TMC` points at
+  another tmc.
+- **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
+  images, Markdown, text, JSON; an exp folder's README) opens in a viewer
+  beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
+  paths in that session's outputs are served (`/file`), in a sandbox with no
+  reach into the office page. claude.ai artifacts and GitHub refuse to be
+  framed, so links open outside, by default where that session's own links
+  go: `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
+  Chrome (signed in) or the tab group.
+- **Where things open is yours to pick**: `⚙` (or `,`) in the top row sets
+  where web links and files open outside (that session's setting, TWeb on
+  your Chrome / Electron / WebKit, the Chrome tab group, the default browser
+  or app, Finder) and whether a viewable file opens inside first. A chip's
+  right click (or `⇧O` in the viewer) asks once and remembers the pick; kept
+  in this browser.
+- **Answers read as Markdown**: headings, nested lists, tables, code blocks,
+  quotes, rules, `code` and **bold**, with links and brand badges as before.
+- **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row
+  (shown once you have zoomed or panned) glides back to the whole office.
+- **tmux sessions are blocks**: each tmux session's windows get their own
+  rows with a floor tint and a sign (`🗂 tmux 2 · 16명`), and a long cubicle
+  partition (fabric below, frosted glass above) runs between blocks, with
+  aisles to walk through.
 - **Walls** look like an office: wainscot and a skirting board, windows with
   blinds and a radiator under each (warm in the cold months), a clock by the
   lift and a status board over the library (sessions, working, waiting, who

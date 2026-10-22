@@ -370,12 +370,22 @@ LABEL = {"gh_merge": "PR merge", "prod_eks_access": "prod EKS 읽기", "prod_eks
 # Without a refusal to go on, an answer that plainly asks for one of these.
 ASKS = [("gh_merge", r"merge|머지"), ("prod_eks_write", r"prod.{0,20}(write|쓰기|재시작|restart|delete|apply)"),
         ("prod_eks_access", r"prod.{0,20}(read|읽|조회|kubectl)"), ("slack_send", r"slack|슬랙|보낼까|보내도"),
-        ("tmux_window_escape", r"다른 (tmux )?(창|window)|tmux window")]
+        ("tmux_window_escape", r"다른 (tmux )?(창|window)|tmux (window|가드|guard)|다른 window의 pane")]
+
+
+# Guards whose refusal names no /policy command, by what their text says.
+GUARD_CAPS = [("tmux_window_escape", r"tmux|own window|pane")]
 
 
 def _grants_from_blocks(blocks: list[str]) -> list[dict]:
     out = []
     for b in blocks:
+        if "/policy allow" not in b:
+            for cap, pat in GUARD_CAPS:
+                if _re.search(pat, b, _re.I):
+                    out.append({"argv": ["allow", cap], "label": LABEL[cap], "minutes": 15,
+                                "why": "이 세션이 방금 가드에 막혔습니다: " + b.splitlines()[0][:120]})
+            continue
         for m in _re.finditer(r"/policy allow (merge|prod-w|prod|slack|tmux|auto)(?: ([^\s`]+))?(?: (\d+)m)?", b):
             short, scope, mins = m.group(1), m.group(2), m.group(3)
             if scope in ("owner/repo",) or (scope and scope.startswith("<")):
@@ -402,9 +412,18 @@ def policy(req: dict) -> dict:
         if k not in seen:
             seen.add(k)
             uniq.append(c)
-    cands = uniq[:5]
+    # A capability already allowed is not what it waits on: proposing it again
+    # after the person approved it would ask the same thing forever.
+    cands = [c for c in uniq if caps.get(c["argv"][1]) != "allow"][:5]
     if not cands:
         return {"grant": None, "confidence": 1.0}
+    # The answer itself says it is stuck on a guard ("막혀 있습니다", "할 수 없는
+    # 작업", "blocked"): the newest refusal's grant is what it waits on, no need
+    # to ask Jev (which reads "here is a command for you" as nothing to grant).
+    if blocks and _re.search(r"막혀|막힌|막습니다|막혔|할 수 없|가드|guard|blocked|denied", answer[-1500:], _re.I):
+        from_blocks = [c for c in (_grants_from_blocks(blocks[-1:]) or _grants_from_blocks(blocks)) if caps.get(c["argv"][1]) != "allow"]
+        if from_blocks:
+            return {"grant": from_blocks[0], "confidence": 1.0}
     try:
         import jev
     except Exception as exc:

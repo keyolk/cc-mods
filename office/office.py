@@ -6,9 +6,10 @@ Serves office.html and /state on 127.0.0.1 only. A session is a tmux pane with
 last tool call in its transcript:
 
   Read/Grep/Glob/WebFetch/WebSearch -> library     (reading)
-  Bash/Monitor/BashOutput           -> server room (running a command)
+  Bash/Monitor/BashOutput           -> workshop    (running a command)
+  mcp__*                            -> phone booth (calling a service)
   Edit/Write/NotebookEdit           -> desk        (writing)
-  Agent/Task/Workflow               -> desk, subagents ride the elevator
+  Agent/Task/Workflow               -> desk, subagents come out of the corner
   working with no tool for a while  -> desk, chin in hand (thinking)
   waiting/ask, action               -> desk, a "?" or "!" over the head
   done / idle                       -> lounge
@@ -17,6 +18,7 @@ Usage: office.py [--port 8787]
 """
 
 import glob
+import html
 import json
 import os
 import re
@@ -260,19 +262,33 @@ def room(state: str, attention: str, t: dict) -> tuple[str, str]:
             if tool in READ:
                 return "library", "reading"
             if tool in RUN:
-                return "server", "running"
+                return "workshop", "running"
             if tool in WRITE:
                 return "desk", "typing"
             if tool in DELEGATE:
                 return "desk", "delegating"
             if tool.startswith("mcp__"):
-                return "server", "calling"
+                return "phone", "calling"
         return "desk", "thinking"
     if attention == "action":
         return "desk", "alert"
     if attention == "ask":
         return "desk", "asking"
     return "lounge", "idle"
+
+
+# Whose office it is: OFFICE_OWNER, else the first name of the account's full
+# name (macOS keeps it in the passwd gecos field), else the login name.
+def owner() -> str:
+    name = os.environ.get("OFFICE_OWNER", "").strip()
+    if not name:
+        try:
+            import pwd
+
+            name = (pwd.getpwuid(os.getuid()).pw_gecos or "").split(",")[0].split()[0]
+        except (KeyError, IndexError, ImportError):
+            name = ""
+    return name or (os.environ.get("USER", "") or "my").split(".")[0].capitalize()
 
 
 def snapshot() -> list[dict]:
@@ -309,6 +325,7 @@ def snapshot() -> list[dict]:
                 "detail": t.get("detail"),
                 "subs": subagents(sid) if state == "working" else [],
                 "tools": tc["total"],
+                "made": desk_items(sid),
                 "mix": tc["by"],
                 "job": job_of(tc["by"]),
                 "rank": rank_of(tc["total"]),
@@ -422,12 +439,18 @@ def recent_blocks(sid: str) -> list[str]:
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
-            f.seek(max(0, f.tell() - 300_000))
+            # A turn that hit a guard often goes on for a while (reading,
+            # trying other ways) before it asks: look back further than one tool
+            # result. Only asked for while the session waits on you.
+            f.seek(max(0, f.tell() - 1_500_000))
             raw = f.read().decode("utf-8", "replace")
     except OSError:
         return []
+    # Every guard's refusal: the session policy's ("BLOCKED by session
+    # policy: …") and the others', like the tmux pane guard's ("BLOCKED: tmux
+    # target … Agents may only use panes inside their own window …").
     out = []
-    for m in re.finditer(r"BLOCKED by session policy:[^\"]{0,600}", raw):
+    for m in re.finditer(r"BLOCKED(?: by session policy)?:[^\"]{0,600}", raw):
         out.append(m.group(0).replace("\\n", "\n").replace("\\`", "`"))
     return out[-4:]
 
@@ -478,12 +501,67 @@ def grant(sid: str) -> tuple[int, dict]:
     t.start()
     _reverts[key] = t
     _proposals.pop(sid, None)
-    return 200, {"ok": True, "sent": "granted " + g["label"] + " for " + str(g["minutes"]) + "m"}
+    # "Approve and go on": the session is told, the way a reply reaches it
+    # (its inbox, submitted as the person's prompt), or it would sit waiting
+    # with the grant it asked for.
+    os.makedirs(INBOX, exist_ok=True)
+    tmp = os.path.join(INBOX, sid + ".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump({"text": f"{g['label']} 권한을 {g['minutes']}분 동안 허용했습니다. 막혔던 작업을 계속 진행해 주세요.", "at": time.time()}, f)
+    os.replace(tmp, os.path.join(INBOX, sid + ".json"))
+    return 200, {"ok": True, "sent": "granted " + g["label"] + " for " + str(g["minutes"]) + "m and told it to go on"}
 
 
 # ---- what the session made and was handed (cc-mods' export) ---------------
 
-def related(sid: str) -> list[dict]:
+# What a session's desk holds, from its cc-mods outputs export: what it was
+# handed (the in-tray) and what it made, by kind. Cached by the file's mtime.
+_desk: dict = {}
+IN_DETAIL = {"from your prompt", "read", "mentioned", "in a branch or PR", None}
+
+
+def bucket(o: dict) -> str | None:
+    k, d = o.get("kind"), o.get("detail")
+    if k == "pr":
+        return "pr" if d in ("created", "edited", "commented", "merged", "pushed", "opened") else "in"
+    if k == "slack":
+        return "slack" if d in ("replied", "posted") else "in"
+    if k == "ticket":
+        return "ticket" if d in ("created", "updated") else "in"
+    if k == "link":
+        return "in"
+    if k in ("artifact", "scratch", "exp", "bg", "commit"):
+        return k
+    if k == "file":
+        return "file"
+    return None
+
+
+def desk_items(sid: str) -> dict:
+    files = sorted(glob.glob(os.path.expanduser("~/.claude/outputs/*/" + sid + ".json")))
+    if not files:
+        return {}
+    try:
+        m = os.path.getmtime(files[-1])
+        if _desk.get(sid, (None,))[0] == m:
+            return _desk[sid][1]
+        with open(files[-1]) as f:
+            outs = (json.load(f) or {}).get("outputs") or []
+    except (OSError, ValueError):
+        return {}
+    n: dict = {}
+    seen = set()
+    for o in outs:
+        b, key = bucket(o), o.get("id") or o.get("url") or o.get("path")
+        if not b or key in seen:
+            continue
+        seen.add(key)
+        n[b] = n.get(b, 0) + 1
+    _desk[sid] = (m, n)
+    return n
+
+
+def related(sid: str, kind: str | None = None, limit: int = 10) -> list[dict]:
     files = sorted(glob.glob(os.path.expanduser("~/.claude/outputs/*/" + sid + ".json")))
     if not files:
         return []
@@ -494,6 +572,8 @@ def related(sid: str) -> list[dict]:
         return []
     made = {"created", "merged", "replied", "posted", "archived", "edited", "opened", "pushed", "Write", "Edit", "in the answer"}
     keep = [o for o in outs if o.get("kind") in ("pr", "slack", "ticket", "link", "artifact", "scratch", "file", "exp") and (o.get("url") or o.get("path"))]
+    if kind and kind != "all":
+        keep = [o for o in keep if bucket(o) == kind]
     keep.sort(key=lambda o: (0 if (o.get("detail") in made or o.get("kind") in ("pr", "artifact", "exp")) else 1, -(o.get("at") or 0)))
     seen, out = set(), []
     for o in keep:
@@ -501,17 +581,63 @@ def related(sid: str) -> list[dict]:
         if k in seen:
             continue
         seen.add(k)
-        out.append({"kind": o.get("kind"), "title": str(o.get("title") or "")[:70], "url": o.get("url"), "path": o.get("path"), "detail": o.get("detail")})
-    return out[:10]
+        out.append({"kind": o.get("kind"), "bucket": bucket(o), "title": str(o.get("title") or "")[:70], "url": o.get("url"), "path": o.get("path"), "detail": o.get("detail")})
+    return out[:limit]
 
 
-def detail(sid: str) -> dict:
+# A file a session made or was handed, shown inside the office. Only paths in
+# that session's outputs (or under one of its exp folders) are served, never a
+# path the page makes up. Served in a sandbox (an opaque origin, no access to
+# the office page or its token), so an HTML report can run its scripts without
+# reaching the office's actions.
+VIEW_TYPES = {".html": "text/html", ".htm": "text/html", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+              ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".log": "text/plain",
+              ".json": "application/json", ".csv": "text/plain", ".yaml": "text/plain", ".yml": "text/plain"}
+VIEW_MAX = 20 * 1024 * 1024
+
+
+def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
+    path = os.path.realpath(os.path.expanduser(path))
+    known = [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
+    if not any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known):
+        return 403, b"not one of this session's files", "text/plain", {}
+    if os.path.isdir(path):
+        readme = os.path.join(path, "README.md")
+        if not os.path.isfile(readme):
+            return 404, b"a folder without README.md", "text/plain", {}
+        path = readme
+    kind = VIEW_TYPES.get(os.path.splitext(path)[1].lower())
+    if not kind:
+        return 415, b"not a type the office shows", "text/plain", {}
+    try:
+        if os.path.getsize(path) > VIEW_MAX:
+            return 413, b"too big to show here", "text/plain", {}
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError as e:
+        return 404, str(e).encode(), "text/plain", {}
+    if kind.startswith("text/") or kind == "application/json":
+        kind += "; charset=utf-8"
+    return 200, body, kind, {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
+
+
+# Where a pane's links go now (tmux-chrome's answer for it), for the card's
+# "open outside" menu to say what its default is.
+def route_of(pane: str) -> str:
+    try:
+        out = subprocess.run(["tmux-chrome", "browser"], capture_output=True, text=True, timeout=3, env={**os.environ, "TMUX_PANE": pane}).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        out = ""
+    return out if out in ("tweb", "tweb-chrome", "tweb-webkit", "chrome") else "default"
+
+
+def detail(sid: str, kind: str | None = None) -> dict:
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid)}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "route": route_of(me["pane"]), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -539,17 +665,41 @@ def act(body: dict) -> tuple[int, dict]:
     if kind == "grant":
         return grant(sid)
     if kind == "open":
-        # A link from the card: http(s) to the person's browser, a local path
-        # revealed in Finder. Nothing else.
-        v = str(value or "")
-        if re.match(r"^https?://", v):
-            subprocess.Popen(["open", v])
-            return 200, {"ok": True, "sent": "opened"}
-        p = os.path.expanduser(v)
-        if p.startswith("/") and os.path.exists(p):
-            subprocess.Popen(["open", "-R", p])
+        # A link from the card: http(s) where that session's own links go, a
+        # local path revealed in Finder. Nothing else. The session's links go
+        # through tmux-chrome-open with its pane: its @browser (pane, window,
+        # global) picks TWeb on Electron, TWeb on your Chrome (where claude.ai
+        # artifacts open signed in) or the window's Chrome tab group, the same
+        # place a link it opens itself lands. Without tmux-chrome, the default
+        # browser.
+        # `via` picks the place instead: one of tmux-chrome's (tweb,
+        # tweb-chrome, tweb-webkit, chrome: TMUX_CHROME_BROWSER, which wins
+        # over the pane options), the default browser or app, or Finder.
+        v, via = str(value or ""), str(body.get("via") or "")
+        if via not in ("", "session", "tweb", "tweb-chrome", "tweb-webkit", "chrome", "default", "finder"):
+            return 400, {"error": "unknown place to open"}
+        url = v if re.match(r"^https?://", v) else None
+        p = os.path.realpath(os.path.expanduser(v)) if not url else ""
+        if not url and not (p.startswith("/") and os.path.exists(p)):
+            return 400, {"error": "not a link or an existing path"}
+        if not url and via in ("", "session"):
+            via = "finder"
+        if via == "finder":
+            subprocess.Popen(["open", "-R", p or v])
             return 200, {"ok": True, "sent": "revealed"}
-        return 400, {"error": "not a link or an existing path"}
+        target = url or ("file://" + p)
+        if via == "default":
+            subprocess.Popen(["open", url or p])
+            return 200, {"ok": True, "sent": "opened in the default app"}
+        opener = os.path.expanduser("~/.local/bin/tmux-chrome-open")
+        if not os.access(opener, os.X_OK):
+            subprocess.Popen(["open", target])
+            return 200, {"ok": True, "sent": "opened"}
+        env = {**os.environ, "TMUX_PANE": pane}
+        if via not in ("", "session"):
+            env["TMUX_CHROME_BROWSER"] = via
+        subprocess.Popen([opener, target], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return 200, {"ok": True, "sent": "opened in " + (via if via not in ("", "session") else route_of(pane))}
     if kind == "stop":
         if me["state"] != "working":
             return 409, {"error": "it is not working"}
@@ -565,7 +715,52 @@ def act(body: dict) -> tuple[int, dict]:
             json.dump({"text": text, "at": time.time()}, f)
         os.replace(tmp, os.path.join(INBOX, sid + ".json"))
         return 200, {"ok": True, "sent": "reply"}
+    if kind in ("send", "merge"):
+        return rearrange(kind, me, value)
     return 400, {"error": "unknown action"}
+
+
+# Dragging a pod moves its tmux window: onto another tmux session's block it is
+# sent there, onto another pod it is merged into that window. The moves are
+# tmc's (`tmc window send|merge`), the same as its TUI's `x s` and `x m`. The
+# windows come from tmux by the sessions they hold, never from the request.
+def tmc_bin() -> str | None:
+    import shutil
+
+    return os.environ.get("OFFICE_TMC") or shutil.which("tmc") or (os.path.expanduser("~/.local/bin/tmc") if os.access(os.path.expanduser("~/.local/bin/tmc"), os.X_OK) else None)
+
+
+def rearrange(kind: str, me: dict, value) -> tuple[int, dict]:
+    tmc = tmc_bin()
+    if not tmc:
+        return 409, {"error": "tmc is not installed"}
+    src = me["wid"]
+    if kind == "send":
+        dest = str(value or "")
+        try:
+            live = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"], capture_output=True, text=True, timeout=3).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            live = []
+        if dest not in live:
+            return 400, {"error": "no such tmux session"}
+        argv = [tmc, "window", "send", src, "--to", dest]
+    else:
+        other = next((p for p in snapshot() if p["id"] == str(value or "")), None)
+        if not other:
+            return 404, {"error": "no such session to merge into"}
+        if other["wid"] == src:
+            return 400, {"error": "that is the same window"}
+        argv = [tmc, "window", "merge", src, "--into", other["wid"]]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 500, {"error": str(e)}
+    if r.returncode != 0:
+        msg = (r.stderr or r.stdout).strip()
+        if "unrecognized subcommand" in msg:
+            msg = "this tmc has no `window` command yet (keyolk/tmc#18)"
+        return 500, {"error": msg[:300]}
+    return 200, {"ok": True, "sent": r.stdout.strip()}
 
 
 # Agents the person set aside from the waiting queue, until when (epoch s).
@@ -605,10 +800,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def send(self, code: int, body: bytes, kind: str):
+    def send(self, code: int, body: bytes, kind: str, extra: dict | None = None):
         self.send_response(code)
         self.send_header("Content-Type", kind)
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -636,11 +833,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, b"forbidden", "text/plain")
         if self.path.startswith("/next"):
             return self.send(200, json.dumps({"n": NEXT["n"]}).encode(), "application/json")
+        if self.path.startswith("/file"):
+            from urllib.parse import parse_qs, urlparse
+
+            q = parse_qs(urlparse(self.path).query)
+            code, body, kind, extra = viewable((q.get("sid") or [""])[0], (q.get("path") or [""])[0])
+            return self.send(code, body, kind, extra)
         if self.path.startswith("/detail"):
             from urllib.parse import parse_qs, urlparse
 
-            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
-            return self.send(200, json.dumps(detail(sid)).encode(), "application/json")
+            q = parse_qs(urlparse(self.path).query)
+            sid, kind = (q.get("sid") or [""])[0], (q.get("kind") or [""])[0]
+            kind = kind if kind in ("desk", "in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
+            return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             return self.send(200, json.dumps({"at": time.time(), "people": snapshot(), "snoozed": snoozed()}).encode(), "application/json")
         if self.path.startswith("/focus"):
@@ -659,7 +864,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, f.read(), "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
-                return self.send(200, f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()), "text/html; charset=utf-8")
+                page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
+                return self.send(200, page, "text/html; charset=utf-8")
         self.send(404, b"not found", "text/plain")
 
 
