@@ -250,6 +250,10 @@ answers there.
   (`bin/cc-office-next`; `prefix o` is extrakto's) brings the office pane in
   front and opens the next one waiting:
   `bind-key O run-shell -b '~/src/keyolk/cc-mods/bin/cc-office-next'`
+- **Long answers**: the card shows the whole last answer (up to 12k chars),
+  opened at its end, and scrolls without the mouse: `PgUp`/`PgDn` anywhere
+  (the reply box included), `↑`/`↓` in an empty reply box, and outside it
+  `j`/`k`, `Space`/`⇧Space`, `Home`/`End`.
 - **Keys** (`?` lists them): `1`-`9` press the card's numbered button (a
   dialog option or a quick reply), `R` or `/` the reply box (`⌘Enter` sends,
   `Esc` leaves it), `S` stop, `G` its window, `Esc` close, arrows pan, `+`/`-`

@@ -371,7 +371,7 @@ def last_text(sid: str) -> str:
     try:
         with open(path, "rb") as f:
             f.seek(0, 2)
-            f.seek(max(0, f.tell() - 200_000))
+            f.seek(max(0, f.tell() - 400_000))
             lines = f.read().decode("utf-8", "replace").splitlines()[1:]
     except OSError:
         return ""
@@ -385,7 +385,7 @@ def last_text(sid: str) -> str:
             continue
         txt = "\n".join(b.get("text", "") for b in m["content"] if b.get("type") == "text").strip()
         if txt:
-            return txt[-2500:]
+            return txt[-12000:]
     return ""
 
 
