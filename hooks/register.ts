@@ -47,7 +47,7 @@ import { capAnswers, isHumanPrompt, parseStamps, rebuild, transcriptPath, type B
 import { agentFlow, flowOf } from './lib/flow'
 import { HELD_PREFIX, firstLine, heldNotification, holdDeadline, isWrite, parseExpiry, parseMonitor, shouldRearm, splitLines, startedTaskId, turnMattered, watchInput, weigh, type MonitorState, type WatchInput, type Weight } from './lib/monitor'
 import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
-import { CAPS, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
+import { CAPS, GOD_MS, godArgvs, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
 import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
@@ -875,6 +875,53 @@ async function applyPolicy($: any, argv: string[], ttlMs?: number, revert?: stri
   await update($, uiA, (u) => ({ ...u, policyMsg: r.ok ? 'applied: ' + argv.join(' ') : 'failed: ' + clip(r.out, 200) }))
   await loadPolicy($)
   return r
+}
+
+// God mode (lib/policy.ts GOD_MS): the policy from before the press, and the
+// timer that puts it back. Kept in the store too, so a reload of the mod
+// still ends it on time.
+let god: { until: number; before: Policy; timer?: { cancel: () => void } } | undefined
+
+async function startGod($: any, minutes: number) {
+  const before = (await read($, policyA)) as Policy | null
+  if (!before) return void $.ui.toast('policy not loaded yet')
+  let answer = 'cancel'
+  try {
+    answer = await $.ui.ask('Allow every capability (merge, prod EKS write, Slack to anyone, tmux outside this window …) for ' + minutes + ' minutes?', ['allow everything', 'cancel'])
+  } catch {
+    answer = 'cancel'
+  }
+  if (answer !== 'allow everything') return
+  const prior = god?.before ?? before
+  god?.timer?.cancel()
+  for (const argv of godArgvs()) await runPolicy($, argv)
+  const until = Date.now() + Math.min(minutes * 60_000, 2 * GOD_MS)
+  god = { until, before: prior, timer: $.clock.after(until - Date.now(), () => void endGod($, 'time is up')) }
+  await $.store.set(K.god(sid), { until, before: prior })
+  await loadPolicy($)
+  await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode until ' + hhmm(until) }))
+  $.ui.toast('⚡ god mode: everything allowed until ' + hhmm(until))
+}
+
+async function endGod($: any, why: string) {
+  const g = god ?? (((await $.store.get(K.god(sid))) ?? undefined) as { until: number; before: Policy } | undefined)
+  god?.timer?.cancel()
+  god = undefined
+  await $.store.set(K.god(sid), null)
+  if (!g) return
+  for (const argv of restoreArgvs(g.before)) await runPolicy($, argv)
+  await loadPolicy($)
+  await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode ended (' + why + '): policy put back' }))
+  $.ui.toast('god mode ended (' + why + '): policy put back')
+}
+
+// After a reload: an unexpired god mode keeps its end time; an expired one
+// is put back now.
+async function resumeGod($: any) {
+  const g = (await $.store.get(K.god(sid))) as { until: number; before: Policy } | undefined
+  if (!g) return
+  if (g.until <= Date.now()) return endGod($, 'time is up')
+  god = { ...g, timer: $.clock.after(g.until - Date.now(), () => void endGod($, 'time is up')) }
 }
 
 async function addOutputs($: any, add: Output[]) {
@@ -2754,6 +2801,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const saved = dropUnsourcedTickets(((await $.store.get(K.outputs(sid))) ?? []) as Output[])
     if (saved.length) await update($, outputsA, (cur) => (cur.length ? cur : saved))
     await loadPolicy($)
+    await resumeGod($)
     void noteSession($)
     void loadUsage($)
     void loadGoal($)
@@ -4527,6 +4575,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       onUnscope: (cap: Cap, scope) => void applyPolicy($, ['inherit', cap, cap === 'gh_merge' ? '--repo' : '--scope', scope]),
       labels: await slackLabels($),
       onTimed: (cap: Cap, minutes) => void applyPolicy($, ['allow', cap], minutes * 60_000, ['inherit', cap]),
+      god: god?.until,
+      onGod: (minutes?: number) => void (minutes && !god ? startGod($, minutes) : endGod($, 'ended by you')),
       hints: scopeHints(
         [
           ...(repo ? [{ cap: 'gh_merge' as Cap, scope: repo, why: 'cwd' as const }] : []),

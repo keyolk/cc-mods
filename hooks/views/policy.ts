@@ -7,7 +7,7 @@
 // decide) — followed by three buttons. The first version showed a Select
 // reading `inherit ▾ → block`, which mixed the setting with its effect.
 
-import { CAPS, MODES, SCOPED, slackDefaultTargets, resolveCap, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from '../lib/policy'
+import { CAPS, GOD_MINUTES, MODES, SCOPED, slackDefaultTargets, resolveCap, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from '../lib/policy'
 import { routeLabel, type RouteDecision, type RouteSettings } from '../lib/route'
 import { C, col, field, header, keys, row, section, type Els, type Node } from './common'
 
@@ -23,6 +23,10 @@ export type PolicyView = {
   onMode: (mode: string) => void
   onScope: (cap: Cap, scope: string) => void
   onTimed: (cap: Cap, minutes: number) => void
+  // God mode (lib/policy.ts): every capability allowed until `god` (epoch ms);
+  // a press with minutes turns it on, without (or while on) turns it off.
+  god?: number
+  onGod?: (minutes?: number) => void
   hints?: readonly ScopeHint[] // scopes this session used or was blocked on
   onHint?: (h: ScopeHint) => void
   onUnscope?: (cap: Cap, scope: string) => void // a ✕ on an allowed target
@@ -117,8 +121,27 @@ export function renderPolicy(els: Els, v: PolicyView): Node {
   })
 
   const timed = Object.entries(v.timers).filter(([, t]) => t > v.now)
+  const godOn = !!v.god && v.god > v.now
+  const godRow = v.onGod
+    ? Box({
+        flexDirection: 'row',
+        columnGap: 2,
+        flexWrap: 'wrap',
+        children: godOn
+          ? [
+              Text({ bold: true, color: C.bad, children: ['⚡ GOD: everything allowed · ' + Math.ceil((v.god! - v.now) / 60_000) + 'm left'] }),
+              Button({ key: 'god-off', label: 'end god mode', plain: true, onPress: () => v.onGod!(), children: [Text({ color: C.accent, children: ['✕ end now, put the policy back'] })] }),
+            ]
+          : [
+              Text({ color: C.muted, children: ['⚡ god mode: allow everything for'] }),
+              ...GOD_MINUTES.map((m) => Button({ key: 'god-' + m, label: 'god ' + m + 'm', plain: true, onPress: () => v.onGod!(m), children: [Text({ color: C.warn, children: [m + 'm'] })] })),
+              Text({ color: C.faint, children: ['then the policy before is put back'] }),
+            ],
+      })
+    : undefined
   return col(els, [
     ...(top ? [top] : []),
+    ...(godRow ? [godRow] : []),
     section(els, 'Mode'),
     modes,
     section(els, 'Capabilities', 'in effect · set to'),

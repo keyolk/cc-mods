@@ -196,6 +196,44 @@ test('the policy pane draws a row per capability and applies a mode', async ($, 
   await ui.unmount()
 })
 
+test('god mode: one press allows every capability after a confirm, and the policy from before comes back when it ends or on its time', async ($, on) => {
+  const box = { json: JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] }) }
+  const runs = baseStubs(on, { policyBox: box })
+  const answers = ['cancel', 'allow everything', 'allow everything']
+  // $.ui.ask is AskUserQuestion's tool.call: the person's choice comes back as its answer.
+  on('tool.call', (_$: any, e: any) => (e.tool === 'AskUserQuestion' ? ({ result: { answers: { [e.questions?.[0]?.question ?? '']: answers.shift() } } } as any) : ({ result: {} } as any)))
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
+  await ui.press({ key: 'cockpit-policy' })
+  const policyRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py')).map((a) => a.slice(2).join(' '))
+  // Cancelled: nothing changes.
+  await ui.press({ key: 'god-30' })
+  expect(policyRuns().filter((a) => a.startsWith('allow'))).toEqual([])
+  await ui.press({ key: 'god-30' })
+  for (const cap of ['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'tmux_window_escape']) expect(policyRuns()).toContain('allow ' + cap)
+  // The guard file now says everything is allowed.
+  box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
+  await clock.advance(30_000)
+  expect(JSON.stringify(await ui.drawn())).toContain('GOD: everything allowed')
+  // Ended by the person: the mode and the scope from before are put back.
+  const n = policyRuns().length
+  await ui.press({ key: 'god-off' })
+  expect(policyRuns().slice(n)).toEqual(['mode pr-merge', 'allow gh_merge --repo acme/infra'])
+  // The stub CLI does not write: the file says what the restore made it.
+  box.json = JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] })
+  await clock.advance(30_000)
+  expect(JSON.stringify(await ui.drawn())).not.toContain('GOD: everything allowed')
+  // Again, and left alone: it ends by itself after its minutes.
+  await ui.press({ key: 'god-15' })
+  expect(policyRuns().filter((a) => a === 'allow prod_eks_write')).toHaveLength(2)
+  const m = policyRuns().length
+  await clock.advance(15 * 60_000 + 10)
+  expect(policyRuns().slice(m)).toEqual(['mode pr-merge', 'allow gh_merge --repo acme/infra'])
+  await ui.unmount()
+})
+
 test('a scope the policy guard blocked is offered on the Policy tab and granted with one press', async ($, on) => {
   const runs = baseStubs(on, { policyJson: JSON.stringify({ mode: 'custom', capabilities: { prod_eks_write: 'block' } }) })
   const deny = 'BLOCKED by session policy: prod_eks_write=block.\n(e.g. `/policy allow prod-w main-prod-apne2/kube-system 15m`).'

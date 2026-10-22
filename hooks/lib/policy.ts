@@ -264,3 +264,20 @@ export function parseUserSearch(text: string): { id: string; name: string } | un
   const m = /^\d+\. (.+?) - (U[A-Z0-9]+)/m.exec(text)
   return m ? { id: m[2]!, name: m[1]! } : undefined
 }
+
+// God mode: every capability allowed at once, from one press of the person's
+// (the Policy tab, the palette). Never a mode in session_policy.py: it is the
+// same per-capability `allow` calls a person could make row by row, so the
+// guards and their audit stay as they are. It always ends: GOD_MS after the
+// press, or on the same button, the policy from before is put back.
+export const GOD_MS = 30 * 60_000
+export const GOD_MINUTES = [15, 30, 60] as const
+
+export function godArgvs(): string[][] {
+  return CAPS.map((cap) => ['allow', cap])
+}
+
+// On while every capability is allowed outright.
+export function isGod(p: Pick<Policy, 'caps'>): boolean {
+  return CAPS.every((cap) => p.caps[cap] === 'allow')
+}

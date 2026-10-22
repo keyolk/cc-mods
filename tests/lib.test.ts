@@ -23,7 +23,7 @@ import { ROUTE_OFF, cacheGate, decide, resolveModel, routeLabel } from '../hooks
 import { WEB_ANCHOR, engineForUrl, engineOfTarget, parseEngine, parseEngineRules, urlPicks, urlsIn, keyBytes, sgrMouse, sgrWheel, toHex, urlFromInput } from '../hooks/lib/web'
 import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/backfill'
 import { agentFlow, flowOf, paragraphs } from '../hooks/lib/flow'
-import { badge, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
+import { CAPS, badge, godArgvs, isGod, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
 import { checkVerdict, ghAccountFor, gitopsFromComments, graphqlQuery, needLabel, needsAttention, parseGraphql, prLine, repoFromGh, repoFromRemote } from '../hooks/lib/prs'
 import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
 import { clientItems, navItems, navTarget, skipHidden } from '../hooks/lib/nav'
@@ -1496,4 +1496,12 @@ test('mcp login: a finished login marks that connector ok in the cached list, an
   const out = markLoggedIn(list, 'portal')
   expect(out.map((i) => [i.id, i.state, i.fix])).toEqual([['mcp:portal', 'ok', undefined], ['mcp:gestalt', 'expired', ['/mcp']]])
   expect(list[0]!.state).toBe('expired')
+})
+
+test('policy: god mode is every capability allowed, nothing less', () => {
+  expect(godArgvs().map((a) => a[1])).toEqual([...CAPS])
+  expect(godArgvs().every((a) => a[0] === 'allow' && a.length === 2)).toBe(true)
+  const all = Object.fromEntries(CAPS.map((c) => [c, 'allow'])) as any
+  expect(isGod({ caps: all })).toBe(true)
+  expect(isGod({ caps: { ...all, tmux_window_escape: 'block' } })).toBe(false)
 })
