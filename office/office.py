@@ -444,6 +444,10 @@ def act(body: dict) -> tuple[int, dict]:
     return 400, {"error": "unknown action"}
 
 
+# `prefix O` (tmux) bumps this; the page sees the bump and opens the next one.
+NEXT = {"n": 1}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -460,6 +464,11 @@ class Handler(BaseHTTPRequestHandler):
         return host in (f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}")
 
     def do_POST(self):
+        # Opening the next card changes nothing in a session, so the tmux key
+        # needs no token; it still has to come from this machine.
+        if self.local() and self.path == "/next":
+            NEXT["n"] += 1
+            return self.send(204, b"", "text/plain")
         if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path != "/act":
             return self.send(403, b"forbidden", "text/plain")
         try:
@@ -472,6 +481,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.send(403, b"forbidden", "text/plain")
+        if self.path.startswith("/next"):
+            return self.send(200, json.dumps({"n": NEXT["n"]}).encode(), "application/json")
         if self.path.startswith("/detail"):
             from urllib.parse import parse_qs, urlparse
 

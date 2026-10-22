@@ -62,14 +62,15 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>N</kbd> <kbd>Tab</kbd></td><td>다음으로 답할 agent (❗ 먼저, 오래 기다린 순)</td></tr>
     <tr><td><kbd>P</kbd> <kbd>⇧Tab</kbd></td><td>이전 agent</td></tr>
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
-    <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>직접 답장 입력 (<kbd>⌘</kbd><kbd>Enter</kbd> 보내기)</td></tr>
+    <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
+    <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>G</kbd></td><td>그 agent의 tmux 창으로 이동</td></tr>
     <tr><td><kbd>Esc</kbd></td><td>카드 닫기 / 입력 빠져나오기</td></tr>
     <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>이동 · 확대 · 축소 · 전체 맞춤</td></tr>
     <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
   </table>
-  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.</div>
+  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 처음 한 번 <kbd>i</kbd>(insert)로 키를 페이지에 넘기세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
 </div>
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
@@ -380,7 +381,7 @@ function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(p
 const help = document.getElementById('help')
 addEventListener('keydown', (e) => {
   const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
-  if (typing) { if (e.key === 'Escape') { e.target.blur(); e.preventDefault() } return }
+  if (typing) return // the reply box handles its own keys
   if (e.metaKey || e.ctrlKey || e.altKey) return
   const k = e.key
   const open = card.style.display === 'block'
@@ -447,6 +448,7 @@ async function openCard(sid) {
       setTimeout(() => { if (cardSid !== sid) return; if (done && waiting().some((p) => p.id !== sid)) { msg.textContent += ' → 다음'; setTimeout(() => step(1, sid), 500) } else if (done) closeCard(); else openCard(sid) }, 700)
     } catch (e) { msg.className = 'msg err'; msg.textContent = '못 보냄: ' + e.message }
   }
+  card.reply = null
   if (d.dialog) {
     add('div', 'q', '🗳 ' + esc(d.dialog.question || '선택지'))
     const row = add('div', 'row')
@@ -454,10 +456,19 @@ async function openCard(sid) {
   } else {
     const row = add('div', 'row')
     d.suggestions.forEach((t, i) => { const b = document.createElement('button'); b.className = 'act go'; b.innerHTML = '<span class="key">' + (i + 1) + '</span>' + esc(t); b.onclick = () => send({ kind: 'reply', value: t }, '"' + t + '" 보냄'); row.appendChild(b); card.keys[i + 1] = b })
-    const ta = add('textarea'); ta.placeholder = '직접 답장… (R로 입력, ⌘/Ctrl+Enter로 보내기, Esc로 빠져나오기)'; card.reply = ta
+    // The reply box takes the keyboard as soon as the card opens: type and
+    // Enter. Empty, a digit presses that button and Tab moves to the next
+    // agent, so the whole round needs no mouse and no mode key.
+    const ta = add('textarea'); ta.placeholder = '바로 입력 · Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · Esc 빠져나오기'; card.reply = ta
     const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
-    ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) go() }
-    const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go'; b.textContent = '보내기'; b.onclick = go; r2.appendChild(b)
+    ta.onkeydown = (e) => {
+      if (e.isComposing || e.keyCode === 229) return // the Korean IME is still composing this syllable
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
+      if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
+      if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
+      if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
+    }
+    const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go'; b.innerHTML = '<span class="key">⏎</span>보내기'; b.onclick = go; r2.appendChild(b)
   }
   const nav = add('div', 'row')
   card.stop = null
@@ -465,6 +476,8 @@ async function openCard(sid) {
   const j = document.createElement('button'); j.className = 'act nav'; j.innerHTML = '<span class="key">G</span>↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j); card.go = j
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
   card.appendChild(msg)
+  // A dialog has no reply box; the card itself takes the keys then.
+  setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } }, 30)
 }
 
 // ---------- hover ----------
@@ -915,6 +928,17 @@ function frame(now) {
   for (const [, fn] of items) fn()
 }
 
+// `prefix O` in tmux (office.py /next) asks the page to open the next one
+// waiting: picked up here, so it works from any window without the mouse.
+let nextSeen = 0
+async function pollNext() {
+  try {
+    const j = await (await fetch('/next?since=' + nextSeen, { cache: 'no-store' })).json()
+    if (j.n > nextSeen) { const first = nextSeen > 0; nextSeen = j.n; if (first) step(1) }
+  } catch {}
+  setTimeout(pollNext, 400)
+}
+pollNext()
 async function tick() {
   try { const r = await fetch('/state', { cache: 'no-store' }); apply((await r.json()).people) } catch { /* the server restarts: keep the last picture */ }
 }

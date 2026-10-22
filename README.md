@@ -231,6 +231,13 @@ answers there.
   each with how long. `N`/`Tab` opens the next one's card (`P`/`⇧Tab` the
   previous): the camera glides and zooms to it and a ring and arrow mark it.
   A reply or a dialog pick moves on to the next one by itself.
+- **No mouse needed**: when a card opens the keyboard is already in its
+  reply box (TWeb passes keys to a focused text field), so: type, `Enter`
+  (`⇧Enter` a new line); in an empty box `1`-`9` press a button; `Tab`/`⇧Tab`
+  go to the next/previous agent. From any other window, tmux `prefix O`
+  (`bin/cc-office-next`; `prefix o` is extrakto's) brings the office pane in
+  front and opens the next one waiting:
+  `bind-key O run-shell -b '~/src/keyolk/cc-mods/bin/cc-office-next'`
 - **Keys** (`?` lists them): `1`-`9` press the card's numbered button (a
   dialog option or a quick reply), `R` or `/` the reply box (`⌘Enter` sends,
   `Esc` leaves it), `S` stop, `G` its window, `Esc` close, arrows pan, `+`/`-`
