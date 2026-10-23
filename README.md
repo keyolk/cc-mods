@@ -187,12 +187,18 @@ else the first name of your account's full name, else your login name.
   catches up; and a session that has just finished stays at its desk for 90
   s holding its answer up (a page with a tick) before it wanders off, so a
   short job shows as it coming back and answering.
+- **Going home**: a session that ends walks out through the `EXIT` door in
+  the left wall near the front and fades out there: after a long day (8 h or
+  2000 tool calls) slumped and slow, bags under its eyes, a grey cloud and
+  `휴… 퇴근`; after a short one (under an hour) hopping with its arms up and
+  `퇴근이다!`; otherwise a wave and `수고했습니다`.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
   minutes they lie down in a pile in front of the sofa, asleep.
 - **Subagents** (`<project>/<sid>/subagents/agent-*.jsonl`, live while written
-  in the last 45 s) are small ones with an antenna from the crowd squeezed
-  into the back corner behind a low partition (`🐣 N` on its door, fewer while
-  some are out): the door opens, one walks out to its session and stands with
+  in the last 45 s) are small ones with an antenna from the queue in their
+  narrow room at the far end, as deep as the other rooms (`🐣 N` on its door
+  at the front, fewer while some are out): the door opens, the head of the
+  queue walks out to its session and stands with
   it (a row in front of its desk, or around it in a room) on a dotted tether,
   shows its own work by pose and bubble, and walks back in when done.
 - **Personality** from its own transcript, every tool call counted once

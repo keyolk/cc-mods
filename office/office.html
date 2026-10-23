@@ -243,23 +243,25 @@ const NAP_S = 10 * 60
 const PILE = [10.45, 1.55]
 for (const z of Object.values(ZONES)) for (const y of [1.75, 2.65, 3.55]) for (let x = z.x0 + 0.55; x < z.x1 - 0.4; x += 0.78) z.spots.push([x + (y === 2.65 ? 0.39 : 0), y])
 // The lounge's café table and vending machine take a corner of its floor.
-const CAFE = [11.25, 3.05], VEND = [11.95, 1.45]
+const CAFE = [11.25, 3.05], VEND = [8.4, 1.45]
 // Three phone booths along the back wall; a caller stands in the first free
 // one (its spot in front of the phone), the rest wait on the floor.
 const BOOTHS = [6.05, 6.7, 7.35]
 ZONES.phone.spots = [...BOOTHS.map((bx) => [bx + 0.3, 0.95]), ...ZONES.phone.spots.filter(([, y]) => y > 2)]
 ZONES.phone.prefer = BOOTHS.length
-ZONES.lounge.spots = ZONES.lounge.spots.filter(([x, y]) => Math.hypot(x - CAFE[0] - 0.3, y - CAFE[1] - 0.3) > 0.75 && !(x > VEND[0] - 0.35 && y < VEND[1] + 0.95))
+ZONES.lounge.spots = ZONES.lounge.spots.filter(([x, y]) => Math.hypot(x - CAFE[0] - 0.3, y - CAFE[1] - 0.3) > 0.75 && !(Math.abs(x - VEND[0] - 0.27) < 0.6 && y < VEND[1] + 0.95))
 // The back corner where the subagents wait, squeezed together behind a low
 // partition with a door. One comes out when a session calls a subagent and
 // goes back in when it is done.
-const POOL = { x0: 15.9, x1: 18.5, y0: 0.05, y1: 1.35, door: [16.85, 17.45] }
-const POOL_IN = [17.15, 0.75], POOL_OUT = [17.15, 1.7]
+// A narrow room as deep as the others, the crowd standing in one queue down
+// it to a door at the front; the one at the head comes out.
+const POOL = { x0: 17.65, x1: 18.5, y0: 0.35, y1: 4.25, door: [17.8, 18.35] }
+const POOL_IN = [18.07, 3.95], POOL_OUT = [18.07, 4.6]
 const POOL_SIZE = 14
 // The meeting room: glass walls in the free corner below the crowd, a table
 // and standing places round it, a door on its left.
-const MEET = { x0: 12.85, x1: 15.75, y0: 0.35, y1: 4.25, table: [13.55, 15.05, 1.7, 2.9], door: [3.3, 3.95] }
-const MEET_SEATS = [[13.9, 1.35], [14.7, 1.35], [15.4, 2.0], [15.4, 2.6], [14.7, 3.25], [13.9, 3.25], [13.2, 2.6], [13.2, 2.0]]
+const MEET = { x0: 12.85, x1: 17.45, y0: 0.35, y1: 4.25, table: [13.65, 16.45, 1.8, 2.85], door: [3.3, 3.95] }
+const MEET_SEATS = [[14.1, 1.45], [15.05, 1.45], [16.0, 1.45], [16.85, 2.3], [16.0, 3.2], [15.05, 3.2], [14.1, 3.2], [13.25, 2.3]]
 let doorOpenUntil = 0
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
@@ -301,14 +303,14 @@ function rebuildGrid() {
   mark(0, 0, W + 0.6, 0.25) // back wall
   for (let k = 0; k < 3; k++) mark(0.35 + k * 1.1, 0, 0.35 + k * 1.1 + 1.05, 0.38)
   mark(8.4, 0.1, 9.02, 0.65); mark(9.12, 0.25, 11.82, 1.0); mark(12.05, 0.2, 12.47, 0.62); mark(POOL.x0, POOL.y0, POOL.x0 + 0.08, POOL.y1); mark(POOL.x0, POOL.y1 - 0.06, POOL.door[0], POOL.y1 + 0.06); mark(POOL.door[1], POOL.y1 - 0.06, POOL.x1, POOL.y1 + 0.06)
-  mark(POOL.x0, POOL.y0, POOL.door[0] - 0.05, POOL.y1); mark(POOL.door[1] + 0.05, POOL.y0, POOL.x1, POOL.y1) // the crowd
+  mark(POOL.x0, POOL.y0, POOL.x1, POOL.y1 - 0.45) // the queue
   mark(0.6, 0.85, 3.3, 1.3) // reading table
   mark(3.95, 0.05, 4.75, 0.7); mark(4.0, 0.9, 5.7, 1.3) // machine, workbench
   for (const bx of BOOTHS) { mark(bx, 0.05, bx + 0.6, 0.7); mark(bx - 0.03, 0.05, bx + 0.02, 0.85); mark(bx + 0.58, 0.05, bx + 0.63, 0.85) }
   mark(CAFE[0], CAFE[1], CAFE[0] + 0.6, CAFE[1] + 0.6); mark(VEND[0], VEND[1], VEND[0] + 0.55, VEND[1] + 0.5)
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
   mark(MEET.x0, MEET.y0, MEET.x0 + 0.06, MEET.door[0]); mark(MEET.x0, MEET.door[1], MEET.x0 + 0.06, MEET.y1); mark(MEET.x1 - 0.06, MEET.y0, MEET.x1, MEET.y1)
-  mark(MEET.table[0], MEET.table[2], MEET.table[1], MEET.table[3]); mark(15.25, 0.45, 15.67, 0.87)
+  mark(MEET.table[0], MEET.table[2], MEET.table[1], MEET.table[3]); mark(16.95, 0.45, 17.37, 0.87)
   for (const w2 of windows) for (const p of w2.sessions) if (p.compacts) mark(p.desk[0] + MEMORY_AT[0], p.desk[1] + MEMORY_AT[1], p.desk[0] + MEMORY_AT[0] + 0.56, p.desk[1] + MEMORY_AT[1] + 0.2)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
@@ -484,7 +486,9 @@ function apply(people) {
     if (live.has(id)) continue
     // Done: back to the corner and in through the door.
     if (e.kind === 'sub' && !e.leaving) { e.leaving = true; e.tx = POOL_IN[0]; e.ty = POOL_IN[1]; releaseSpots(id) }
-    else if (e.kind === 'session') { ents.delete(id); releaseSpots(id) }
+    // A session that ended goes home: out through the door, tired or glad
+    // by how long it worked.
+    else if (e.kind === 'session' && !e.leaving) { e.leaving = true; e.mood = homeMood(e.data); e.leftAt = performance.now(); e.data = { ...e.data, doing: 'leaving', room: 'out' }; const [d0, d1] = exitAt(); e.tx = 0.15; e.ty = (d0 + d1) / 2; releaseSpots(id) }
   }
   document.getElementById('s1').innerHTML = '세션 <b>' + stats.total + '</b>'
   document.getElementById('s2').innerHTML = '일하는 중 <b>' + stats.work + '</b>'
@@ -511,6 +515,9 @@ let mutedSince = {}
 const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
 const isZipped = (id) => !!mutedSince[id] && !mutedSince[id].until
 const wantsToTalk = (p) => p.doing === 'asking' || p.doing === 'alert'
+// How it leaves: a long day (8 h and more, or 2000 tool calls) is tired, a
+// short one (under an hour) is glad, the rest just going home.
+function homeMood(p) { const a = ageOf(p) || 0; return a > 8 * 3600 || (p.tools || 0) > 2000 ? 'tired' : a < 3600 ? 'glad' : 'calm' }
 function waiting() {
   return [...ents.values()].filter((e) => e.kind === 'session' && wantsToTalk(e.data) && !isMuted(e.id))
     .map((e) => e.data)
@@ -1487,7 +1494,7 @@ function meetingRoom(add, t) {
   const glassY = (x, y0, y1, h) => { box(x, y0, 0.06, y1 - y0, 4, '#8fa3c9'); poly([P(x + 0.06, y0, 4), P(x + 0.06, y1, 4), P(x + 0.06, y1, h), P(x + 0.06, y0, h)], 'rgba(205,225,255,.38)', 'rgba(70,90,140,.55)', 1); box(x, y0, 0.06, y1 - y0, 2, '#8fa3c9', h) }
   // The whiteboard on the back wall: the topic and the minutes' last lines.
   add(MEET.x0 + 0.2 + MEET.y0, () => {
-    const q = [P(13.2, -0.3, 14), P(15.4, -0.3, 14), P(15.4, -0.3, 60), P(13.2, -0.3, 60)]
+    const q = [P(13.6, -0.3, 14), P(16.4, -0.3, 14), P(16.4, -0.3, 60), P(13.6, -0.3, 60)]
     poly(q, '#fffdf6', LINE, 1.2)
     const [ox, oy] = q[3], [ax, ay] = q[2], l = Math.hypot(ax - ox, ay - oy) || 1
     g.save(); g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
@@ -1496,19 +1503,19 @@ function meetingRoom(add, t) {
     if (m) { g.font = Math.max(5, 8 * cam.s) + 'px Jua, sans-serif'; g.fillStyle = '#2a2033'; m.tail.forEach((ln, i) => g.fillText(ln.slice(0, 38), 4 * cam.s, (16 + i * 10) * cam.s)) }
     g.restore()
   }, [MEET.x0 + 0.2, MEET.x1 - 0.2, -0.3, -0.25])
-  add(MEET.x0 + 0.06 + MEET.door[0], () => glassY(MEET.x0, MEET.y0, MEET.door[0], 44), [MEET.x0, MEET.x0 + 0.06, MEET.y0, MEET.door[0]])
-  add(MEET.x0 + 0.06 + MEET.y1, () => glassY(MEET.x0, MEET.door[1], MEET.y1, 44), [MEET.x0, MEET.x0 + 0.06, MEET.door[1], MEET.y1])
-  add(MEET.x1 + MEET.y1, () => glassY(MEET.x1 - 0.06, MEET.y0, MEET.y1, 44), [MEET.x1 - 0.06, MEET.x1, MEET.y0, MEET.y1])
+  add(MEET.x0 + 0.06 + MEET.door[0], () => glassY(MEET.x0, MEET.y0, MEET.door[0], 26), [MEET.x0, MEET.x0 + 0.06, MEET.y0, MEET.door[0]])
+  add(MEET.x0 + 0.06 + MEET.y1, () => glassY(MEET.x0, MEET.door[1], MEET.y1, 26), [MEET.x0, MEET.x0 + 0.06, MEET.door[1], MEET.y1])
+  add(MEET.x1 + MEET.y1, () => glassY(MEET.x1 - 0.06, MEET.y0, MEET.y1, 26), [MEET.x1 - 0.06, MEET.x1, MEET.y0, MEET.y1])
   const [tx0, tx1, ty0, ty1] = MEET.table
   add(tx1 + ty1, () => {
     for (const [lx, ly] of [[tx0 + 0.1, ty0 + 0.1], [tx1 - 0.15, ty0 + 0.1], [tx0 + 0.1, ty1 - 0.15], [tx1 - 0.15, ty1 - 0.15]]) box(lx, ly, 0.05, 0.05, 16, '#5b4a3a')
     box(tx0, ty0, tx1 - tx0, ty1 - ty0, 4, m ? '#a0784f' : '#b08a63', 16)
     if (m) for (let i = 0; i < m.sids.length; i++) { const [sx, sy] = MEET_SEATS[i % MEET_SEATS.length]; const px = Math.min(tx1 - 0.25, Math.max(tx0 + 0.05, sx - 0.12)), py = Math.min(ty1 - 0.2, Math.max(ty0 + 0.04, sy - 0.08)); box(px, py, 0.22, 0.15, 1, '#fffdf6', 20) }
     const [cx, cy] = P((tx0 + tx1) / 2, (ty0 + ty1) / 2, 20)
-    if (m) { deskHits.push({ sx: cx, sy: cy, r: 30 * cam.s, sid: m.lead, kind: 'meeting', n: m.sids.length, meeting: m }); text(m.sids.length + '명', cx, cy - 4 * cam.s, 9, '#fff8ee') }
+    if (m) { deskHits.push({ sx: cx, sy: cy, r: 30 * cam.s, sid: m.lead, kind: 'meeting', n: m.sids.length, meeting: m }); text(m.sids.length + '명', cx, cy - 4 * cam.s, 10, '#fff8ee') }
   }, [tx0, tx1, ty0, ty1])
   // A plant in the far corner.
-  add(15.45 + 0.6, () => plant(15.25, 0.45), [15.25, 15.67, 0.45, 0.87])
+  add(17.15 + 0.6, () => plant(16.95, 0.45), [16.95, 17.37, 0.45, 0.87])
 }
 // The ring under each picked one.
 function pickRing(e, x, y, s) { if (!picked.has(e.id)) return; g.strokeStyle = '#7dd3fc'; g.lineWidth = 2.5 * cam.s; g.setLineDash([4 * cam.s, 3 * cam.s]); g.beginPath(); g.ellipse(x, y, 21 * s, 8.5 * s, 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]) }
@@ -1582,7 +1589,9 @@ function marginLabels() {
 const WALL_H = 70
 const backQuad = (x0, x1, z0, z1) => [P(x0, -0.3, z0), P(x1, -0.3, z0), P(x1, -0.3, z1), P(x0, -0.3, z1)]
 const leftQuad = (y0, y1, z0, z1) => [P(-0.3, y0, z0), P(-0.3, y1, z0), P(-0.3, y1, z1), P(-0.3, y0, z1)]
-const leftWindows = () => { const out = []; for (let y = 4.9; y + 1.6 < D - 0.2; y += 2.7) out.push(y); return out }
+const leftWindows = () => { const out = []; for (let y = 4.9; y + 1.6 < D - 1.9; y += 2.7) out.push(y); return out }
+// The way out: a door in the left wall near the front.
+const exitAt = () => [D - 1.45, D - 0.75]
 // Text painted on a wall: its baseline runs along the wall (dir 'x' for the
 // back wall, 'y' for the left one) and stays upright. On the left wall the
 // screen's left-to-right is toward -y, so that is the way it reads.
@@ -1637,7 +1646,20 @@ function walls(t) {
   g.strokeStyle = '#e86a5c'; hand(now.getSeconds() / 60 * Math.PI * 2, 9.5, 0.7)
   statusBoard(t)
   leftWindows().forEach((y0, k) => wallWindow(leftQuad, (a, z) => P(-0.3, a, z), y0, y0 + 1.6, 30, 62, blindDrop(k + 2), t, k + 2))
+  exitDoor(t)
 }
+// The way out: a door in the left wall near the front, open while someone is
+// leaving, an EXIT sign over it.
+function exitDoor(t) {
+  const [d0, d1] = exitAt(), open = [...ents.values()].some((e) => e.leaving && e.kind === 'session')
+  poly(leftQuad(d0 - 0.06, d1 + 0.06, 0, 52), '#8a6a52')
+  poly(leftQuad(d0, d1, 0, 48), open ? '#2a2033' : '#a0784f')
+  if (open) { poly(leftQuad(d0, d0 + 0.18, 0, 48), '#c49a6c'); g.globalAlpha = 0.35; poly(leftQuad(d0 + 0.18, d1, 0, 46), '#ffe7a3', null); g.globalAlpha = 1 }
+  else { const [kx, ky] = P(-0.3, d1 - 0.12, 24); circle(kx, ky, 1.8 * cam.s, '#f2c14e', null) }
+  poly(leftQuad(d0 + 0.05, d1 - 0.05, 54, 62), '#2f8a5c', LINE, 0.8)
+  wallText(-0.3, d1 - 0.12, 58, '🚪 EXIT', 7, '#ffffff', 'y', 'left')
+}
+
 // The status board on the left wall over the library: the numbers in the top
 // bar, who is next, and the time.
 function statusBoard(t) {
@@ -1784,10 +1806,11 @@ const SKIN = '#ffe2c8', BLUSH = 'rgba(255,128,150,.55)'
 // shoulder to shoulder and a bit squashed, fidgeting; fewer of them while
 // some are out working.
 const POOL_PEOPLE = Array.from({ length: POOL_SIZE }, (_, k) => {
-  // Packed in rows on both sides of the door's corridor, a little jittered.
-  const h = hashOf('pool' + k), left = k % 3 === 0, row = Math.floor(k / 3) % 4
-  const x = left ? POOL.x0 + 0.25 + (row % 2) * 0.3 + ((h % 15) / 100) : POOL.door[1] + 0.2 + ((k % 3) - 1 + (row % 2) * 0.5) * 0.26 + 0.3 + ((h % 10) / 100)
-  return { id: 'pool' + k, kind: 'sub', x, y: POOL.y0 + 0.2 + row * 0.22 + (((h >> 4) % 8) / 100), hue: (h >> 8) % 360, data: { doing: 'pool', job: ['shell', 'read', 'code', 'write'][h % 4] } }
+  // One file from the door back to the wall, a little jittered, the head of
+  // the queue at the door (k = 0).
+  const h = hashOf('pool' + k)
+  const x = (POOL.x0 + POOL.x1) / 2 + ((h % 9) - 4) / 100
+  return { id: 'pool' + k, kind: 'sub', x, y: POOL.y1 - 0.45 - k * 0.25, hue: (h >> 8) % 360, data: { doing: 'pool', job: ['shell', 'read', 'code', 'write'][h % 4] } }
 }).sort((a, b) => a.x + a.y - (b.x + b.y))
 function poolCrowd(add, t) {
   const out = [...ents.values()].filter((e) => e.kind === 'sub').length
@@ -1797,10 +1820,10 @@ function poolCrowd(add, t) {
     const [x, y] = P(p.x, p.y), h = hashOf(p.id)
     g.save(); g.translate(x, y); g.scale(1.06, 0.88 + Math.sin(t * 2 + h) * 0.03); g.translate(-x + Math.sin(t * 1.3 + h) * 1.2 * cam.s, -y)
     drawChibi(p, t, 0); g.restore()
-  })
-  add(POOL.x0 + 0.1 + POOL.y1, () => box(POOL.x0, POOL.y0, 0.08, POOL.y1 - POOL.y0, 22, '#b9a7d6'))
-  add(POOL.door[0] + POOL.y1 + 0.06, () => box(POOL.x0, POOL.y1 - 0.06, POOL.door[0] - POOL.x0, 0.08, 22, '#b9a7d6'))
-  add(POOL.x1 + POOL.y1 + 0.06, () => box(POOL.door[1], POOL.y1 - 0.06, POOL.x1 - POOL.door[1], 0.08, 22, '#b9a7d6'))
+  }, [p.x - 0.14, p.x + 0.14, p.y - 0.12, p.y + 0.12])
+  add(POOL.x0 + 0.08 + POOL.y1, () => box(POOL.x0, POOL.y0, 0.08, POOL.y1 - POOL.y0, 22, '#b9a7d6'), [POOL.x0, POOL.x0 + 0.08, POOL.y0, POOL.y1])
+  add(POOL.door[0] + POOL.y1 + 0.06, () => box(POOL.x0, POOL.y1 - 0.06, POOL.door[0] - POOL.x0, 0.08, 22, '#b9a7d6'), [POOL.x0, POOL.door[0], POOL.y1 - 0.06, POOL.y1 + 0.02])
+  add(POOL.x1 + POOL.y1 + 0.06, () => box(POOL.door[1], POOL.y1 - 0.06, POOL.x1 - POOL.door[1], 0.08, 22, '#b9a7d6'), [POOL.door[1], POOL.x1, POOL.y1 - 0.06, POOL.y1 + 0.02])
   // The door: shut, or swung open while someone goes through.
   add(POOL.door[1] + POOL.y1 + 0.1, () => {
     const open = performance.now() < doorOpenUntil, d0 = POOL.door[0], d1 = POOL.door[1], y = POOL.y1
@@ -1820,6 +1843,36 @@ function subChibi(e, t) {
   }
   drawChibi(e, t, 0)
 }
+// Going home. Tired: slumped and slow, bags under the eyes, a sweat drop, a
+// grey cloud and "휴… 퇴근". Glad: hopping, arms up, sparkles and "퇴근이다!".
+// Otherwise a wave and "수고했습니다". It fades out at the door.
+function leavingChibi(e, t) {
+  const [x, y] = P(e.x, e.y), mood = e.mood, now = performance.now()
+  const fade = e.gone ? Math.max(0, 1 - (now - e.gone) / 900) : 1
+  g.save(); g.globalAlpha = fade
+  const hop = mood === 'glad' ? -Math.abs(Math.sin(t * 9)) * 6 * cam.s : 0, slump = mood === 'tired' ? 3 * cam.s : 0
+  g.translate(0, hop + slump)
+  if (mood === 'tired') { g.translate(x, y); g.rotate(-0.08); g.translate(-x, -y) }
+  drawChibi(e, t, 0)
+  g.restore()
+  const s = cam.s, hy = y - 36 * s + hop + slump
+  g.save(); g.globalAlpha = fade
+  if (mood === 'tired') {
+    g.strokeStyle = 'rgba(90,70,120,.55)'; g.lineWidth = 1.2 * s
+    for (const d of [-5, 5]) { g.beginPath(); g.arc(x + d * s, hy + 3.5 * s, 2.6 * s, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke() }
+    const q = (t * 0.7) % 1; g.fillStyle = 'rgba(120,180,230,.85)'; g.beginPath(); g.ellipse(x + 13 * s, hy - 2 * s + q * 8 * s, 1.8 * s, 2.6 * s, 0, 0, Math.PI * 2); g.fill()
+    for (let i = 0; i < 3; i++) circle(x - 6 * s + i * 6 * s, hy - 24 * s + Math.sin(t * 2 + i) * s, 5 * s, 'rgba(140,140,160,.7)', null)
+    rrect(x - 26 * s, hy - 46 * s, 52 * s, 14 * s, 7 * s, '#ece8f2', 'rgba(59,42,53,.5)', 1); text('휴… 퇴근', x, hy - 39 * s, 8, '#6b6280')
+  } else if (mood === 'glad') {
+    for (let i = 0; i < 4; i++) { const a = t * 3 + i * 1.57; text('✦', x + Math.cos(a) * 18 * s, hy - 6 * s + Math.sin(a) * 10 * s, 8, '#ffd36b') }
+    circle(x - 12 * s, hy - 14 * s - Math.abs(Math.sin(t * 9)) * 3 * s, 3.4 * s, SKIN); circle(x + 12 * s, hy - 14 * s - Math.abs(Math.cos(t * 9)) * 3 * s, 3.4 * s, SKIN)
+    rrect(x - 28 * s, hy - 46 * s, 56 * s, 14 * s, 7 * s, '#fff1b8', 'rgba(59,42,53,.5)', 1); text('퇴근이다!', x, hy - 39 * s, 8, '#a0661e')
+  } else {
+    const w = Math.sin(t * 8) * 4; circle(x + (12 + w * 0.2) * s, hy - 12 * s - Math.abs(w) * 0.5 * s, 3.4 * s, SKIN)
+    rrect(x - 30 * s, hy - 46 * s, 60 * s, 14 * s, 7 * s, '#fffdf6', 'rgba(59,42,53,.5)', 1); text('수고했습니다', x, hy - 39 * s, 8, '#2a2033')
+  }
+  g.restore()
+}
 function chibi(e, t) {
   if (e.data.doing === 'napping' && !e.walking && (e.react || 0) < 0.35) {
     const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
@@ -1833,6 +1886,7 @@ function chibi(e, t) {
     return
   }
   if (e.kind === 'sub') return subChibi(e, t)
+  if (e.leaving) return leavingChibi(e, t)
   drawChibi(e, t, 0)
 }
 // How a character takes the cursor over it, by what it is doing:
@@ -2372,7 +2426,7 @@ function frame(now) {
     if (e.pathTo !== e.tx + ',' + e.ty) { e.pathTo = e.tx + ',' + e.ty; e.path = Math.hypot(e.tx - e.x, e.ty - e.y) > 0.05 ? findPath(e.x, e.y, e.tx, e.ty) : [] }
     const wp = e.path && e.path[0] ? e.path[0] : [e.tx, e.ty]
     const dx = wp[0] - e.x, dy = wp[1] - e.y, dist = Math.hypot(dx, dy)
-    let sp = (e.kind === 'sub' ? 3.2 : 2.6 * ((JOB[e.data.job] || JOB.shell).walk) * (ageStage(e.data) >= 3 ? 0.6 : 1)) * dt
+    let sp = (e.leaving && e.kind === 'session' ? (e.mood === 'tired' ? 1.1 : e.mood === 'glad' ? 3.6 : 2.4) : e.kind === 'sub' ? 3.2 : 2.6 * ((JOB[e.data.job] || JOB.shell).walk) * (ageStage(e.data) >= 3 ? 0.6 : 1)) * dt
     // Ease into the last stretch instead of stopping dead.
     const left = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (left < 0.5) sp *= 0.45 + left
@@ -2387,7 +2441,8 @@ function frame(now) {
     else if (e.path && e.path.length > 1) { e.x = wp[0]; e.y = wp[1]; e.path.shift(); e.walking = true }
     else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
     const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
-    if (e.leaving && dist2 < 0.05) ents.delete(id)
+    if (e.leaving && e.kind === 'sub' && dist2 < 0.05) ents.delete(id)
+    if (e.leaving && e.kind === 'session' && (dist2 < 0.05 || now - e.leftAt > 40000)) { e.gone = e.gone || now; if (now - e.gone > 900) ents.delete(id) }
     if (e.kind === 'sub' && Math.abs(e.x - POOL_OUT[0]) < 0.5 && e.y > POOL.y1 - 0.4 && e.y < POOL_OUT[1] + 0.3) doorOpenUntil = Math.max(doorOpenUntil, now + 600)
   }
   if (camGo.on) { const a = Math.min(1, dt * 6); cam.s += (camGo.s - cam.s) * a; cam.ox += (camGo.ox - cam.ox) * a; cam.oy += (camGo.oy - cam.oy) * a; if (Math.abs(camGo.ox - cam.ox) + Math.abs(camGo.oy - cam.oy) + Math.abs(camGo.s - cam.s) * 100 < 0.5) camGo.on = false }
