@@ -72,6 +72,9 @@ canvas.drag { cursor: grabbing; }
 #viewer .said { max-height: none; margin: 0; border-radius: 0; font-size: 13px; padding: 12px 16px; }
 #card .rel a.view::after { content: ' 👁'; }
 #gear { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
+#pickchip { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
+#pickchip.on { background: #7dd3fc; color: #2a2033; }
+body.picking #c { cursor: crosshair; }
 #settings { position: fixed; left: 14px; top: 52px; width: 340px; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 13px; }
 #settings h3 { margin: 0 0 8px; font-weight: 400; font-family: Jua, sans-serif; }
 #settings .row { margin: 8px 0; }
@@ -135,6 +138,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <h1>🏢 __OFFICE_OWNER__네 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
+  <button id="pickchip" class="chip" title="여러 명 고르기 (V): 클릭으로 고르고 드래그로 묶기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
 </header>
 <div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
@@ -155,7 +159,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
     <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
-    <tr><td><kbd>⇧</kbd>클릭 · <kbd>⇧</kbd>드래그</td><td>여러 명 고르기 → 🗣 회의(회의실에 모여 SendMessage로 의논, 회의록) · 📣 공지 · 💤 미루기</td></tr>
+    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>여러 명 고르기 → 🗣 회의(회의실에 모여 SendMessage로 의논, 회의록) · 📣 공지 · 💤 미루기</td></tr>
     <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
@@ -509,6 +513,9 @@ function apply(people) {
 const summoned = new Map()
 // Picked for a group action (⇧click, ⇧drag), and the meetings going on.
 const picked = new Set()
+// Pick mode (V, or the ☑ chip): click picks, drag lassoes. The terminal keeps
+// Shift+mouse for its own text selection, so ⇧click often never reaches here.
+let pickMode = false
 let meetingsNow = []
 const meetingOf = (sid) => meetingsNow.find((m) => m.sids.includes(sid))
 let mutedSince = {}
@@ -647,7 +654,8 @@ cv.addEventListener('wheel', (e) => {
 let drag = null
 cv.addEventListener('mousedown', (e) => {
   const st = hitStuff(e.clientX, e.clientY), w = st && windowOf(st.sid)
-  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: e.shiftKey ? null : w || null, lasso: e.shiftKey }
+  const lasso = e.shiftKey || pickMode
+  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: lasso ? null : w || null, lasso }
   cv.classList.add('drag')
 })
 addEventListener('mouseup', (e) => {
@@ -704,7 +712,8 @@ addEventListener('keydown', (e) => {
   if (pendingMove && k === 'Escape') return hit(cancelMove)
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
   if (k === 'Escape' && picked.size && pickbar.dataset.mode) return hit(() => { pickbar.dataset.mode = ''; renderPicks() })
-  if (k === 'Escape' && picked.size && card.style.display !== 'block') return hit(() => { picked.clear(); renderPicks() })
+  if (k === 'Escape' && (picked.size || pickMode) && card.style.display !== 'block') return hit(() => setPickMode(false))
+  if ((k === 'v' || k === 'V' || k === 'ㅍ') && card.style.display !== 'block') return hit(() => setPickMode(!pickMode))
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
   if (k === '0') return hit(resetView)
@@ -1427,6 +1436,7 @@ async function doMove() {
 
 // ---------- picking several, and meetings ----------
 let lasso = null
+function setPickMode(on) { pickMode = on; document.getElementById('pickchip').classList.toggle('on', on); document.body.classList.toggle('picking', on); if (!on) { picked.clear(); renderPicks() } else toast('☑ 고르기: 클릭으로 고르고, 드래그로 묶기 · V나 Esc로 끝') }
 function togglePick(id) { if (picked.has(id)) picked.delete(id); else picked.add(id) }
 function lassoPick(x0, y0, x1, y1) {
   const [a, b, c, d] = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]
@@ -1441,6 +1451,7 @@ function drawLasso() {
 // The bar over the office while some are picked: who, and what to do with
 // them. A meeting or an announcement asks for its text right in the bar.
 const pickbar = document.createElement('div'); pickbar.id = 'pickbar'; document.body.appendChild(pickbar)
+document.getElementById('pickchip').onclick = () => setPickMode(!pickMode)
 function renderPicks() {
   for (const id of [...picked]) if (!ents.get(id)) picked.delete(id)
   if (!picked.size) { pickbar.style.display = 'none'; pickbar.dataset.mode = ''; return }
@@ -1473,7 +1484,7 @@ async function groupSend(kind, text) {
     const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ kind, sids: [...picked], value: text }) })
     const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status)
     toast(kind === 'meeting' ? '🗣 회의실로 모입니다 (' + picked.size + '명)' : '📣 ' + picked.size + '명에게 보냈습니다')
-    picked.clear(); pickbar.dataset.mode = ''; renderPicks(); tick()
+    picked.clear(); pickbar.dataset.mode = ''; setPickMode(false); renderPicks(); tick()
   } catch (e) { toast('✕ ' + e.message) }
 }
 async function endMeeting(id) {

@@ -331,8 +331,10 @@ else the first name of your account's full name, else your login name.
   pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
   cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
-- **Several at once, and meetings**: `⇧click` picks sessions one by one and
-  `⇧drag` lassoes them (a dashed ring each); a bar then offers `🗣 회의`, `📣 공지`
+- **Several at once, and meetings**: `V` (or the `☑ 고르기` chip in the top row)
+  turns on pick mode, where a click picks a session and a drag lassoes several
+  (a dashed ring each); `⇧click` / `⇧drag` do the same where the terminal lets
+  Shift+mouse through (many keep it for their own text selection); a bar then offers `🗣 회의`, `📣 공지`
   and `💤 미루기` for all of them. A meeting (2 to 8, a topic typed in the bar)
   walks them into the glass meeting room (the corner between the lounge and the
   crowd, as deep as the rooms) round its table; each is told,
