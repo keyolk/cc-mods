@@ -79,6 +79,13 @@ canvas.drag { cursor: grabbing; }
 #settings .m { color: #6b6280; font-size: 11px; }
 #settings select { font: inherit; width: 100%; padding: 3px 6px; border: 2px solid var(--line); border-radius: 8px; background: #fff; }
 #settings label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+#pickbar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 8px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 7px 12px; font-size: 13px; max-width: calc(100vw - 32px); }
+#pickbar .m { color: #6b6280; font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pickbar button { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 2px 10px; cursor: pointer; }
+#pickbar input { font: inherit; font-size: 13px; width: 280px; border: 2px solid var(--line); border-radius: 8px; padding: 3px 8px; }
+#ask .meet { display: inline-flex; border: 2px solid var(--line); border-radius: 999px; overflow: hidden; background: #d9e4f5; }
+#ask .meet button { font: inherit; font-size: 14px; border: 0; background: none; padding: 4px 10px; cursor: pointer; color: #2b4a8a; }
+#ask .meet .e { border-left: 2px solid var(--line); color: #a0303a; }
 #quietmenu { position: fixed; display: none; z-index: 9; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; box-shadow: 0 4px 0 var(--line); padding: 6px; min-width: 220px; }
 #quietmenu .h { font-size: 12px; color: #6b6280; padding: 2px 6px 4px; }
 #quietmenu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 13px; border: 0; background: none; padding: 4px 8px; border-radius: 8px; cursor: pointer; color: inherit; }
@@ -148,6 +155,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
     <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
+    <tr><td><kbd>⇧</kbd>클릭 · <kbd>⇧</kbd>드래그</td><td>여러 명 고르기 → 🗣 회의(회의실에 모여 SendMessage로 의논, 회의록) · 📣 공지 · 💤 미루기</td></tr>
     <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
@@ -248,6 +256,10 @@ ZONES.lounge.spots = ZONES.lounge.spots.filter(([x, y]) => Math.hypot(x - CAFE[0
 const POOL = { x0: 15.9, x1: 18.5, y0: 0.05, y1: 1.35, door: [16.85, 17.45] }
 const POOL_IN = [17.15, 0.75], POOL_OUT = [17.15, 1.7]
 const POOL_SIZE = 14
+// The meeting room: glass walls in the free corner below the crowd, a table
+// and standing places round it, a door on its left.
+const MEET = { x0: 16.4, x1: 18.5, y0: 2.0, y1: 4.25, table: [16.95, 17.95, 2.75, 3.45], door: [2.85, 3.45] }
+const MEET_SEATS = [[17.2, 2.55], [17.7, 2.55], [18.2, 3.1], [17.7, 3.7], [17.2, 3.7], [16.72, 3.1]]
 let doorOpenUntil = 0
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
@@ -295,6 +307,8 @@ function rebuildGrid() {
   for (const bx of BOOTHS) { mark(bx, 0.05, bx + 0.6, 0.7); mark(bx - 0.03, 0.05, bx + 0.02, 0.85); mark(bx + 0.58, 0.05, bx + 0.63, 0.85) }
   mark(CAFE[0], CAFE[1], CAFE[0] + 0.6, CAFE[1] + 0.6); mark(VEND[0], VEND[1], VEND[0] + 0.55, VEND[1] + 0.5)
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
+  mark(MEET.x0, MEET.y0, MEET.x1, MEET.y0 + 0.06); mark(MEET.x0, MEET.y0, MEET.x0 + 0.06, MEET.door[0]); mark(MEET.x0, MEET.door[1], MEET.x0 + 0.06, MEET.y1)
+  mark(MEET.table[0], MEET.table[2], MEET.table[1], MEET.table[3])
   for (const w2 of windows) for (const p of w2.sessions) if (p.compacts) mark(p.desk[0] + MEMORY_AT[0], p.desk[1] + MEMORY_AT[1], p.desk[0] + MEMORY_AT[0] + 0.56, p.desk[1] + MEMORY_AT[1] + 0.2)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
@@ -437,6 +451,8 @@ function apply(people) {
       if (p.room === 'desk') { tgt = [desk[0] + 0.42, desk[1] - 0.32]; releaseSpots(p.id) }
       else if (p.doing === 'napping') { const k = napIndex(p.id); tgt = [PILE[0] + pileX(k), PILE[1] + pileY(k)]; releaseSpots(p.id, 'pile') }
       else { tgt = spotFor(p.room, p.id); releaseSpots(p.id, p.room) }
+      const mt = meetingOf(p.id)
+      if (mt) { tgt = MEET_SEATS[mt.sids.indexOf(p.id) % MEET_SEATS.length]; releaseSpots(p.id); if (p.doing === 'napping') p.doing = 'idle' } // nobody sleeps in a meeting
       let e = ents.get(p.id)
       if (!e) { e = { id: p.id, kind: 'session', x: tgt[0], y: tgt[1] }; ents.set(p.id, e) }
       Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false })
@@ -487,6 +503,10 @@ function apply(people) {
 // Set aside (office.py mute): sid -> {since, until}; until null is "until you
 // speak first" (zipped), a time is a plain 💤 for a while.
 const summoned = new Map()
+// Picked for a group action (⇧click, ⇧drag), and the meetings going on.
+const picked = new Set()
+let meetingsNow = []
+const meetingOf = (sid) => meetingsNow.find((m) => m.sids.includes(sid))
 let mutedSince = {}
 const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
 const isZipped = (id) => !!mutedSince[id] && !mutedSince[id].until
@@ -503,6 +523,14 @@ function renderQueue() {
   for (const p of q) {
     const b = document.createElement('button'); b.className = (p.doing === 'alert' ? 'x' : 'q') + (p.id === cardSid ? ' on' : '')
     b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name + (p.since ? ' · ' + ago(p.since).replace('째', '') : ''); b.onclick = () => openCard(p.id); ask.appendChild(b)
+  }
+  // Meetings going on: the topic opens the minutes, ✕ ends it (twice).
+  for (const m of meetingsNow) {
+    const b = document.createElement('span'); b.className = 'meet'
+    b.innerHTML = '<button class="t">🗣 ' + esc(m.topic.slice(0, 24)) + ' · ' + m.sids.length + '명</button><button class="e" title="회의 끝내기">✕</button>'
+    b.querySelector('.t').onclick = () => viewFile(m.minutes, m.lead)
+    const e2 = b.querySelector('.e'); e2.onclick = () => { if (e2.dataset.arm && Date.now() - +e2.dataset.arm < 4000) endMeeting(m.id); else { e2.dataset.arm = Date.now(); e2.textContent = '끝낼까요?' } }
+    ask.appendChild(b)
   }
   // The quiet ones: muted chips; one with something to say strains against it.
   for (const id of Object.keys(mutedSince)) {
@@ -537,7 +565,7 @@ const quietMenu = document.createElement('div'); quietMenu.id = 'quietmenu'; doc
 function showQuiet(id, anchor) {
   const eod = minsToEndOfDay(); QUIET_LABEL[eod] = '오늘 하루'
   const opts = [[30, '💤 30분'], [60, '💤 1시간'], [eod, '💤 오늘 하루'], ['speak', '🤐 내가 먼저 말 걸 때까지']]
-  if (isMuted(id)) opts.push([0, '🔓 지금 다시 부르기'])
+  if ([].concat(id).some(isMuted)) opts.push([0, '🔓 지금 다시 부르기'])
   quietMenu.innerHTML = '<div class="h">미루기</div>' + opts.map(([v, label], i) => '<button data-v="' + v + '"><kbd>' + (i + 1) + '</kbd> ' + label + '</button>').join('')
   const r = anchor.getBoundingClientRect()
   // Shown first so it has a height: then it goes just above the button.
@@ -546,7 +574,7 @@ function showQuiet(id, anchor) {
   quietMenu.id_ = id
   quietMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => pickQuiet(b.dataset.v) })
 }
-function pickQuiet(v) { const id = quietMenu.id_; hideQuiet(); setMute(id, v === 'speak' ? 'speak' : +v) }
+function pickQuiet(v) { const ids = [].concat(quietMenu.id_); hideQuiet(); for (const id of ids) setMute(id, v === 'speak' ? 'speak' : +v); if (ids.length > 1) { picked.clear(); renderPicks() } }
 function hideQuiet() { quietMenu.style.display = 'none'; quietMenu.id_ = null }
 addEventListener('mousedown', (e) => { if (quietMenu.id_ && !e.target.closest('#quietmenu, .snz')) hideQuiet() }, true)
 // Who N (dir 1) or P (dir -1) opens: the waiting agent after the open card,
@@ -612,19 +640,26 @@ cv.addEventListener('wheel', (e) => {
 let drag = null
 cv.addEventListener('mousedown', (e) => {
   const st = hitStuff(e.clientX, e.clientY), w = st && windowOf(st.sid)
-  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: w || null }
+  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: e.shiftKey ? null : w || null, lasso: e.shiftKey }
   cv.classList.add('drag')
 })
 addEventListener('mouseup', (e) => {
   cv.classList.remove('drag')
+  if (drag && drag.lasso) {
+    const h = !drag.moved && hit(e.clientX, e.clientY)
+    if (h && h.kind === 'session') togglePick(h.id)
+    else if (drag.moved) lassoPick(drag.x, drag.y, e.clientX, e.clientY)
+    drag = null; lasso = null; renderPicks(); return
+  }
   if (drag && drag.moved && drag.pod) { const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return }
-  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st) openCard(st.sid, st.kind === 'memory' ? null : st.kind) }
+  if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st && st.kind === 'meeting') viewFile(st.meeting.minutes, st.meeting.lead); else if (st) openCard(st.sid, st.kind === 'memory' ? null : st.kind) }
   drag = null
 })
 addEventListener('mousemove', (e) => {
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true
+    if (drag.lasso) { lasso = drag.moved ? [drag.x, drag.y, e.clientX, e.clientY] : null; return }
     if (drag.moved && drag.pod) { podDrag = { w: drag.pod, x: e.clientX, y: e.clientY, drop: dropAt(drag.pod, e.clientX, e.clientY) }; tip.style.display = 'none'; return }
     if (drag.moved) { cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy }
   }
@@ -661,6 +696,8 @@ addEventListener('keydown', (e) => {
   if (pendingMove && k === 'Enter') return hit(doMove)
   if (pendingMove && k === 'Escape') return hit(cancelMove)
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
+  if (k === 'Escape' && picked.size && pickbar.dataset.mode) return hit(() => { pickbar.dataset.mode = ''; renderPicks() })
+  if (k === 'Escape' && picked.size && card.style.display !== 'block') return hit(() => { picked.clear(); renderPicks() })
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
   if (k === '0') return hit(resetView)
@@ -723,6 +760,8 @@ function renderBusy(sid) {
   const p = ents.get(sid)?.data || {}
   const parts = []
   if (p.state === 'working') parts.push('<b>🔨 지금 일하는 중</b>' + (p.tool ? ' · ' + esc(p.tool + (p.detail ? ': ' + String(p.detail).slice(0, 40) : '')) : '') + (p.since ? ' · ' + ago(p.since) : '') + '<br><span class="m">지금 보내는 답은 끝난 뒤에 이어서 처리됩니다. 멈추려면 S.</span>')
+  const mt = meetingOf(sid)
+  if (mt) parts.push('<b>🗣 회의 중</b> · ' + esc(mt.topic) + ' · ' + mt.sids.map((id) => esc(ents.get(id)?.data.name || '')).join(', '))
   if (card.inbox) parts.push('<b>📨 보낸 답장이 아직 전달 전</b> · "' + esc(card.inbox.text.slice(0, 60)) + '"')
   card.busy.innerHTML = parts.join('<hr>')
   card.busy.style.display = parts.length ? 'block' : 'none'
@@ -905,7 +944,7 @@ function hover(e) {
   if (st) {
     const owner = ents.get(st.sid)?.data, sh = SHELF[st.kind]
     const m = owner?.made || {}, outN = (m.pr || 0) + (m.slack || 0) + (m.ticket || 0)
-    const parts = st.kind === 'memory' ? '📦 요약 상자 ' + st.n + '개 · 대화를 ' + st.n + '번 압축했습니다' + (owner?.compactAt ? ' (마지막 ' + ago(owner.compactAt).replace('째', ' 전') + ')' : '') : st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
+    const parts = st.kind === 'meeting' ? '🗣 ' + esc(st.meeting.topic) + '<br>' + st.meeting.sids.map((id) => esc(ents.get(id)?.data.name || id.slice(0, 8)) + (id === st.meeting.lead ? ' (진행)' : '')).join(', ') + '<br><span class="m">클릭하면 회의록</span>' : st.kind === 'memory' ? '📦 요약 상자 ' + st.n + '개 · 대화를 ' + st.n + '번 압축했습니다' + (owner?.compactAt ? ' (마지막 ' + ago(owner.compactAt).replace('째', ' 전') + ')' : '') : st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
     tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">' + (st.kind === 'desk' ? '클릭하면 서랍 열기' : '클릭하면 목록 열기') + '</div>'
     tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
     return
@@ -1010,8 +1049,8 @@ function md(src) {
 const VIEW_EXT = /\.(html?|svg|png|jpe?g|gif|webp|pdf|md|txt|log|json|csv|ya?ml)$/i
 const canView = (p) => VIEW_EXT.test(p) || /\/exp\/[^/]+\/?$/.test(p)
 const viewer = document.createElement('div'); viewer.id = 'viewer'; document.body.appendChild(viewer)
-async function viewFile(path) {
-  const url = '/file?sid=' + encodeURIComponent(cardSid) + '&path=' + encodeURIComponent(path)
+async function viewFile(path, sid = cardSid) {
+  const url = '/file?sid=' + encodeURIComponent(sid) + '&path=' + encodeURIComponent(path)
   const name = path.split('/').filter(Boolean).pop()
   viewer.innerHTML = '<div class="bar"><b>👁 ' + esc(name) + '</b><span class="m">' + esc(path) + '</span><button class="out"><kbd>O</kbd> ↗ 밖으로</button><button class="place" title="어디서 열지 고르기 (⇧O)">▾</button><button class="x">✕</button></div><div class="body"></div>'
   viewer.style.display = 'flex'
@@ -1378,6 +1417,99 @@ async function doMove() {
     tick()
   } catch (err) { toast('✕ ' + err) }
 }
+
+// ---------- picking several, and meetings ----------
+let lasso = null
+function togglePick(id) { if (picked.has(id)) picked.delete(id); else picked.add(id) }
+function lassoPick(x0, y0, x1, y1) {
+  const [a, b, c, d] = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]
+  for (const e of ents.values()) if (e.kind === 'session' && e.sx !== undefined && e.sx >= a && e.sx <= c && e.sy - 30 * cam.s >= b && e.sy - 30 * cam.s <= d) picked.add(e.id)
+}
+function drawLasso() {
+  if (!lasso) return
+  const [x0, y0, x1, y1] = lasso
+  g.fillStyle = 'rgba(125,211,252,.12)'; g.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0))
+  g.strokeStyle = 'rgba(125,211,252,.9)'; g.setLineDash([5, 4]); g.lineWidth = 1.5; g.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)); g.setLineDash([])
+}
+// The bar over the office while some are picked: who, and what to do with
+// them. A meeting or an announcement asks for its text right in the bar.
+const pickbar = document.createElement('div'); pickbar.id = 'pickbar'; document.body.appendChild(pickbar)
+function renderPicks() {
+  for (const id of [...picked]) if (!ents.get(id)) picked.delete(id)
+  if (!picked.size) { pickbar.style.display = 'none'; pickbar.dataset.mode = ''; return }
+  const names = [...picked].map((id) => ents.get(id).data.name)
+  const mode = pickbar.dataset.mode
+  if (mode) {
+    pickbar.innerHTML = '<b>' + (mode === 'meeting' ? '🗣 회의 주제' : '📣 공지') + '</b> <span class="m">' + esc(names.join(', ')) + '</span><input placeholder="' + (mode === 'meeting' ? '무엇을 같이 정할까요?' : '모두에게 보낼 말') + '"><button class="ok"><kbd>⏎</kbd> ' + (mode === 'meeting' ? '모이기' : '보내기') + '</button><button class="no"><kbd>Esc</kbd></button>'
+    const inp = pickbar.querySelector('input')
+    inp.onkeydown = (ev) => { if (ev.isComposing || ev.keyCode === 229) return; if (ev.key === 'Enter') { ev.preventDefault(); groupSend(mode, inp.value) } if (ev.key === 'Escape') { ev.preventDefault(); pickbar.dataset.mode = ''; renderPicks() } }
+    pickbar.querySelector('.ok').onclick = () => groupSend(mode, inp.value)
+    pickbar.querySelector('.no').onclick = () => { pickbar.dataset.mode = ''; renderPicks() }
+    pickbar.style.display = 'flex'; setTimeout(() => inp.focus(), 0)
+    return
+  }
+  pickbar.innerHTML = '<b>' + picked.size + '명</b> <span class="m">' + esc(names.join(', ')) + '</span>'
+    + '<button data-a="meeting">🗣 회의</button><button data-a="broadcast">📣 공지</button><button data-a="quiet">💤 미루기</button><button data-a="clear">✕</button>'
+  pickbar.querySelectorAll('button').forEach((b) => { b.onclick = () => {
+    const a = b.dataset.a
+    if (a === 'clear') { picked.clear(); renderPicks() }
+    else if (a === 'quiet') showQuiet([...picked], b)
+    else if (a === 'meeting' && (picked.size < 2 || picked.size > 6)) toast('회의는 2명에서 6명까지')
+    else { pickbar.dataset.mode = a; renderPicks() }
+  } })
+  pickbar.style.display = 'flex'
+}
+async function groupSend(kind, text) {
+  text = String(text || '').trim()
+  if (!text) return
+  try {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ kind, sids: [...picked], value: text }) })
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status)
+    toast(kind === 'meeting' ? '🗣 회의실로 모입니다 (' + picked.size + '명)' : '📣 ' + picked.size + '명에게 보냈습니다')
+    picked.clear(); pickbar.dataset.mode = ''; renderPicks(); tick()
+  } catch (e) { toast('✕ ' + e.message) }
+}
+async function endMeeting(id) {
+  try {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ kind: 'meeting_end', value: id }) })
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status)
+    toast('🗣 회의를 마쳤습니다 — 모두 자리로'); tick()
+  } catch (e) { toast('✕ ' + e.message) }
+}
+function meetingFloor() {
+  tile(MEET.x0, MEET.y0, MEET.x1 - MEET.x0, MEET.y1 - MEET.y0, '#d9e4f5', null)
+  for (let x = MEET.x0 + 0.1; x < MEET.x1; x += 0.5) tile(x, MEET.y0 + 0.1, 0.25, MEET.y1 - MEET.y0 - 0.2, 'rgba(255,255,255,.25)', null)
+}
+// Glass walls (a frame, frosted panes), a table with papers, a whiteboard
+// with the topic and the minutes' last lines, the people standing round it.
+function meetingRoom(add, t) {
+  const m = meetingsNow[0]
+  const glass = (x0, y0, x1, y1, h) => { box(x0, y0, x1 - x0, y1 - y0, 4, '#8fa3c9'); poly(x1 - x0 > y1 - y0 ? [P(x0, y1, 4), P(x1, y1, 4), P(x1, y1, h), P(x0, y1, h)] : [P(x1, y0, 4), P(x1, y1, 4), P(x1, y1, h), P(x1, y0, h)], 'rgba(205,225,255,.38)', 'rgba(70,90,140,.55)', 1); box(x0, y0, x1 - x0, y1 - y0, 2, '#8fa3c9', h) }
+  add(MEET.x1 + MEET.y0 + 0.06, () => {
+    glass(MEET.x0, MEET.y0, MEET.x1, MEET.y0 + 0.06, 44)
+    // The whiteboard inside the back wall.
+    const q = [P(16.65, MEET.y0 + 0.07, 12), P(17.95, MEET.y0 + 0.07, 12), P(17.95, MEET.y0 + 0.07, 40), P(16.65, MEET.y0 + 0.07, 40)]
+    poly(q, '#fffdf6', LINE, 1)
+    const [ox, oy] = q[3], [ax, ay] = q[2], l = Math.hypot(ax - ox, ay - oy) || 1
+    g.save(); g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
+    g.font = Math.max(5, 7 * cam.s) + 'px Jua, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top'
+    g.fillStyle = '#2b4a8a'; g.fillText(m ? '🗣 ' + m.topic.slice(0, 24) : '🗣 회의실', 3 * cam.s, 2 * cam.s)
+    if (m) { g.fillStyle = '#2a2033'; m.tail.forEach((ln, i) => g.fillText(ln.slice(0, 30), 3 * cam.s, (11 + i * 8) * cam.s)) }
+    g.restore()
+  }, [MEET.x0, MEET.x1, MEET.y0, MEET.y0 + 0.06])
+  add(MEET.x0 + 0.06 + MEET.door[0], () => glass(MEET.x0, MEET.y0, MEET.x0 + 0.06, MEET.door[0], 44), [MEET.x0, MEET.x0 + 0.06, MEET.y0, MEET.door[0]])
+  add(MEET.x0 + 0.06 + MEET.y1, () => glass(MEET.x0, MEET.door[1], MEET.x0 + 0.06, MEET.y1, 44), [MEET.x0, MEET.x0 + 0.06, MEET.door[1], MEET.y1])
+  const [tx0, tx1, ty0, ty1] = MEET.table
+  add(tx1 + ty1, () => {
+    for (const [lx, ly] of [[tx0 + 0.1, ty0 + 0.1], [tx1 - 0.15, ty0 + 0.1], [tx0 + 0.1, ty1 - 0.15], [tx1 - 0.15, ty1 - 0.15]]) box(lx, ly, 0.05, 0.05, 16, '#5b4a3a')
+    box(tx0, ty0, tx1 - tx0, ty1 - ty0, 4, m ? '#a0784f' : '#b08a63', 16)
+    if (m) for (let i = 0; i < m.sids.length; i++) { const [sx, sy] = MEET_SEATS[i]; const px = Math.min(tx1 - 0.2, Math.max(tx0 + 0.05, sx - 0.12)), py = Math.min(ty1 - 0.18, Math.max(ty0 + 0.04, sy - 0.08)); box(px, py, 0.22, 0.15, 1, '#fffdf6', 20) }
+    const [cx, cy] = P((tx0 + tx1) / 2, (ty0 + ty1) / 2, 20)
+    if (m) { deskHits.push({ sx: cx, sy: cy, r: 26 * cam.s, sid: m.lead, kind: 'meeting', n: m.sids.length, meeting: m }); text(m.sids.length + '명', cx, cy - 4 * cam.s, 8, '#fff8ee') }
+  }, [tx0, tx1, ty0, ty1])
+}
+// The ring under each picked one.
+function pickRing(e, x, y, s) { if (!picked.has(e.id)) return; g.strokeStyle = '#7dd3fc'; g.lineWidth = 2.5 * cam.s; g.setLineDash([4 * cam.s, 3 * cam.s]); g.beginPath(); g.ellipse(x, y, 21 * s, 8.5 * s, 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]) }
 
 // ---------- labels in the margin ----------
 // The building fills the middle of the screen; its names live outside it, in
@@ -2062,6 +2194,7 @@ function drawChibi(e, t, z0) {
   const hair = age >= 2 ? '#d9d9e3' : age === 1 ? mix(hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, 34), '#cfcfda', 0.45) : hsl2hex((e.hue + 200 + (h % 60)) % 360, 38, sub ? 52 : 34)
   if (e.hl) { g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.ellipse(x, y, 19 * s, 8 * s, 0, 0, Math.PI * 2); g.fill() }
   // The one whose card is open: a pulsing ring and a pointer over its head.
+  pickRing(e, x, y, s)
   if (e.sel) { const pulse = 1 + Math.sin(t * 5) * 0.08; g.strokeStyle = '#ffcf5a'; g.lineWidth = 3 * cam.s; g.beginPath(); g.ellipse(x, y, 22 * s * pulse, 9 * s * pulse, 0, 0, Math.PI * 2); g.stroke(); const ay = y - 78 * s + Math.sin(t * 4) * 3 * s; poly([[x - 7 * s, ay - 9 * s], [x + 7 * s, ay - 9 * s], [x, ay]], '#ffcf5a') }
   g.fillStyle = 'rgba(30,20,40,.22)'; g.beginPath(); g.ellipse(x, y, 13 * s, 5 * s, 0, 0, Math.PI * 2); g.fill()
   // Facing: while walking, the body mirrors to the side it goes (its props
@@ -2264,6 +2397,7 @@ function frame(now) {
   for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, 1, 1, 'rgba(160,120,80,.07)', null)
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
   zoneFloors(t)
+  meetingFloor()
   for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, 40, 90), 'rgba(59,42,53,.12)')
   for (const w of windows) {
     const need = w.sessions.some((p) => wantsToTalk(p) && !isMuted(p.id))
@@ -2282,6 +2416,7 @@ function frame(now) {
   add(13.6, () => sofa(12.1, 0.25), [11.92, 14.6, 0.25, 1.0])
   add(15.3, () => plant(14.95, 0.2), [14.95, 15.37, 0.2, 0.62])
   poolCrowd(add, t)
+  meetingRoom(add, t)
   add(4.8 + 1.3, () => readingTable(t), [0.8, 4.8, 0.85, 1.3])
   add(8.0 + 1.3, () => workbench(t), [6.0, 8.0, 0.9, 1.3])
   add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
@@ -2307,6 +2442,7 @@ function frame(now) {
   add(1e9, () => roomTags())
   add(1e9 + 1, () => marginLabels())
   add(1e9 + 2, () => drawPodDrag())
+  add(1e9 + 4, () => drawLasso())
   add(1e9 - 2, () => drawThreads())
   add(1e9 + 3, () => drawFlights(t))
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
@@ -2353,7 +2489,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

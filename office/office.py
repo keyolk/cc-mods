@@ -599,11 +599,7 @@ def grant(sid: str) -> tuple[int, dict]:
     # "Approve and go on": the session is told, the way a reply reaches it
     # (its inbox, submitted as the person's prompt), or it would sit waiting
     # with the grant it asked for.
-    os.makedirs(INBOX, exist_ok=True)
-    tmp = os.path.join(INBOX, sid + ".json.tmp")
-    with open(tmp, "w") as f:
-        json.dump({"text": f"{g['label']} 권한을 {g['minutes']}분 동안 허용했습니다. 막혔던 작업을 계속 진행해 주세요.", "at": time.time()}, f)
-    os.replace(tmp, os.path.join(INBOX, sid + ".json"))
+    inbox_put(sid, f"{g['label']} 권한을 {g['minutes']}분 동안 허용했습니다. 막혔던 작업을 계속 진행해 주세요.")
     return 200, {"ok": True, "sent": "granted " + g["label"] + " for " + str(g["minutes"]) + "m and told it to go on"}
 
 
@@ -694,6 +690,7 @@ VIEW_MAX = 20 * 1024 * 1024
 def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
     path = os.path.realpath(os.path.expanduser(path))
     known = [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
+    known.append(os.path.realpath(MEET_DIR))  # meeting minutes are anyone's to read
     if not any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known):
         return 403, b"not one of this session's files", "text/plain", {}
     if os.path.isdir(path):
@@ -746,8 +743,152 @@ def detail(sid: str, kind: str | None = None) -> dict:
             "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
+# Something for a session to read as the person's prompt: its inbox file,
+# which cc-mods submits within ~2 s. A message already waiting there is kept
+# and this one is added after it, so two sends never lose the first.
+def inbox_put(sid: str, text: str) -> None:
+    os.makedirs(INBOX, exist_ok=True)
+    path = os.path.join(INBOX, sid + ".json")
+    try:
+        with open(path) as f:
+            old = str((json.load(f) or {}).get("text") or "")
+    except (OSError, ValueError):
+        old = ""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time()}, f)
+    os.replace(tmp, path)
+
+
+# Meetings: sessions the person put together around one topic. Each is told
+# (through its inbox) who the others are, by the names SendMessage takes,
+# who leads and where the minutes go; they talk with SendMessage. A meeting
+# ends when the lead writes "회의 끝" in the minutes, when the person ends it,
+# or after MEET_TTL. Kept in a file so a reload sees the same.
+MEET_FILE = os.path.expanduser("~/.claude/state/office/meetings.json")
+MEET_DIR = os.path.expanduser("~/.claude/state/office/meetings")
+MEET_MAX = 6
+MEET_TTL = 2 * 3600
+
+
+def _meetings() -> dict:
+    try:
+        with open(MEET_FILE) as f:
+            return json.load(f) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_meetings(d: dict) -> None:
+    os.makedirs(os.path.dirname(MEET_FILE), exist_ok=True)
+    tmp = MEET_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, MEET_FILE)
+
+
+def meetings() -> list[dict]:
+    """The meetings going on, each with the last lines of its minutes."""
+    d, now, changed, out = _meetings(), time.time(), False, []
+    for mid, m in d.items():
+        if m.get("ended"):
+            continue
+        try:
+            with open(m["minutes"]) as f:
+                text = f.read()
+        except OSError:
+            text = ""
+        if "회의 끝" in text or now - m.get("at", now) > MEET_TTL:
+            m["ended"] = now
+            changed = True
+            continue
+        tail = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.startswith("#") and not ln.startswith("- 시작") and not ln.startswith("- 참석")][-3:]
+        out.append({"id": mid, "topic": m["topic"], "sids": m["sids"], "lead": m["lead"], "at": m["at"], "minutes": m["minutes"], "tail": tail})
+    if changed:
+        _save_meetings({k: v for k, v in d.items() if not v.get("ended") or now - v["ended"] < 86400})
+    return out
+
+
+def peer_names() -> dict:
+    """sid -> the name another session's SendMessage takes for it."""
+    out: dict[str, str] = {}
+    for key, v in registry().items():
+        if key == v["name"]:
+            out[v["sid"]] = key
+    return out
+
+
+def group_act(body: dict) -> tuple[int, dict]:
+    kind = body.get("kind")
+    people = {p["id"]: p for p in snapshot()}
+    if kind == "meeting_end":
+        mid = str(body.get("value") or "")
+        d = _meetings()
+        m = d.get(mid)
+        if not m or m.get("ended"):
+            return 404, {"error": "no such meeting going on"}
+        m["ended"] = time.time()
+        _save_meetings(d)
+        for sid in m["sids"]:
+            if sid in people:
+                inbox_put(sid, f"[사무실] '{m['topic']}' 회의를 마쳤습니다. 회의 메시지는 더 보내지 말고 원래 하던 일로 돌아가세요.")
+        return 200, {"ok": True, "sent": "meeting ended"}
+    sids = [s for s in dict.fromkeys(str(x) for x in (body.get("sids") or [])) if s in people]
+    text = str(body.get("value") or "").strip()
+    if not sids:
+        return 400, {"error": "none of those sessions is here"}
+    if not text or len(text) > 2000:
+        return 400, {"error": "empty or too long"}
+    for s in sids:  # being spoken to lifts a "until you speak" set-aside
+        set_mute(s, False)
+    if kind == "broadcast":
+        for s in sids:
+            inbox_put(s, "[사무실 공지] " + text)
+        return 200, {"ok": True, "sent": f"announced to {len(sids)}"}
+    if len(sids) < 2:
+        return 400, {"error": "a meeting needs two or more"}
+    if len(sids) > MEET_MAX:
+        return 400, {"error": f"at most {MEET_MAX} in a meeting"}
+    taken = {s for m in meetings() for s in m["sids"]}
+    if taken & set(sids):
+        return 409, {"error": "already in a meeting: " + ", ".join(people[s]["name"] for s in sids if s in taken)}
+    names = peer_names()
+    mid = time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
+    os.makedirs(MEET_DIR, exist_ok=True)
+    minutes = os.path.join(MEET_DIR, mid + ".md")
+    roster = [(s, names.get(s), people[s]["name"]) for s in sids]
+    lead = sids[0]
+    with open(minutes, "w") as f:
+        f.write(f"# 회의: {text}\n- 시작: {time.strftime('%Y-%m-%d %H:%M')}\n- 참석: "
+                + ", ".join(f"{n or w} ({w})" for _, n, w in roster) + "\n\n## 논의\n\n## 결론\n\n")
+    lead_name = names.get(lead) or people[lead]["name"]
+    for s, n, w in roster:
+        lines = [f"[사무실 회의 요청] 주제: {text}", "참석자 (SendMessage의 to에 쓰는 이름):"]
+        for s2, n2, w2 in roster:
+            tags = (" (진행)" if s2 == lead else "") + (" (나)" if s2 == s else "")
+            lines.append(f"- {n2 or '(이름 없음: 메시지를 받을 수 없음)'} — {w2}{tags}")
+        lines += [
+            f"진행자: {lead_name}",
+            f"회의록: {minutes}",
+            "",
+            "진행 방법:",
+            "1. 하던 일이 있으면 그대로 두고 이 회의에 짧게 참여한 뒤 원래 일로 돌아가세요.",
+            "2. 다른 참석자에게만 SendMessage로 짧게(한 번에 5줄 이내) 보내세요.",
+            "3. 먼저 자기 맥락에서 이 주제에 보탤 사실이나 제안을 한 번 보내세요.",
+            "4. 진행자는 의견을 모아 회의록의 '## 결론'에 결론과 담당자를 적고, 마지막 줄에 '회의 끝'이라고 쓴 뒤 참석자에게 알리세요.",
+            "5. 세션 정책과 권한은 회의 중에도 그대로입니다. 회의에서 정했다고 막힌 작업을 우회하지 마세요.",
+        ]
+        inbox_put(s, "\n".join(lines))
+    d = _meetings()
+    d[mid] = {"topic": text, "sids": sids, "lead": lead, "at": time.time(), "minutes": minutes, "ended": None}
+    _save_meetings(d)
+    return 200, {"ok": True, "sent": f"meeting with {len(sids)}", "id": mid}
+
+
 def act(body: dict) -> tuple[int, dict]:
     sid, kind, value = str(body.get("sid") or ""), body.get("kind"), body.get("value")
+    if kind in ("meeting", "meeting_end", "broadcast"):
+        return group_act(body)
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return 404, {"error": "no such session"}
@@ -832,11 +973,7 @@ def act(body: dict) -> tuple[int, dict]:
                 return 409, {"error": "busy", "busy": "working", "tool": me.get("tool")}
             if os.path.exists(os.path.join(INBOX, sid + ".json")):
                 return 409, {"error": "busy", "busy": "inbox"}
-        os.makedirs(INBOX, exist_ok=True)
-        tmp = os.path.join(INBOX, sid + ".json.tmp")
-        with open(tmp, "w") as f:
-            json.dump({"text": text, "at": time.time()}, f)
-        os.replace(tmp, os.path.join(INBOX, sid + ".json"))
+        inbox_put(sid, text)
         return 200, {"ok": True, "sent": "reply"}
     if kind in ("send", "merge"):
         return rearrange(kind, me, value)
@@ -1035,7 +1172,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             people = snapshot()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "muted": muted(), "talks": talks()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "muted": muted(), "talks": talks(), "meetings": meetings()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
