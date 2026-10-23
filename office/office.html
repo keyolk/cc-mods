@@ -498,7 +498,8 @@ function waiting() {
 }
 function renderQueue() {
   const q = waiting(), ask = document.getElementById('ask'); ask.innerHTML = ''
-  if (q.length) { const n = document.createElement('button'); n.className = 'next'; n.innerHTML = '<kbd>N</kbd> 다음 ▶ ' + esc(q[0].name) + ' · 대기 ' + q.length; n.onclick = () => step(1); ask.appendChild(n) }
+  const up = nextUp(1)
+  if (up) { const n = document.createElement('button'); n.className = 'next'; n.innerHTML = '<kbd>N</kbd> 다음 ▶ ' + esc(up.name) + ' · 대기 ' + q.length; n.onclick = () => step(1); ask.appendChild(n) }
   for (const p of q) {
     const b = document.createElement('button'); b.className = (p.doing === 'alert' ? 'x' : 'q') + (p.id === cardSid ? ' on' : '')
     b.textContent = (p.doing === 'alert' ? '❗ ' : '❓ ') + p.name + (p.since ? ' · ' + ago(p.since).replace('째', '') : ''); b.onclick = () => openCard(p.id); ask.appendChild(b)
@@ -548,12 +549,18 @@ function showQuiet(id, anchor) {
 function pickQuiet(v) { const id = quietMenu.id_; hideQuiet(); setMute(id, v === 'speak' ? 'speak' : +v) }
 function hideQuiet() { quietMenu.style.display = 'none'; quietMenu.id_ = null }
 addEventListener('mousedown', (e) => { if (quietMenu.id_ && !e.target.closest('#quietmenu, .snz')) hideQuiet() }, true)
-// The next (or previous) waiting agent after the open card; from the top when none is open.
-function step(dir, skip) {
+// Who N (dir 1) or P (dir -1) opens: the waiting agent after the open card,
+// or the first (last) when none is open. The one answer for the key, the
+// queue's 다음 button and the status board, so they always agree.
+function nextUp(dir = 1, skip) {
   const q = waiting().filter((p) => p.id !== skip)
-  if (!q.length) { closeCard(); toast('기다리는 agent가 없어요 ☕'); return }
+  if (!q.length) return null
   const i = q.findIndex((p) => p.id === cardSid)
-  const next = i < 0 ? (dir > 0 ? q[0] : q[q.length - 1]) : q[(i + dir + q.length) % q.length]
+  return i < 0 ? (dir > 0 ? q[0] : q[q.length - 1]) : q[(i + dir + q.length) % q.length]
+}
+function step(dir, skip) {
+  const next = nextUp(dir, skip)
+  if (!next) { closeCard(); toast('기다리는 agent가 없어요 ☕'); return }
   openCard(next.id)
 }
 // Scroll the open card's answer without the mouse: a few lines or a page.
@@ -1511,7 +1518,8 @@ function statusBoard(t) {
   const row = (i, label, n, color) => { const z = z1 - 19 - i * 10; L(y1 - 0.2, z, label, 9, '#d8eadf', 'left'); L(y0 + 0.2, z, String(n), 10, color, 'right', 'bold') }
   const q = waiting()
   row(0, '세션', stats.total, '#ffffff'); row(1, '일하는 중', stats.work, '#9ff0b5'); row(2, '나를 기다림', stats.wait, stats.wait ? '#ffb36b' : '#ffffff')
-  L(y1 - 0.2, z0 + 8, q.length ? '다음 ▶ ' + q[0].name : '모두 순항 중 ✓', 9, q.length ? '#ffcf5a' : '#9ff0b5', 'left')
+  const up = nextUp(1)
+  L(y1 - 0.2, z0 + 8, up ? '다음 ▶ ' + up.name : '모두 순항 중 ✓', 9, up ? '#ffcf5a' : '#9ff0b5', 'left')
   poly(leftQuad(y0 + 0.1, y1 - 0.1, z0 - 2, z0 - 0.5), '#c9b28f', null)
   circle(...P(-0.3, y0 + 0.9, z0 - 1.3), 1.6 * cam.s, '#f2f2f2', null); circle(...P(-0.3, y0 + 1.05, z0 - 1.3), 1.6 * cam.s, '#5c9de8', null)
 }
