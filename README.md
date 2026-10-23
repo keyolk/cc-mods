@@ -369,9 +369,13 @@ else the first name of your account's full name, else your login name.
   right click (or `⇧O` in the viewer) asks once and remembers the pick; kept
   in this browser.
 - **The card in tabs, its buttons always in view**: `💬 답변`, `📥 받은 것`,
-  `📤 보낸 것`, `📎 파일` (from its outputs; `[` `]` switch), and the things to
-  press (quick replies, the reply box, stop, go, 미루기, next) in a foot that
-  stays at the card's bottom however long the answer is.
+  `📤 보낸 것`, `📎 파일` (from its outputs; `[` `]` cycle and `⌥1`-`⌥4`
+  open one directly). In a resource tab, `↑`/`↓` or `j`/`k` chooses an item
+  and `Enter` opens it. The things to press (quick replies, the reply box,
+  stop, go, 미루기, next) sit in a foot that stays at the card's bottom however
+  long the answer is. Drag the card's lower-left corner to resize it, press
+  `M` to maximize/restore it, or use `⌥`+arrows to change its width and height;
+  the browser remembers the size.
 - **Answers read as Markdown**: headings, nested lists, tables, code blocks,
   quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row

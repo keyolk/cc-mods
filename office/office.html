@@ -22,10 +22,16 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; 
 canvas.drag { cursor: grabbing; }
 #tip { position: fixed; pointer-events: none; z-index: 5; max-width: 320px; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; padding: 8px 11px; display: none; box-shadow: 0 4px 0 var(--line); }
 #tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
-#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
-#card h2 { margin: 0 0 2px; font-size: 18px; font-weight: 400; }
+#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: 260px; max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
+#card.max { inset: 10px; width: auto !important; height: auto !important; max-height: none; }
+#card h2 { margin: 0 54px 2px 0; font-size: 18px; font-weight: 400; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
-#card .x { position: absolute; right: 10px; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
+#card .x, #card .maxb { position: absolute; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
+#card .x { right: 10px; }
+#card .maxb { right: 38px; }
+#card .resize { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 18px; cursor: nesw-resize; z-index: 2; opacity: .5; }
+#card .resize::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 9px; height: 9px; border-left: 2px solid #7a7090; border-bottom: 2px solid #7a7090; }
+#card.max .resize { display: none; }
 #card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
 #card .scrollhint { font-size: 11px; color: #9a90b0; text-align: right; margin-bottom: 8px; }
 #card .q { font-size: 14px; margin: 6px 0; }
@@ -113,6 +119,7 @@ body.picking #c { cursor: crosshair; }
 #card .ctabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
 #card .ctabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .ctabs button.on { background: #2a2033; color: #fff; }
+#card .ctabs button:focus-visible, #card .rel a:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 2px; }
 #card .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
 #card .cfoot { position: sticky; bottom: -12px; margin: 8px -14px -12px; padding: 8px 14px 10px; background: #fffaf0; border-top: 2px dashed rgba(59,42,53,.18); box-shadow: 0 -6px 10px rgba(255,250,240,.9); }
 #card .cfoot .row:last-of-type { margin-bottom: 4px; }
@@ -160,7 +167,9 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>카드 탭 이동 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥4</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
+    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
+    <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>카드 최대화 · 카드 폭과 높이 조정 (좌하단을 끌어서도 조정)</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
@@ -665,6 +674,7 @@ cv.addEventListener('mousedown', (e) => {
   cv.classList.add('drag')
 })
 addEventListener('mouseup', (e) => {
+  if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); cardResize = null; saveCardSize(); return }
   cv.classList.remove('drag')
   if (drag && drag.lasso) {
     const h = !drag.moved && hit(e.clientX, e.clientY)
@@ -677,6 +687,7 @@ addEventListener('mouseup', (e) => {
   drag = null
 })
 addEventListener('mousemove', (e) => {
+  if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); return }
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true
@@ -702,10 +713,11 @@ function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(p
 const help = document.getElementById('help')
 addEventListener('keydown', (e) => {
   const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
-  if (typing) return // the reply box handles its own keys
-  if (e.metaKey || e.ctrlKey || e.altKey) return
-  const k = e.key
   const open = card.style.display === 'block'
+  if (e.metaKey || e.ctrlKey) return
+  if (open && e.altKey && handleCardAlt(e)) return
+  if (typing) return // the reply box handles its own keys
+  const k = e.key
   const hit = (fn) => { e.preventDefault(); fn() }
   if (viewer.path && k === 'Escape') return hit(closeViewer)
   if (k === ',' ) return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
@@ -723,6 +735,8 @@ addEventListener('keydown', (e) => {
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
   if (k === '0') return hit(resetView)
+  if (open && (k === 'm' || k === 'M' || k === 'ㅡ')) return hit(toggleCardMax)
+  if (open && card.openCurrent && k === 'Enter') return hit(card.openCurrent)
   if (open && card.shelfTab && k === 'Enter' && card.keys && card.keys[0]) return hit(() => card.keys[0].click())
   if (open && card.shelfTab && (k === '[' || k === ']')) return hit(() => card.shelfTab(k === ']' ? 1 : -1))
   if (k === 'n' || k === 'N' || k === 'ㅜ') return hit(() => step(1))
@@ -735,6 +749,8 @@ addEventListener('keydown', (e) => {
   if (quietMenu.id_ && k === 'Escape') return hit(hideQuiet)
   if (open && (k === 'z' || k === 'Z' || k === 'ㅋ') && card.mute) return hit(() => card.mute.click())
   if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
+  if (open && card.moveResource && (k === 'ArrowUp' || k === 'k' || k === 'ㅏ')) return hit(() => card.moveResource(-1))
+  if (open && card.moveResource && (k === 'ArrowDown' || k === 'j' || k === 'ㅓ')) return hit(() => card.moveResource(1))
   if (open && card.said) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
     if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
@@ -763,6 +779,57 @@ addEventListener('keydown', (e) => {
 // the person's own prompt; a dialog choice is its digit key.
 const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
+const CARD_MIN_W = 300, CARD_MIN_H = 260
+let cardResize = null
+function handleCardAlt(e) {
+  const k = e.key, hit = (fn) => { e.preventDefault(); fn(); return true }
+  if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
+  if (k === 'm' || k === 'M' || e.code === 'KeyM') return hit(toggleCardMax)
+  if (k === 'ArrowLeft') return hit(() => resizeCardBy(-40, 0))
+  if (k === 'ArrowRight') return hit(() => resizeCardBy(40, 0))
+  if (k === 'ArrowUp') return hit(() => resizeCardBy(0, -40))
+  if (k === 'ArrowDown') return hit(() => resizeCardBy(0, 40))
+  return false
+}
+function cardSize() {
+  try { return JSON.parse(localStorage.getItem('office-card-size') || 'null') } catch (_) { return null }
+}
+function saveCardSize() {
+  try { localStorage.setItem('office-card-size', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight })) } catch (_) {}
+}
+function setCardSize(w, h) {
+  const maxW = Math.max(1, innerWidth - 20), maxH = Math.max(1, innerHeight - 62)
+  const minW = Math.min(CARD_MIN_W, maxW), minH = Math.min(CARD_MIN_H, maxH)
+  card.style.width = Math.min(maxW, Math.max(minW, w)) + 'px'
+  card.style.height = Math.min(maxH, Math.max(minH, h)) + 'px'
+  card.style.maxHeight = 'none'
+}
+function restoreCardSize() { const z = cardSize(); if (z) setCardSize(z.w, z.h) }
+function toggleCardMax() {
+  card.classList.toggle('max')
+  if (!card.classList.contains('max')) restoreCardSize()
+  if (card.maxButton) { card.maxButton.textContent = card.classList.contains('max') ? '❐' : '□'; card.maxButton.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)' }
+}
+function resizeCardBy(dw, dh) {
+  if (card.classList.contains('max')) toggleCardMax()
+  setCardSize(card.offsetWidth + dw, card.offsetHeight + dh); saveCardSize()
+}
+function cardChrome(add) {
+  const close = add('button', 'x', '✕'); close.title = '닫기 (Esc)'; close.onclick = closeCard
+  const max = add('button', 'maxb', card.classList.contains('max') ? '❐' : '□'); card.maxButton = max; max.onclick = toggleCardMax
+  max.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)'
+  const grip = add('div', 'resize'); grip.title = '끌어서 카드 크기 조정 · ⌥+방향키'
+  grip.onmousedown = (e) => { if (card.classList.contains('max')) return; e.preventDefault(); e.stopPropagation(); cardResize = { x: e.clientX, y: e.clientY, w: card.offsetWidth, h: card.offsetHeight } }
+}
+function resourceKeys(list, focus = false) {
+  const links = [...list.querySelectorAll('a')]
+  links.forEach((a) => { a.tabIndex = -1 })
+  card.resourceLinks = links; card.resourceIndex = links.length ? 0 : -1
+  card.openCurrent = links.length ? () => links[card.resourceIndex].click() : null
+  card.moveResource = links.length ? (dir) => { card.resourceIndex = (card.resourceIndex + dir + links.length) % links.length; links[card.resourceIndex].focus({ preventScroll: false }) } : null
+  if (focus && links.length) links[0].focus({ preventScroll: false })
+}
+restoreCardSize()
 let cardSid = null
 // One related item: a brand badge for a well-known place, else an icon chip.
 const CHIP_ICON = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
@@ -802,11 +869,13 @@ async function openCard(sid, kind = null) {
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
   cardRoute = d.route || 'default'
   card.innerHTML = ''
+  card.selectTab = card.openCurrent = card.moveResource = null
+  card.resourceLinks = []
   // add() puts things where `into` points: the card, then its tab panes, then
   // the foot that stays at the card's bottom (the things to press).
   let into = card
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
-  const close = add('button', 'x', '✕'); close.onclick = closeCard
+  cardChrome(add)
   card.keys = []
   add('h2', '', esc(d.window + ' ' + d.name))
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
@@ -825,13 +894,15 @@ async function openCard(sid, kind = null) {
     const avail = TABS.map(([k, label, f]) => [k, label, d.shelf.filter(f)]).filter(([, , items]) => items.length)
     const want = ['pr', 'slack', 'ticket'].includes(kind) ? 'out' : kind
     let cur = Math.max(0, avail.findIndex(([k]) => k === want))
-    const show = () => {
+    const show = (focus = false) => {
       tabs.innerHTML = ''; list.innerHTML = ''
-      avail.forEach(([, label, items], i) => { const b = document.createElement('button'); b.className = i === cur ? 'on' : ''; b.textContent = label + ' ' + items.length; b.onclick = () => { cur = i; show() }; tabs.appendChild(b) })
-      if (!avail.length) { list.innerHTML = '<span class="m">책상이 비어 있습니다 (링크나 경로가 있는 항목이 없음)</span>'; return }
+      avail.forEach(([, label, items], i) => { const b = document.createElement('button'); b.className = i === cur ? 'on' : ''; b.textContent = '⌥' + (i + 1) + ' ' + label + ' ' + items.length; b.onclick = () => { cur = i; show() }; tabs.appendChild(b) })
+      if (!avail.length) { list.innerHTML = '<span class="m">책상이 비어 있습니다 (링크나 경로가 있는 항목이 없음)</span>'; resourceKeys(list); return }
       for (const o of avail[cur][2]) list.appendChild(chip(o))
+      resourceKeys(list, focus)
     }
-    card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show() } }
+    card.selectTab = (i) => { if (i < avail.length) { cur = i; show(true) } }
+    card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show(true) } }
     show()
     // The drawer is the whole card: no conversation, just a way to it.
     card.said = card.reply = card.stop = card.grant = card.mute = card.go = null
@@ -847,13 +918,16 @@ async function openCard(sid, kind = null) {
   const tabbar = add('div', 'ctabs'), panes = {}
   for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; card.appendChild(panes[k]) }
   let curTab = 0
-  const showTab = (i) => {
+  const showTab = (i, focus = false) => {
     curTab = (i + groups.length) % groups.length
     tabbar.innerHTML = ''
-    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = label + (items ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
     groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
+    const rel = panes[groups[curTab][0]].querySelector('.rel')
+    if (rel) resourceKeys(rel, focus); else { card.resourceLinks = []; card.openCurrent = card.moveResource = null }
   }
-  if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir)
+  card.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
+  if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir, true)
   for (const [k, , items] of groups) if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
   into = panes.said
   card.said = null
@@ -915,6 +989,9 @@ async function openCard(sid, kind = null) {
     const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
     ta.onkeydown = (e) => {
       if (e.isComposing || e.keyCode === 229) return // the Korean IME is still composing this syllable
+      // These bubble to the card-level shortcuts, even while this field owns
+      // ordinary typing and arrows.
+      if (e.altKey && (/^[1-9]$/.test(e.key) || e.key.startsWith('Arrow') || e.code === 'KeyM')) return
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
