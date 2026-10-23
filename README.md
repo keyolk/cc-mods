@@ -325,6 +325,19 @@ else the first name of your account's full name, else your login name.
   pulling a book off the shelf, a magnifier; typing on a laptop, plugging in a
   cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
+- **Several at once, and meetings**: `⇧click` picks sessions one by one and
+  `⇧drag` lassoes them (a dashed ring each); a bar then offers `🗣 회의`, `📣 공지`
+  and `💤 미루기` for all of them. A meeting (2 to 6, a topic typed in the bar)
+  walks them into the glass meeting room round its table; each is told,
+  through its inbox, who else is there by the names `SendMessage` takes, who
+  leads (the first picked) and where the minutes go
+  (`~/.claude/state/office/meetings/<id>.md`), and to keep to its policy. Their
+  messages fly over the table; the whiteboard shows the topic and the
+  minutes' last lines. It ends when the lead writes `회의 끝` in the minutes,
+  when you end it (its queue chip's `✕`, twice) or after two hours, and they go
+  back to their desks. The chip's topic, or the table, opens the minutes. An
+  announcement goes to each picked one's inbox; messages waiting there are
+  kept and the new one added after them.
 - **Move windows by dragging**: drag a desk (its whole tmux window) onto
   another pod to merge it into that window, or onto another tmux session's
   block to send it there. The drop asks first (`⏎` moves, `Esc` drops it),
