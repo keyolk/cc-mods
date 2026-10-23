@@ -366,15 +366,19 @@ else the first name of your account's full name, else your login name.
   framed, so links open outside, by default where that session's own links
   go: `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
   Chrome (signed in) or the tab group.
-- **Visual skins**: `⚙` switches the whole scene, not only CSS. A skin in the
-  `SKINS` registry supplies its HTML class, title, room names, canvas palette,
-  and optional `beforeFrame` / `afterFrame` hooks for particles, an asset atlas
-  or a sprite renderer. `🏢 모던 오피스` keeps the original. `⚔ 클래식 판타지
-  길드홀` is an original early-2000s isometric MMORPG-inspired treatment:
-  parchment-and-wood UI chrome, a records archive, forge, crystal comms room,
-  tavern, oak/stone/rune/rug floors, lantern warmth and subtle screen grain.
-  The choice stays in this browser. Skins never change room identity, hit boxes
-  or state routing, so a visual pack cannot break office behaviour.
+- **Visual skins**: `⚙` switches the scene renderer, not only CSS. A skin in
+  `office/skins.js` supplies UI CSS, title, room presentation, canvas palette,
+  and optional scene, desk, character and frame renderer hooks. `🏢 모던
+  오피스` keeps the original. `⚔ 클래식 판타지 길드홀` is an original
+  early-2000s 2D-sprite-on-3D-isometric-world treatment: parchment-and-wood
+  chrome; records archive, forge, crystal comms and tavern; oak, stone, rune
+  and woven-rug floors; timber posts, stone feet, wall torches, lantern warmth
+  and subtle screen grain. Its workers use a separate 32×48 low-resolution
+  sprite renderer with nearest-neighbour scaling, directional walk frames,
+  stepped hair, job headgear and props, rank crowns and zipped mouths. Desks
+  replace monitors with rune tablets, crystal orbs, scrying mirrors, magical
+  devices, books, parchment and messenger scrolls. The choice stays in this
+  browser. Skins never change room identity, geometry, hit boxes or routing.
 - **Where things open is yours to pick**: `⚙` (or `,`) in the top row sets
   where web links and files open outside (that session's setting, TWeb on
   your Chrome / Electron / WebKit, the Chrome tab group, the default browser

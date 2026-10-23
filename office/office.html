@@ -1956,8 +1956,9 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
   // The empty chair behind the desk while its owner is elsewhere.
   if (away) emptyChair(x, y, seatHue)
   const top = style === 'standing' ? 34 : 24
-  if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x, y, 1.6, 0.7, 4, DESK_COLOR[style], top - 4) }
-  else box(x, y, 1.6, 0.7, top, DESK_COLOR[style] || '#d9a46b')
+  const deskColor = skin.deskColor || DESK_COLOR[style] || '#d9a46b'
+  if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, skin.deskLeg || '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, skin.deskLeg || '#7a7f95'); box(x, y, 1.6, 0.7, 4, deskColor, top - 4) }
+  else box(x, y, 1.6, 0.7, top, deskColor)
   // Seniority: a plant, then a trophy.
   if (rank >= 3) { const [px, py] = P(x + 0.7, y + 0.2, top + 6); rrect(px - 3 * cam.s, py - 1 * cam.s, 6 * cam.s, 6 * cam.s, 1.5 * cam.s, '#c9875a'); circle(px, py - 4 * cam.s, 5 * cam.s, '#6fbf73') }
   if (rank >= 5) { const [tx, ty] = P(x + 0.95, y + 0.55, 30); rrect(tx - 3 * cam.s, ty - 9 * cam.s, 6 * cam.s, 8 * cam.s, 2 * cam.s, '#ffd36b'); rrect(tx - 4.5 * cam.s, ty - 1.5 * cam.s, 9 * cam.s, 3 * cam.s, 1 * cam.s, '#b8864a') }
@@ -1965,7 +1966,8 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
   // What's on the desk follows the job: two screens, a laptop and a lamp, a
   // wide screen, a little rack, a book pile, a phone.
   const glow = (gx, gy, gz, r0) => { if (!on) return; const [mx, my] = P(gx, gy, gz); g.globalAlpha = 0.35 + Math.sin(t * 6) * 0.15; circle(mx, my, r0 * cam.s, '#8fd1ff', null); g.globalAlpha = 1 }
-  if (job === 'code') { box(x + 0.85, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); box(x + 1.2, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); glow(x + 1.0, y + 0.22, top + 8, 7); glow(x + 1.35, y + 0.22, top + 8, 7) }
+  if (skin.drawDeskGear) skin.drawDeskGear({ g, P, box, poly, circle, rrect, cam, BOOKS }, { x, y, top, job, on, t })
+  else if (job === 'code') { box(x + 0.85, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); box(x + 1.2, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); glow(x + 1.0, y + 0.22, top + 8, 7); glow(x + 1.35, y + 0.22, top + 8, 7) }
   else if (job === 'write') { box(x + 1.0, y + 0.2, 0.36, 0.26, 2, '#c7ccd8', top); poly([P(x + 1.0, y + 0.2, top + 2), P(x + 1.36, y + 0.2, top + 2), P(x + 1.36, y + 0.2, top + 14), P(x + 1.0, y + 0.2, top + 14)], '#d7dbe5'); glow(x + 1.18, y + 0.2, top + 8, 6); const [lx, ly] = P(x + 1.45, y + 0.15, top); g.strokeStyle = '#3a3f55'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(lx, ly); g.lineTo(lx - 4 * cam.s, ly - 16 * cam.s); g.lineTo(lx - 12 * cam.s, ly - 12 * cam.s); g.stroke(); circle(lx - 13 * cam.s, ly - 10 * cam.s, 4 * cam.s, '#ffd36b') }
   else if (job === 'watch') { box(x + 0.75, y + 0.12, 0.75, 0.1, 15, '#3a3f55', top); glow(x + 1.12, y + 0.22, top + 8, 11) }
   else if (job === 'ops') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); box(x + 1.65, y + 0.1, 0.32, 0.4, 34, '#3d4a66'); for (let u = 0; u < 3; u++) { const [lx, ly] = P(x + 1.9, y + 0.5, 8 + u * 9); circle(lx, ly, 1.5 * cam.s, Math.sin(t * 3 + u) > 0 ? '#7dffb0' : '#25402f', null) } }
@@ -2026,7 +2028,7 @@ function poolCrowd(add, t) {
   for (const p of stay) add(p.x + p.y, () => {
     const [x, y] = P(p.x, p.y), h = hashOf(p.id)
     g.save(); g.translate(x, y); g.scale(1.06, 0.88 + Math.sin(t * 2 + h) * 0.03); g.translate(-x + Math.sin(t * 1.3 + h) * 1.2 * cam.s, -y)
-    drawChibi(p, t, 0); g.restore()
+    drawCharacter(p, t, 0); g.restore()
   }, [p.x - 0.14, p.x + 0.14, p.y - 0.12, p.y + 0.12])
   add(POOL.x0 + 0.08 + POOL.y1, () => box(POOL.x0, POOL.y0, 0.08, POOL.y1 - POOL.y0, 22, '#b9a7d6'), [POOL.x0, POOL.x0 + 0.08, POOL.y0, POOL.y1])
   add(POOL.door[0] + POOL.y1 + 0.06, () => box(POOL.x0, POOL.y1 - 0.06, POOL.door[0] - POOL.x0, 0.08, 22, '#b9a7d6'), [POOL.x0, POOL.door[0], POOL.y1 - 0.06, POOL.y1 + 0.02])
@@ -2048,7 +2050,7 @@ function subChibi(e, t) {
     g.strokeStyle = hsl2hex(e.hue, 60, 72); g.lineWidth = 1.4 * cam.s; g.setLineDash([2 * cam.s, 3 * cam.s])
     g.beginPath(); g.moveTo(pe.sx, pe.sy - 30 * cam.s); g.quadraticCurveTo((pe.sx + x) / 2, Math.min(pe.sy, y) - 50 * cam.s, x, y - 26 * cam.s); g.stroke(); g.setLineDash([])
   }
-  drawChibi(e, t, 0)
+  drawCharacter(e, t, 0)
 }
 // Going home. Tired: slumped and slow, bags under the eyes, a sweat drop, a
 // grey cloud and "휴… 퇴근". Glad: hopping, arms up, sparkles and "퇴근이다!".
@@ -2060,7 +2062,7 @@ function leavingChibi(e, t) {
   const hop = mood === 'glad' ? -Math.abs(Math.sin(t * 9)) * 6 * cam.s : 0, slump = mood === 'tired' ? 3 * cam.s : 0
   g.translate(0, hop + slump)
   if (mood === 'tired') { g.translate(x, y); g.rotate(-0.08); g.translate(-x, -y) }
-  drawChibi(e, t, 0)
+  drawCharacter(e, t, 0)
   g.restore()
   const s = cam.s, hy = y - 36 * s + hop + slump
   g.save(); g.globalAlpha = fade
@@ -2085,7 +2087,7 @@ function chibi(e, t) {
     const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
     const [bx, by] = P(e.x, e.y, layer * 9)
     g.save(); g.translate(bx, by); g.rotate((hashOf(e.id) % 2 ? 1 : -1) * 1.35); g.translate(-bx, -by)
-    drawChibi(e, t, layer * 9)
+    drawCharacter(e, t, layer * 9)
     g.restore()
     const [hx, hy] = P(e.x, e.y, layer * 9 + 20)
     e.sx = hx; e.sy = hy + 24 * cam.s
@@ -2094,7 +2096,7 @@ function chibi(e, t) {
   }
   if (e.kind === 'sub') return subChibi(e, t)
   if (e.leaving) return leavingChibi(e, t)
-  drawChibi(e, t, 0)
+  drawCharacter(e, t, 0)
 }
 // How a character takes the cursor over it, by what it is doing:
 // waiting on you - eager (sparkly eyes, hops, hearts); working - nervous
@@ -2429,7 +2431,11 @@ function reactionOf(e) {
   if (d === 'idle' || d === 'napping') return 'startled'
   return 'nervous'
 }
-function drawChibi(e, t, z0) {
+function drawCharacter(e, t, z0) {
+  if (skin.drawCharacter) return skin.drawCharacter({ g, P, cam, hashOf, hsl2hex, picked, isZipped }, e, t, z0)
+  return vectorChibi(e, t, z0)
+}
+function vectorChibi(e, t, z0) {
   const p = e.data, sub = e.kind === 'sub'
   const rx = e.react || 0, kind = rx > 0 ? reactionOf(e) : null, since = t - (e.hlAt || t)
   let [x, y] = P(e.x, e.y, z0)
@@ -2675,6 +2681,7 @@ function frame(now) {
   const items = []
   // b: the floor box [x0, x1, y0, y1] the thing stands on, for the sort below.
   const add = (depth, fn, b) => items.push([depth, fn, b])
+  if (skin.addScene) skin.addScene({ g, box, P, poly, circle, cam, text, tile }, add, t)
   for (let k = 0; k < 3; k++) { const x = 0.35 + k * 1.1; add(x + 0.7, () => shelf(x, 0.0), [x, x + 1.05, 0, 0.38]) }
   add(3.95 + 0.8 + 0.7, () => machine(3.95, 0.05, t), [3.95, 4.75, 0.05, 0.7])
   for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t), [bx - 0.03, bx + 0.63, 0.05, 0.7])

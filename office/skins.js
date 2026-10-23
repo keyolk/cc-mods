@@ -1,6 +1,54 @@
 // Visual packs for the same office state machine. A skin can rename rooms,
 // replace HTML chrome through scoped CSS, change the canvas palette, and draw
 // before or after a frame. Geometry, routing and hit boxes remain in office.html.
+const GUILD_SPRITES = new Map()
+function guildSprite(spec) {
+  const key = JSON.stringify(spec)
+  if (GUILD_SPRITES.has(key)) return GUILD_SPRITES.get(key)
+  const c = document.createElement('canvas'); c.width = 32; c.height = 48
+  const q = c.getContext('2d'); q.imageSmoothingEnabled = false
+  const r = (x, y, w, h, color) => { q.fillStyle = color; q.fillRect(x, y, w, h) }
+  const { job, hair, skin, armor, trim, back, frame, zipped, rank, sub } = spec
+  // Cape, feet and legs: a narrow little body beneath the large sprite head.
+  if (job === 'lead' || job === 'write') { r(10, 25, 12, 14, '#3a2833'); r(9, 29, 2, 9, trim) }
+  r(10 + frame, 42, 5, 3, '#2b2223'); r(18 - frame, 42, 5, 3, '#2b2223')
+  r(11, 36, 4, 7, '#654330'); r(18, 36, 4, 7, '#654330')
+  r(8, 25, 17, 12, '#261c20'); r(9, 24, 15, 12, armor)
+  r(8, 27, 4, 5, trim); r(21, 27, 4, 5, trim)
+  r(10, 32, 13, 2, '#3b2923'); r(15, 32, 3, 2, trim)
+  r(7, 29, 3, 5, skin); r(23, 29, 3, 5, skin)
+  // Head: stepped rows make a rounded silhouette at 32×48, with no vector AA.
+  r(10, 5, 12, 2, '#281d20'); r(7, 7, 18, 3, '#281d20'); r(5, 10, 22, 9, '#281d20'); r(7, 19, 18, 4, '#281d20')
+  r(10, 6, 12, 2, skin); r(8, 8, 16, 3, skin); r(6, 11, 20, 8, skin); r(8, 19, 16, 3, skin)
+  // Hair is asymmetric and stepped, not a square helmet.
+  r(9, 5, 14, 2, hair); r(7, 7, 18, 3, hair); r(6, 10, 5, 7, hair); r(22, 10, 4, 7, hair)
+  r(10, 9, 5, 3, hair); if (spec.hairVariant) { r(15, 9, 7, 2, hair); r(20, 10, 4, 3, hair) } else { r(13, 9, 4, 2, hair); r(18, 9, 3, 4, hair) }
+  if (back) {
+    r(7, 10, 19, 10, hair); r(9, 19, 15, 4, hair)
+    r(11, 21, 2, 3, '#281d20'); r(20, 21, 2, 3, '#281d20')
+  } else {
+    r(10, 14, 3, 3, '#2b2023'); r(20, 14, 3, 3, '#2b2023'); r(11, 14, 1, 1, '#fff7d8'); r(21, 14, 1, 1, '#fff7d8')
+    r(9, 18, 3, 2, '#d8867e'); r(22, 18, 3, 2, '#d8867e')
+    if (zipped) { for (let x = 13; x < 21; x += 2) r(x, 20 + ((x / 2) & 1), 2, 1, '#5d5153') }
+    else r(15, 20, 4, 1, '#703b42')
+  }
+  // Head gear and held equipment change the silhouette per job.
+  if (job === 'read') { r(5, 5, 23, 3, '#355a37'); r(10, 1, 13, 5, '#507845'); r(23, 2, 3, 7, trim) }
+  else if (job === 'shell') { r(5, 6, 23, 2, '#3f3265'); r(10, 0, 13, 7, '#574684'); r(21, 0, 4, 3, '#574684'); r(23, 0, 2, 1, trim) }
+  else if (job === 'code') { r(7, 5, 19, 3, '#326079'); r(11, 2, 12, 4, '#47859f'); r(14, 3, 6, 1, '#9ce0e7') }
+  else if (job === 'ops') { r(5, 5, 23, 3, '#7d612b'); r(8, 2, 17, 4, '#a78036'); r(15, 0, 3, 3, '#efc755') }
+  else if (job === 'lead') { r(6, 5, 21, 2, '#64465f'); r(10, 2, 13, 4, '#886183') }
+  if (job === 'read') { r(25, 28, 6, 8, '#ddc887'); r(27, 29, 1, 6, '#875038') }
+  else if (job === 'shell' || job === 'code') { r(27, 24, 2, 13, '#6c482b'); r(28, 22, 4, 4, trim) }
+  else if (job === 'ops' || job === 'watch') { r(26, 25, 5, 10, '#30454f'); r(28, 23, 1, 3, '#91e8cf') }
+  else if (job === 'write') { r(28, 23, 1, 14, '#e9cd72'); r(29, 22, 1, 3, '#fff2ad') }
+  else { r(27, 25, 3, 11, '#644028'); r(28, 22, 1, 5, trim) }
+  if (!sub && rank >= 4) { r(11, 0, 12, 2, '#d59b2d'); r(11, 0, 3, 1, '#f1c84b'); r(16, 0, 2, 1, '#f1c84b'); r(21, 0, 2, 1, '#f1c84b') }
+  if (sub) { r(16, 1, 1, 5, '#292022'); r(15, 0, 3, 3, '#ffd35e') }
+  GUILD_SPRITES.set(key, c)
+  return c
+}
+
 window.OFFICE_SKINS = {
   office: {
     key: 'office',
@@ -26,6 +74,7 @@ window.OFFICE_SKINS = {
       lounge: ['🍖 여관 홀', '의뢰 사이에 쉬고 체력을 회복할 때'],
     },
     palette: { ground: '#a78b61', grid: 'rgba(73,46,25,.16)', sectionS: 34, sectionL: 68, podS: 42, podL: 71 },
+    deskColor: '#805533', deskLeg: '#49311f',
     css: `
 body {
   --bg: #161715; --ink: #f7e8ba; --muted: #c4b58d; --card: #493722;
@@ -45,6 +94,43 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
 #ask .q { background: #d7a63e; color: #2c1c11; }
 #ask .x { background: #963f30; color: #fff0ce; }
 `,
+    drawDeskGear(ctx, d) {
+      const { g, P, box, poly, circle, cam, BOOKS } = ctx
+      const { x, y, top, job, on, t } = d
+      const aura = (gx, gy, z, color, r = 9) => { if (!on) return; const [sx, sy] = P(gx, gy, z); g.save(); g.globalAlpha = .18 + Math.sin(t * 5) * .05; circle(sx, sy, r * cam.s, color, null); g.restore() }
+      if (job === 'code' || job === 'shell') {
+        box(x + .9, y + .16, .36, .26, 3, '#474650', top); const [sx, sy] = P(x + 1.08, y + .29, top + 5); poly([[sx, sy - 11 * cam.s],[sx + 8 * cam.s,sy],[sx,sy + 5 * cam.s],[sx - 8 * cam.s,sy]], '#78c6df', '#2d4450', 1); aura(x + 1.08, y + .29, top + 9, '#75d8f0', 12)
+        box(x + 1.36, y + .18, .08, .08, 18, '#6a452b', top); const [cx, cy] = P(x + 1.4, y + .22, top + 25); circle(cx, cy, 6 * cam.s, '#75bfe4', '#2b3045', 1); aura(x + 1.4, y + .22, top + 25, '#6fd7f2', 9)
+      } else if (job === 'write') {
+        box(x + .83, y + .18, .55, .34, 2, '#dfc98e', top); const [a,b] = P(x + 1.0,y + .34,top+3),[c,d2]=P(x + 1.3,y + .25,top+13); g.strokeStyle='#5c3524';g.lineWidth=1.5*cam.s;g.beginPath();g.moveTo(a,b);g.lineTo(c,d2);g.stroke(); circle(c,d2,2.2*cam.s,'#f5e3a6',null)
+      } else if (job === 'watch') {
+        box(x + .82, y + .18, .55, .1, 11, '#55422e', top); const [sx,sy]=P(x+1.1,y+.28,top+19); circle(sx,sy,11*cam.s,'#20253d','#ba9a62',2); circle(sx,sy,7*cam.s,'rgba(92,186,201,.75)',null); aura(x+1.1,y+.28,top+19,'#75d9e8',14)
+      } else if (job === 'ops') {
+        box(x + .95,y+.18,.4,.32,5,'#50483e',top); for(let i=0;i<3;i++){const [sx,sy]=P(x+1.02+i*.12,y+.48,top+9+i*4);circle(sx,sy,2.2*cam.s,['#e9b94d','#75d6c4','#d76d59'][i],null)} aura(x+1.15,y+.32,top+13,'#e2b94e',10)
+      } else if (job === 'read') {
+        for(let k=0;k<4;k++) box(x+.72+k*.12,y+.24,.32,.25,3,BOOKS[(k+2)%BOOKS.length],top+k*3)
+      } else {
+        box(x + .82,y+.22,.52,.28,2,'#d9c184',top); box(x+1.2,y+.18,.08,.08,14,'#72442b',top); const [sx,sy]=P(x+1.24,y+.22,top+20); circle(sx,sy,4*cam.s,'#c84f43','#4b2d29',1)
+      }
+    },
+    addScene(ctx, add, t) {
+      const { g, box, P, poly, circle, cam, text } = ctx
+      // Deep timber posts and stone feet make the shared isometric shell read
+      // as a rendered guild interior instead of a recoloured modern office.
+      for (const x of [0.18, 3.72, 5.83, 8.12, 12.68, 17.52]) {
+        add(x + .32, () => { box(x, .18, .18, .22, 58, '#49301e'); box(x - .06, .12, .3, .34, 7, '#777066'); box(x - .03, .15, .24, .28, 4, '#9a9081', 7) }, [x - .06, x + .24, .12, .46])
+      }
+      add(18.1, () => { box(.2, .12, 17.45, .13, 8, '#51321e', 56); box(.2, .13, 17.45, .09, 4, '#b88645', 64) }, [.2, 17.65, .12, .25])
+      // Two wall torches with stepped brackets and light pools.
+      for (const x of [5.2, 11.9]) add(x + .3, () => {
+        const [sx, sy] = P(x, -.28, 43), flicker = Math.sin(t * 9 + x) * 2 * cam.s
+        poly([[sx - 4 * cam.s, sy + 7 * cam.s], [sx + 4 * cam.s, sy + 7 * cam.s], [sx + 2 * cam.s, sy + 15 * cam.s], [sx - 2 * cam.s, sy + 15 * cam.s]], '#5a3824')
+        g.save(); g.globalAlpha = .12; circle(sx, sy - 2 * cam.s, 32 * cam.s, '#ffb347', null); g.restore()
+        circle(sx, sy + flicker, 6 * cam.s, '#f08b32', '#5a2b1a', 1); circle(sx, sy - 3 * cam.s + flicker, 3.5 * cam.s, '#ffe275', null)
+      }, [x - .1, x + .1, -.3, -.2])
+      // A guild crest projected over the meeting-room floor.
+      add(14.7 + 3.9, () => { const [cx, cy] = P(15.15, 3.85, 1); g.save(); g.globalAlpha = .48; text('◆', cx, cy, 25, '#d6b45b'); text('⚔', cx, cy - 1 * cam.s, 11, '#5d3540'); g.restore() }, [14.8, 15.5, 3.55, 4.15])
+    },
     afterFrame({ g, width, height }, t) {
       const alpha = 0.035 + Math.sin(t * 1.7) * 0.008
       g.save()
@@ -52,6 +138,30 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
       g.fillStyle = 'rgba(255,186,84,' + alpha + ')'
       g.fillRect(0, 0, width, height)
       g.restore()
+    },
+    drawCharacter(ctx, e, t, z0 = 0) {
+      const { g, P, cam, hashOf, hsl2hex, picked, isZipped } = ctx
+      const p = e.data, h = hashOf(e.id), sub = e.kind === 'sub', walking = !!e.walking
+      let [x, y] = P(e.x, e.y, z0)
+      const frame = walking && Math.sin(t * 10) > 0 ? 1 : 0
+      y -= (walking ? Math.abs(Math.sin(t * 10)) * 2 : Math.sin(t * 2 + h) * .55) * cam.s
+      e.sx = x; e.sy = y
+      const job = p.job || 'shell'
+      const armor = { shell: '#5c4b9b', read: '#6d8f46', code: '#3d6f91', write: '#985a78', watch: '#4f817d', talk: '#b06d3c', lead: '#7c596f', ops: '#a17a32' }[job] || '#6d628e'
+      const trim = { shell: '#d9b95d', read: '#d9d18b', code: '#8ed0d8', write: '#e5aac2', watch: '#9fd1bd', talk: '#f0c16c', lead: '#d8b8d4', ops: '#f3c864' }[job] || '#d4c58d'
+      const hair = h % 4 === 0 ? '#d9d6ca' : ['#4b3023','#7b4c28','#332b35','#c8a052'][h % 4]
+      const skinColor = ['#f2c6a0','#dca47f','#f0b98c'][h % 3]
+      const sprite = guildSprite({ job, hair, skin: skinColor, armor, trim, back: walking && !!e.back, frame, zipped: isZipped(e.id), rank: p.rank || 0, sub, hairVariant: h % 2 })
+      const scale = cam.s * (sub ? .78 : 1.55), w = sprite.width * scale, hh = sprite.height * scale
+      g.save(); g.imageSmoothingEnabled = false
+      g.fillStyle = 'rgba(25,16,12,.26)'; g.beginPath(); g.ellipse(x, y + cam.s, 9 * cam.s, 3.2 * cam.s, 0, 0, Math.PI * 2); g.fill()
+      if (picked.has(e.id)) { g.strokeStyle = '#78d7ec'; g.lineWidth = 2 * cam.s; g.setLineDash([3 * cam.s, 2 * cam.s]); g.beginPath(); g.ellipse(x, y, 12 * cam.s, 4 * cam.s, 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]) }
+      if (e.sel) { const pulse = 1 + Math.sin(t * 5) * .08; g.strokeStyle = '#ffd35e'; g.lineWidth = 2 * cam.s; g.beginPath(); g.ellipse(x, y, 13 * cam.s * pulse, 4.5 * cam.s * pulse, 0, 0, Math.PI * 2); g.stroke() }
+      if (walking && (e.faceX || 1) < 0) { g.translate(x, 0); g.scale(-1, 1); g.translate(-x, 0) }
+      g.drawImage(sprite, Math.round(x - w / 2), Math.round(y - hh + 2 * cam.s), Math.round(w), Math.round(hh))
+      if (walking && (e.faceX || 1) < 0) g.restore(); else g.restore()
+      const icon = p.doing === 'alert' ? '!' : p.doing === 'asking' ? '?' : p.doing === 'done' ? '✓' : null
+      if (icon) { const u = Math.max(1, Math.round(cam.s * 1.4)), by = y - hh - 4 * u; g.fillStyle = '#fff1c8'; g.fillRect(Math.round(x - 5 * u), Math.round(by), 10 * u, 7 * u); g.fillRect(Math.round(x - 2 * u), Math.round(by + 7 * u), 2 * u, 2 * u); g.fillStyle = '#38271d'; g.font = 'bold ' + Math.max(8, 5 * u) + 'px ui-monospace, monospace'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(icon, x, by + 3.5 * u) }
     },
   },
 }
