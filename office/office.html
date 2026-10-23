@@ -232,21 +232,21 @@ function text(t, x, y, size, color = '#2a2033', align = 'center') {
 // sessions; a row is as deep as its deepest pod.
 const COLS = 5, POD_W = 3.7, POD_D1 = 2.4, POD_D2 = 3.7, OFF_Y = 4.6
 const ZONES = {
-  library: { x0: 0.3, x1: 5.3, floor: '#cfe8d6', label: '📚 자료실', when: '파일·코드·웹을 읽고 찾을 때', sign: '#2f6b4f', spots: [] },
-  workshop: { x0: 5.6, x1: 8.3, floor: '#d9d6cf', label: '🛠 작업실', when: '명령 실행 (Bash · 모니터링)', sign: '#7a4a1e', spots: [] },
-  phone: { x0: 8.5, x1: 10.6, floor: '#cfd8ee', label: '📞 통화 부스', when: 'MCP로 외부 서비스 호출 중', sign: '#2b4a8a', spots: [] },
-  lounge: { x0: 10.9, x1: 15.6, floor: '#f8d9dc', label: '☕ 휴게실', when: '할 일 없이 대기 · 10분 넘으면 낮잠', sign: '#a8435a', spots: [] },
+  library: { x0: 0.3, x1: 3.65, floor: '#cfe8d6', label: '📚 자료실', when: '파일·코드·웹을 읽고 찾을 때', sign: '#2f6b4f', spots: [] },
+  workshop: { x0: 3.85, x1: 5.8, floor: '#d9d6cf', label: '🛠 작업실', when: '명령 실행 (Bash · 모니터링)', sign: '#7a4a1e', spots: [] },
+  phone: { x0: 5.95, x1: 8.05, floor: '#cfd8ee', label: '📞 통화 부스', when: 'MCP로 외부 서비스 호출 중', sign: '#2b4a8a', spots: [] },
+  lounge: { x0: 8.25, x1: 12.6, floor: '#f8d9dc', label: '☕ 휴게실', when: '할 일 없이 대기 · 10분 넘으면 낮잠', sign: '#a8435a', spots: [] },
 }
 // Idle this long: asleep, lying in the pile in front of the sofa. The lounge
 // has no seat limit: the more idle sessions, the fuller (and funnier) it gets.
 const NAP_S = 10 * 60
-const PILE = [13.3, 1.55]
+const PILE = [10.45, 1.55]
 for (const z of Object.values(ZONES)) for (const y of [1.75, 2.65, 3.55]) for (let x = z.x0 + 0.55; x < z.x1 - 0.4; x += 0.78) z.spots.push([x + (y === 2.65 ? 0.39 : 0), y])
 // The lounge's café table and vending machine take a corner of its floor.
-const CAFE = [14.35, 3.05], VEND = [15.0, 1.45]
+const CAFE = [11.25, 3.05], VEND = [11.95, 1.45]
 // Three phone booths along the back wall; a caller stands in the first free
 // one (its spot in front of the phone), the rest wait on the floor.
-const BOOTHS = [8.62, 9.27, 9.92]
+const BOOTHS = [6.05, 6.7, 7.35]
 ZONES.phone.spots = [...BOOTHS.map((bx) => [bx + 0.3, 0.95]), ...ZONES.phone.spots.filter(([, y]) => y > 2)]
 ZONES.phone.prefer = BOOTHS.length
 ZONES.lounge.spots = ZONES.lounge.spots.filter(([x, y]) => Math.hypot(x - CAFE[0] - 0.3, y - CAFE[1] - 0.3) > 0.75 && !(x > VEND[0] - 0.35 && y < VEND[1] + 0.95))
@@ -258,8 +258,8 @@ const POOL_IN = [17.15, 0.75], POOL_OUT = [17.15, 1.7]
 const POOL_SIZE = 14
 // The meeting room: glass walls in the free corner below the crowd, a table
 // and standing places round it, a door on its left.
-const MEET = { x0: 16.4, x1: 18.5, y0: 2.0, y1: 4.25, table: [16.95, 17.95, 2.75, 3.45], door: [2.85, 3.45] }
-const MEET_SEATS = [[17.2, 2.55], [17.7, 2.55], [18.2, 3.1], [17.7, 3.7], [17.2, 3.7], [16.72, 3.1]]
+const MEET = { x0: 12.85, x1: 15.75, y0: 0.35, y1: 4.25, table: [13.55, 15.05, 1.7, 2.9], door: [3.3, 3.95] }
+const MEET_SEATS = [[13.9, 1.35], [14.7, 1.35], [15.4, 2.0], [15.4, 2.6], [14.7, 3.25], [13.9, 3.25], [13.2, 2.6], [13.2, 2.0]]
 let doorOpenUntil = 0
 let W = 22, D = 12
 const SEATS = [[0.15, 0.9], [1.9, 0.9], [0.15, 2.2], [1.9, 2.2]]
@@ -299,16 +299,16 @@ function rebuildGrid() {
       for (let gx = Math.max(0, Math.floor(x0 / CELL)); gx <= Math.min(w - 1, Math.floor((x1 - 1e-6) / CELL)); gx++) block[gy * w + gx] = 1
   }
   mark(0, 0, W + 0.6, 0.25) // back wall
-  for (let k = 0; k < 4; k++) mark(0.55 + k * 1.17, 0, 0.55 + k * 1.17 + 1.05, 0.38)
-  mark(11.05, 0.1, 11.67, 0.65); mark(11.9, 0.25, 14.6, 1.0); mark(14.95, 0.2, 15.37, 0.62); mark(POOL.x0, POOL.y0, POOL.x0 + 0.08, POOL.y1); mark(POOL.x0, POOL.y1 - 0.06, POOL.door[0], POOL.y1 + 0.06); mark(POOL.door[1], POOL.y1 - 0.06, POOL.x1, POOL.y1 + 0.06)
+  for (let k = 0; k < 3; k++) mark(0.35 + k * 1.1, 0, 0.35 + k * 1.1 + 1.05, 0.38)
+  mark(8.4, 0.1, 9.02, 0.65); mark(9.12, 0.25, 11.82, 1.0); mark(12.05, 0.2, 12.47, 0.62); mark(POOL.x0, POOL.y0, POOL.x0 + 0.08, POOL.y1); mark(POOL.x0, POOL.y1 - 0.06, POOL.door[0], POOL.y1 + 0.06); mark(POOL.door[1], POOL.y1 - 0.06, POOL.x1, POOL.y1 + 0.06)
   mark(POOL.x0, POOL.y0, POOL.door[0] - 0.05, POOL.y1); mark(POOL.door[1] + 0.05, POOL.y0, POOL.x1, POOL.y1) // the crowd
-  mark(0.8, 0.85, 4.8, 1.3) // reading table
-  mark(5.75, 0.05, 6.55, 0.7); mark(6.0, 0.9, 8.0, 1.3) // machine, workbench
+  mark(0.6, 0.85, 3.3, 1.3) // reading table
+  mark(3.95, 0.05, 4.75, 0.7); mark(4.0, 0.9, 5.7, 1.3) // machine, workbench
   for (const bx of BOOTHS) { mark(bx, 0.05, bx + 0.6, 0.7); mark(bx - 0.03, 0.05, bx + 0.02, 0.85); mark(bx + 0.58, 0.05, bx + 0.63, 0.85) }
   mark(CAFE[0], CAFE[1], CAFE[0] + 0.6, CAFE[1] + 0.6); mark(VEND[0], VEND[1], VEND[0] + 0.55, VEND[1] + 0.5)
   for (const w2 of windows) for (const p of w2.sessions) mark(p.desk[0], p.desk[1], p.desk[0] + 1.6, p.desk[1] + 0.7)
-  mark(MEET.x0, MEET.y0, MEET.x1, MEET.y0 + 0.06); mark(MEET.x0, MEET.y0, MEET.x0 + 0.06, MEET.door[0]); mark(MEET.x0, MEET.door[1], MEET.x0 + 0.06, MEET.y1)
-  mark(MEET.table[0], MEET.table[2], MEET.table[1], MEET.table[3])
+  mark(MEET.x0, MEET.y0, MEET.x0 + 0.06, MEET.door[0]); mark(MEET.x0, MEET.door[1], MEET.x0 + 0.06, MEET.y1); mark(MEET.x1 - 0.06, MEET.y0, MEET.x1, MEET.y1)
+  mark(MEET.table[0], MEET.table[2], MEET.table[1], MEET.table[3]); mark(15.25, 0.45, 15.67, 0.87)
   for (const w2 of windows) for (const p of w2.sessions) if (p.compacts) mark(p.desk[0] + MEMORY_AT[0], p.desk[1] + MEMORY_AT[1], p.desk[0] + MEMORY_AT[0] + 0.56, p.desk[1] + MEMORY_AT[1] + 0.2)
   for (const w2 of windows) if (w2.decor) { const [x, y] = decorAt(w2); mark(x, y, x + 1.3, y + 0.75) }
   for (const sc of sections) if (!sc.first) for (const [a, b] of partSegments(sc.y0)) mark(a, sc.y0 - 0.06, b, sc.y0 + 0.12)
@@ -1138,7 +1138,7 @@ function zoneFloors(t) {
   tile(L.x0 + 0.6, 1.6, L.x1 - L.x0 - 1.2, 2.3, '#3f7a5c', null); tile(L.x0 + 0.7, 1.7, L.x1 - L.x0 - 1.4, 2.1, '#4f8f6c', null)
   // Workshop: concrete slabs, an oil stain, a hazard stripe at the front.
   for (let x = S.x0; x < S.x1 - 0.01; x += 0.9) for (let y = 0.35; y < 4.2; y += 0.9) tile(x, y, Math.min(0.9, S.x1 - x), Math.min(0.9, 4.25 - y), ((x + y) * 10 | 0) % 2 ? '#cfcbc2' : '#d6d2c9', 'rgba(90,80,70,.25)')
-  { const [ox, oy] = P(7.3, 2.9); g.fillStyle = 'rgba(60,50,40,.12)'; g.beginPath(); g.ellipse(ox, oy, 18 * cam.s, 7 * cam.s, 0.2, 0, Math.PI * 2); g.fill() }
+  { const [ox, oy] = P(4.9, 2.9); g.fillStyle = 'rgba(60,50,40,.12)'; g.beginPath(); g.ellipse(ox, oy, 18 * cam.s, 7 * cam.s, 0.2, 0, Math.PI * 2); g.fill() }
   for (let x = S.x0; x < S.x1 - 0.01; x += 0.25) tile(x, 4.08, Math.min(0.25, S.x1 - x), 0.12, ((x * 4) | 0) % 2 ? '#f2c14e' : '#2a2033', null)
   // Phone booths: a quiet navy carpet with a border.
   tile(Ph.x0, 0.35, Ph.x1 - Ph.x0, 3.9, '#9fb0d8', null); tile(Ph.x0 + 0.12, 0.47, Ph.x1 - Ph.x0 - 0.24, 3.66, '#b6c4e6', null)
@@ -1147,11 +1147,11 @@ function zoneFloors(t) {
 }
 // The library's long reading table with green banker's lamps.
 function readingTable(t) {
-  const x = 0.8, y = 0.85, w = 4.0, d = 0.45
+  const x = 0.6, y = 0.85, w = 2.7, d = 0.45
   for (const lx of [x + 0.05, x + w - 0.1]) box(lx, y + 0.05, 0.05, d - 0.1, 16, '#6e4a2f')
   box(x, y, w, d, 4, '#8a5a3a', 16)
-  for (let k = 0; k < 4; k++) {
-    const lx = x + 0.45 + k * 1.0
+  for (let k = 0; k < 3; k++) {
+    const lx = x + 0.4 + k * 0.85
     box(lx, y + 0.12, 0.05, 0.05, 8, '#c9a227', 20)
     const [hx, hy] = P(lx + 0.02, y + 0.15, 30)
     poly([[hx - 9 * cam.s, hy + 2 * cam.s], [hx + 9 * cam.s, hy + 2 * cam.s], [hx + 6 * cam.s, hy - 4 * cam.s], [hx - 6 * cam.s, hy - 4 * cam.s]], '#2f8a5c')
@@ -1160,9 +1160,9 @@ function readingTable(t) {
     box(lx + 0.25, y + 0.15, 0.3, 0.2, 2, k % 2 ? '#f5efe2' : '#e9dcc4', 20)
   }
   // A rolling ladder against the shelves.
-  const [a, b] = P(4.2, 0.4, 0), [c, d2] = P(4.2, 0.12, 70), [e, f] = P(4.45, 0.4, 0), [g2, h] = P(4.45, 0.12, 70)
+  const [a, b] = P(3.05, 0.4, 0), [c, d2] = P(3.05, 0.12, 70), [e, f] = P(3.3, 0.4, 0), [g2, h] = P(3.3, 0.12, 70)
   g.strokeStyle = '#8a5a3a'; g.lineWidth = 2 * cam.s; g.beginPath(); g.moveTo(a, b); g.lineTo(c, d2); g.moveTo(e, f); g.lineTo(g2, h); g.stroke()
-  for (let k = 1; k < 7; k++) { const u = k / 7, [p1, q1] = P(4.2, 0.4 - 0.28 * u, 70 * u), [p2, q2] = P(4.45, 0.4 - 0.28 * u, 70 * u); g.beginPath(); g.moveTo(p1, q1); g.lineTo(p2, q2); g.stroke() }
+  for (let k = 1; k < 7; k++) { const u = k / 7, [p1, q1] = P(3.05, 0.4 - 0.28 * u, 70 * u), [p2, q2] = P(3.3, 0.4 - 0.28 * u, 70 * u); g.beginPath(); g.moveTo(p1, q1); g.lineTo(p2, q2); g.stroke() }
 }
 // Which service an MCP call goes to: a brand from simple-icons when the
 // tool's name or detail says one, else the server's own name.
@@ -1203,13 +1203,13 @@ function booth(bx, t) {
 // The workshop's bench: a vise, tools, and a little terminal that shows what
 // the people in the room are running.
 function workbench(t) {
-  const x = 6.0, y = 0.9, w = 2.0, d = 0.4
+  const x = 4.0, y = 0.9, w = 1.7, d = 0.4
   for (const lx of [x + 0.05, x + w - 0.1]) box(lx, y + 0.05, 0.05, d - 0.1, 20, '#5b4a3a')
   box(x, y, w, d, 5, '#b07a45', 20)
   box(x + 0.1, y + 0.1, 0.2, 0.18, 8, '#5b6b8f', 25)
   const [hx, hy] = P(x + 0.55, y + 0.25, 26); g.save(); g.translate(hx, hy); g.rotate(-0.4); rrect(-1.5 * cam.s, -10 * cam.s, 3 * cam.s, 14 * cam.s, 1 * cam.s, '#8a5a3a'); rrect(-5 * cam.s, -13 * cam.s, 10 * cam.s, 4 * cam.s, 1 * cam.s, '#7a7f95'); g.restore()
   const runners = inRoom('workshop').filter((e) => e.data.detail || e.data.tool)
-  const mx = x + 1.05, my = y + 0.06
+  const mx = x + 0.8, my = y + 0.06
   box(mx, my, 0.85, 0.08, 24, '#1c2033', 25)
   const q = [P(mx + 0.04, my + 0.08, 28), P(mx + 0.81, my + 0.08, 28), P(mx + 0.81, my + 0.08, 47), P(mx + 0.04, my + 0.08, 47)]
   poly(q, '#0e1a12', null)
@@ -1221,8 +1221,8 @@ function workbench(t) {
   lines.forEach((s2, i) => { g.fillStyle = '#7dffb0'; g.fillText(String(s2).slice(0, 22), 3 * cam.s, (3 + i * 8) * cam.s) })
   g.restore()
   // The pegboard of tools on the back wall above the bench.
-  poly([P(6.0, -0.3, 34), P(8.1, -0.3, 34), P(8.1, -0.3, 64), P(6.0, -0.3, 64)], '#c9a87a')
-  for (let k = 0; k < 7; k++) { const [tx, ty] = P(6.2 + k * 0.28, -0.3, 58); g.strokeStyle = ['#e86a5c', '#5b6b8f', '#f2c14e', '#7a7f95'][k % 4]; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(tx, ty); g.lineTo(tx + (k % 2 ? 3 : -2) * cam.s, ty + 16 * cam.s); g.stroke(); circle(tx, ty, 1.4 * cam.s, '#3b2a35', null) }
+  poly([P(4.0, -0.3, 34), P(5.75, -0.3, 34), P(5.75, -0.3, 64), P(4.0, -0.3, 64)], '#c9a87a')
+  for (let k = 0; k < 7; k++) { const [tx, ty] = P(4.15 + k * 0.24, -0.3, 58); g.strokeStyle = ['#e86a5c', '#5b6b8f', '#f2c14e', '#7a7f95'][k % 4]; g.lineWidth = 2.4 * cam.s; g.beginPath(); g.moveTo(tx, ty); g.lineTo(tx + (k % 2 ? 3 : -2) * cam.s, ty + 16 * cam.s); g.stroke(); circle(tx, ty, 1.4 * cam.s, '#3b2a35', null) }
 }
 // A machine at the back of the workshop: gears turning and a puff of steam
 // while someone runs a command.
@@ -1454,7 +1454,7 @@ function renderPicks() {
     const a = b.dataset.a
     if (a === 'clear') { picked.clear(); renderPicks() }
     else if (a === 'quiet') showQuiet([...picked], b)
-    else if (a === 'meeting' && (picked.size < 2 || picked.size > 6)) toast('회의는 2명에서 6명까지')
+    else if (a === 'meeting' && (picked.size < 2 || picked.size > 8)) toast('회의는 2명에서 8명까지')
     else { pickbar.dataset.mode = a; renderPicks() }
   } })
   pickbar.style.display = 'flex'
@@ -1484,29 +1484,31 @@ function meetingFloor() {
 // with the topic and the minutes' last lines, the people standing round it.
 function meetingRoom(add, t) {
   const m = meetingsNow[0]
-  const glass = (x0, y0, x1, y1, h) => { box(x0, y0, x1 - x0, y1 - y0, 4, '#8fa3c9'); poly(x1 - x0 > y1 - y0 ? [P(x0, y1, 4), P(x1, y1, 4), P(x1, y1, h), P(x0, y1, h)] : [P(x1, y0, 4), P(x1, y1, 4), P(x1, y1, h), P(x1, y0, h)], 'rgba(205,225,255,.38)', 'rgba(70,90,140,.55)', 1); box(x0, y0, x1 - x0, y1 - y0, 2, '#8fa3c9', h) }
-  add(MEET.x1 + MEET.y0 + 0.06, () => {
-    glass(MEET.x0, MEET.y0, MEET.x1, MEET.y0 + 0.06, 44)
-    // The whiteboard inside the back wall.
-    const q = [P(16.65, MEET.y0 + 0.07, 12), P(17.95, MEET.y0 + 0.07, 12), P(17.95, MEET.y0 + 0.07, 40), P(16.65, MEET.y0 + 0.07, 40)]
-    poly(q, '#fffdf6', LINE, 1)
+  const glassY = (x, y0, y1, h) => { box(x, y0, 0.06, y1 - y0, 4, '#8fa3c9'); poly([P(x + 0.06, y0, 4), P(x + 0.06, y1, 4), P(x + 0.06, y1, h), P(x + 0.06, y0, h)], 'rgba(205,225,255,.38)', 'rgba(70,90,140,.55)', 1); box(x, y0, 0.06, y1 - y0, 2, '#8fa3c9', h) }
+  // The whiteboard on the back wall: the topic and the minutes' last lines.
+  add(MEET.x0 + 0.2 + MEET.y0, () => {
+    const q = [P(13.2, -0.3, 14), P(15.4, -0.3, 14), P(15.4, -0.3, 60), P(13.2, -0.3, 60)]
+    poly(q, '#fffdf6', LINE, 1.2)
     const [ox, oy] = q[3], [ax, ay] = q[2], l = Math.hypot(ax - ox, ay - oy) || 1
     g.save(); g.transform((ax - ox) / l, (ay - oy) / l, 0, 1, ox, oy)
-    g.font = Math.max(5, 7 * cam.s) + 'px Jua, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top'
-    g.fillStyle = '#2b4a8a'; g.fillText(m ? '🗣 ' + m.topic.slice(0, 24) : '🗣 회의실', 3 * cam.s, 2 * cam.s)
-    if (m) { g.fillStyle = '#2a2033'; m.tail.forEach((ln, i) => g.fillText(ln.slice(0, 30), 3 * cam.s, (11 + i * 8) * cam.s)) }
+    g.font = Math.max(6, 9 * cam.s) + 'px Jua, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top'
+    g.fillStyle = '#2b4a8a'; g.fillText(m ? '🗣 ' + m.topic.slice(0, 30) : '🗣 회의실', 4 * cam.s, 3 * cam.s)
+    if (m) { g.font = Math.max(5, 8 * cam.s) + 'px Jua, sans-serif'; g.fillStyle = '#2a2033'; m.tail.forEach((ln, i) => g.fillText(ln.slice(0, 38), 4 * cam.s, (16 + i * 10) * cam.s)) }
     g.restore()
-  }, [MEET.x0, MEET.x1, MEET.y0, MEET.y0 + 0.06])
-  add(MEET.x0 + 0.06 + MEET.door[0], () => glass(MEET.x0, MEET.y0, MEET.x0 + 0.06, MEET.door[0], 44), [MEET.x0, MEET.x0 + 0.06, MEET.y0, MEET.door[0]])
-  add(MEET.x0 + 0.06 + MEET.y1, () => glass(MEET.x0, MEET.door[1], MEET.x0 + 0.06, MEET.y1, 44), [MEET.x0, MEET.x0 + 0.06, MEET.door[1], MEET.y1])
+  }, [MEET.x0 + 0.2, MEET.x1 - 0.2, -0.3, -0.25])
+  add(MEET.x0 + 0.06 + MEET.door[0], () => glassY(MEET.x0, MEET.y0, MEET.door[0], 44), [MEET.x0, MEET.x0 + 0.06, MEET.y0, MEET.door[0]])
+  add(MEET.x0 + 0.06 + MEET.y1, () => glassY(MEET.x0, MEET.door[1], MEET.y1, 44), [MEET.x0, MEET.x0 + 0.06, MEET.door[1], MEET.y1])
+  add(MEET.x1 + MEET.y1, () => glassY(MEET.x1 - 0.06, MEET.y0, MEET.y1, 44), [MEET.x1 - 0.06, MEET.x1, MEET.y0, MEET.y1])
   const [tx0, tx1, ty0, ty1] = MEET.table
   add(tx1 + ty1, () => {
     for (const [lx, ly] of [[tx0 + 0.1, ty0 + 0.1], [tx1 - 0.15, ty0 + 0.1], [tx0 + 0.1, ty1 - 0.15], [tx1 - 0.15, ty1 - 0.15]]) box(lx, ly, 0.05, 0.05, 16, '#5b4a3a')
     box(tx0, ty0, tx1 - tx0, ty1 - ty0, 4, m ? '#a0784f' : '#b08a63', 16)
-    if (m) for (let i = 0; i < m.sids.length; i++) { const [sx, sy] = MEET_SEATS[i]; const px = Math.min(tx1 - 0.2, Math.max(tx0 + 0.05, sx - 0.12)), py = Math.min(ty1 - 0.18, Math.max(ty0 + 0.04, sy - 0.08)); box(px, py, 0.22, 0.15, 1, '#fffdf6', 20) }
+    if (m) for (let i = 0; i < m.sids.length; i++) { const [sx, sy] = MEET_SEATS[i % MEET_SEATS.length]; const px = Math.min(tx1 - 0.25, Math.max(tx0 + 0.05, sx - 0.12)), py = Math.min(ty1 - 0.2, Math.max(ty0 + 0.04, sy - 0.08)); box(px, py, 0.22, 0.15, 1, '#fffdf6', 20) }
     const [cx, cy] = P((tx0 + tx1) / 2, (ty0 + ty1) / 2, 20)
-    if (m) { deskHits.push({ sx: cx, sy: cy, r: 26 * cam.s, sid: m.lead, kind: 'meeting', n: m.sids.length, meeting: m }); text(m.sids.length + '명', cx, cy - 4 * cam.s, 8, '#fff8ee') }
+    if (m) { deskHits.push({ sx: cx, sy: cy, r: 30 * cam.s, sid: m.lead, kind: 'meeting', n: m.sids.length, meeting: m }); text(m.sids.length + '명', cx, cy - 4 * cam.s, 9, '#fff8ee') }
   }, [tx0, tx1, ty0, ty1])
+  // A plant in the far corner.
+  add(15.45 + 0.6, () => plant(15.25, 0.45), [15.25, 15.67, 0.45, 0.87])
 }
 // The ring under each picked one.
 function pickRing(e, x, y, s) { if (!picked.has(e.id)) return; g.strokeStyle = '#7dd3fc'; g.lineWidth = 2.5 * cam.s; g.setLineDash([4 * cam.s, 3 * cam.s]); g.beginPath(); g.ellipse(x, y, 21 * s, 8.5 * s, 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]) }
@@ -1627,7 +1629,7 @@ function walls(t) {
   for (let x = 0.5; x < W; x += 0.9) poly(backQuad(x, x + 0.7, 7, 20), null, 'rgba(255,255,255,.35)', 0.8)
   for (let y = 0.5; y < D; y += 0.9) poly(leftQuad(y, y + 0.7, 7, 20), null, 'rgba(255,255,255,.3)', 0.8)
   // Over the sofa, a window; by the lift, a clock.
-  wallWindow(backQuad, (a, z) => P(a, -0.3, z), 12.3, 14.4, 30, 62, blindDrop(1), t, 1)
+  wallWindow(backQuad, (a, z) => P(a, -0.3, z), 9.5, 11.5, 30, 62, blindDrop(1), t, 1)
   const [kx, ky] = P(17.9, -0.3, 50), now = new Date()
   circle(kx, ky, 11 * cam.s, '#fffdf6'); circle(kx, ky, 1.5 * cam.s, '#3b2a35', null)
   const hand = (ang, len, w) => { g.strokeStyle = '#3b2a35'; g.lineWidth = w * cam.s; g.beginPath(); g.moveTo(kx, ky); g.lineTo(kx + Math.sin(ang) * len * cam.s, ky - Math.cos(ang) * len * cam.s); g.stroke() }
@@ -2394,7 +2396,7 @@ function frame(now) {
   deskHits = []
   resetBtn.style.display = cam.user ? 'inline-block' : 'none'
   tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
-  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, 1, 1, 'rgba(160,120,80,.07)', null)
+  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, Math.min(1, W - gx), Math.min(1, D - gy), 'rgba(160,120,80,.07)', null) // clipped: a whole last tile hung off the floor
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
   zoneFloors(t)
   meetingFloor()
@@ -2409,16 +2411,16 @@ function frame(now) {
   const items = []
   // b: the floor box [x0, x1, y0, y1] the thing stands on, for the sort below.
   const add = (depth, fn, b) => items.push([depth, fn, b])
-  for (let k = 0; k < 4; k++) { const x = 0.55 + k * 1.17; add(x + 0.7, () => shelf(x, 0.0), [x, x + 1.05, 0, 0.38]) }
-  add(5.75 + 0.8 + 0.7, () => machine(5.75, 0.05, t), [5.75, 6.55, 0.05, 0.7])
+  for (let k = 0; k < 3; k++) { const x = 0.35 + k * 1.1; add(x + 0.7, () => shelf(x, 0.0), [x, x + 1.05, 0, 0.38]) }
+  add(3.95 + 0.8 + 0.7, () => machine(3.95, 0.05, t), [3.95, 4.75, 0.05, 0.7])
   for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t), [bx - 0.03, bx + 0.63, 0.05, 0.7])
-  add(11.6, () => coffee(11.05, 0.1, t), [11.05, 11.67, 0.1, 0.65])
-  add(13.6, () => sofa(12.1, 0.25), [11.92, 14.6, 0.25, 1.0])
-  add(15.3, () => plant(14.95, 0.2), [14.95, 15.37, 0.2, 0.62])
+  add(9.0, () => coffee(8.4, 0.1, t), [8.4, 9.02, 0.1, 0.65])
+  add(10.8, () => sofa(9.3, 0.25), [9.12, 11.82, 0.25, 1.0])
+  add(12.4, () => plant(12.05, 0.2), [12.05, 12.47, 0.2, 0.62])
   poolCrowd(add, t)
   meetingRoom(add, t)
-  add(4.8 + 1.3, () => readingTable(t), [0.8, 4.8, 0.85, 1.3])
-  add(8.0 + 1.3, () => workbench(t), [6.0, 8.0, 0.9, 1.3])
+  add(3.3 + 1.3, () => readingTable(t), [0.6, 3.3, 0.85, 1.3])
+  add(5.7 + 1.3, () => workbench(t), [4.0, 5.7, 0.9, 1.3])
   add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
   add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t), [VEND[0], VEND[0] + 0.55, VEND[1], VEND[1] + 0.5])
   for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))

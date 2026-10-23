@@ -327,8 +327,9 @@ else the first name of your account's full name, else your login name.
   a donut, a handheld game.
 - **Several at once, and meetings**: `⇧click` picks sessions one by one and
   `⇧drag` lassoes them (a dashed ring each); a bar then offers `🗣 회의`, `📣 공지`
-  and `💤 미루기` for all of them. A meeting (2 to 6, a topic typed in the bar)
-  walks them into the glass meeting room round its table; each is told,
+  and `💤 미루기` for all of them. A meeting (2 to 8, a topic typed in the bar)
+  walks them into the glass meeting room (the corner between the lounge and the
+  crowd, as deep as the rooms) round its table; each is told,
   through its inbox, who else is there by the names `SendMessage` takes, who
   leads (the first picked) and where the minutes go
   (`~/.claude/state/office/meetings/<id>.md`), and to keep to its policy. Their
