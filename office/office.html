@@ -110,6 +110,12 @@ body.picking #c { cursor: crosshair; }
 #card .busy hr { border: 0; border-top: 1px dashed #e8a23a; margin: 5px 0; }
 #card .busy .m { color: #8a5a1e; font-size: 11.5px; }
 #card.isbusy .act.go { opacity: .55; }
+#card .ctabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+#card .ctabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
+#card .ctabs button.on { background: #2a2033; color: #fff; }
+#card .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
+#card .cfoot { position: sticky; bottom: -12px; margin: 8px -14px -12px; padding: 8px 14px 10px; background: #fffaf0; border-top: 2px dashed rgba(59,42,53,.18); box-shadow: 0 -6px 10px rgba(255,250,240,.9); }
+#card .cfoot .row:last-of-type { margin-bottom: 4px; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .shelf .tabs button.on { background: #2a2033; color: #fff; }
@@ -154,7 +160,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>책상 서랍 탭 이동 (받은 것 · 보낸 것 · 스크래치 …)</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>카드 탭 이동 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
@@ -796,7 +802,10 @@ async function openCard(sid, kind = null) {
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
   cardRoute = d.route || 'default'
   card.innerHTML = ''
-  const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; card.appendChild(e); return e }
+  // add() puts things where `into` points: the card, then its tab panes, then
+  // the foot that stays at the card's bottom (the things to press).
+  let into = card
+  const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
   const close = add('button', 'x', '✕'); close.onclick = closeCard
   card.keys = []
   add('h2', '', esc(d.window + ' ' + d.name))
@@ -831,6 +840,22 @@ async function openCard(sid, kind = null) {
     card.keys[0] = talk
     return
   } else card.shelfTab = null
+  // Tabs: the answer, and what it was handed, sent and wrote (from its
+  // outputs), so the answer is not pushed down by a wall of chips. [ ] switch.
+  const groups = [['said', '💬 답변', null], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)]]
+    .map(([k, label, f]) => [k, label, f ? (d.related || []).filter(f) : null]).filter(([k, , items]) => k === 'said' || items.length)
+  const tabbar = add('div', 'ctabs'), panes = {}
+  for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; card.appendChild(panes[k]) }
+  let curTab = 0
+  const showTab = (i) => {
+    curTab = (i + groups.length) % groups.length
+    tabbar.innerHTML = ''
+    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = label + (items ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
+  }
+  if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir)
+  for (const [k, , items] of groups) if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
+  into = panes.said
   card.said = null
   if (d.text) {
     const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
@@ -839,17 +864,16 @@ async function openCard(sid, kind = null) {
     card.said = said
     if (said.scrollHeight > said.clientHeight + 4) add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
   }
+  showTab(0)
+  if (groups.length < 2) tabbar.style.display = 'none'
+  // The foot: everything to press stays in view at the card's bottom.
+  const foot = document.createElement('div'); foot.className = 'cfoot'; card.appendChild(foot); into = foot
   // Policy: what Jev thinks this session needs before it can go on, for one press.
   if (d.grant) {
     const gbox = add('div', 'grant', '🔐 <b>정책 제안</b> · ' + esc(d.grant.label) + ' · ' + d.grant.minutes + '분<div class="why">' + esc(d.grant.why) + '</div>')
     const gb = document.createElement('button'); gb.className = 'act grantb'; gb.innerHTML = '<span class="key">A</span>승인하고 계속'; gb.onclick = () => send({ kind: 'grant' }, d.grant.label + ' ' + d.grant.minutes + '분 허용')
     gbox.appendChild(gb); card.grant = gb
   } else card.grant = null
-  // What it made or was handed: PRs, threads, tickets, files — one click away.
-  if (d.related && d.related.length) {
-    const rel = add('div', 'rel')
-    if (!d.shelf) for (const o of d.related) rel.appendChild(chip(o))
-  }
   const msg = document.createElement('div'); msg.className = 'msg'
   let armed = null
   const send = async (body, label) => {
@@ -911,7 +935,7 @@ async function openCard(sid, kind = null) {
   zz.innerHTML = '<span class="key">Z</span>' + (!q ? '💤 미루기 ▾' : q.until ? '💤 ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분 남음 ▾' : '🤐 말 걸 때까지 ▾')
   zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
-  card.appendChild(msg)
+  foot.appendChild(msg)
   // A dialog has no reply box; the card itself takes the keys then.
   setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } }, 30)
 }
