@@ -88,12 +88,64 @@ header h1 { color: #ffe8a3; text-shadow: 0 2px 0 #281b12, 0 0 12px rgba(240,189,
 #card, #settings, #help, #tip, #pickbar, #movebar, #quietmenu, #placemenu { background: #f1dfb4; color: #352315; border-color: #291a10; border-radius: 4px 13px 4px 13px; box-shadow: inset 0 0 0 2px #9b7543, 0 6px 0 #1f140d, 0 12px 24px rgba(0,0,0,.35); }
 #card .said { background: #e4ce9f; border: 1px solid #a47a45; }
 #card .ctabs button.on, #card .shelf .tabs button.on { background: #513920; color: #ffe9ac; }
-#card .cfoot { background: #f1dfb4; box-shadow: 0 -8px 14px rgba(241,223,180,.94); border-color: #a47a45; }
+#card .titlebar, #card .cfoot { background: #f1dfb4; box-shadow: 0 -8px 14px rgba(241,223,180,.94); border-color: #a47a45; }
 canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-rendering: auto; }
 #hint kbd, kbd { border-radius: 3px; background: #4a3420; color: #ffeab0; border-color: #25170e; }
 #ask .q { background: #d7a63e; color: #2c1c11; }
 #ask .x { background: #963f30; color: #fff0ce; }
 `,
+    drawMeetingFloor({ tile, MEET }) { tile(MEET.x0, MEET.y0, MEET.x1 - MEET.x0, MEET.y1 - MEET.y0, '#755132', '#4c311f'); for(let x=MEET.x0+.15;x<MEET.x1;x+=.45)tile(x,MEET.y0+.12,.22,MEET.y1-MEET.y0-.24,'rgba(213,177,94,.12)',null) },
+    drawFurniture(ctx, kind, args) {
+      const { g, P, box, poly, circle, rrect, text, tile, cam, LINE, BOOKS, decorAt, meetingsNow, MEET, MEET_SEATS, deskHits, POOL, POOL_PEOPLE, POOL_SIZE, ents, drawCharacter } = ctx
+      if (kind === 'shelf') {
+        const [x, y] = args; box(x, y, 1.05, .38, 60, '#604126')
+        for (let r0=0;r0<3;r0++) { box(x+.04,y+.3,.97,.05,3,'#3d2819',12+r0*18); for(let b=0;b<6;b++){const bx=x+.08+b*.145,c=BOOKS[(b+r0*2)%BOOKS.length]; poly([P(bx,y+.39,15+r0*18),P(bx+.11,y+.39,15+r0*18),P(bx+.11,y+.39,27+r0*18),P(bx,y+.39,27+r0*18)],c,LINE,.7)} }
+        for(let k=0;k<3;k++){const [sx,sy]=P(x+.18+k*.29,y+.39,55);g.strokeStyle='#d6bd7d';g.lineWidth=2*cam.s;g.beginPath();g.moveTo(sx-5*cam.s,sy);g.lineTo(sx+5*cam.s,sy);g.stroke()}
+        return true
+      }
+      if (kind === 'machine') {
+        const [x,y,t]=args; box(x,y,.8,.65,12,'#665a4b'); box(x+.08,y+.08,.58,.45,22,'#3a3029',12); const [fx,fy]=P(x+.38,y+.53,25); rrect(fx-12*cam.s,fy-9*cam.s,24*cam.s,16*cam.s,2*cam.s,'#7b2f24'); g.save();g.globalAlpha=.55;circle(fx,fy-3*cam.s,(6+Math.sin(t*7)*1.5)*cam.s,'#ff9a3c',null);g.restore(); const [ax,ay]=P(x+.68,y+.2,38);poly([[ax-10*cam.s,ay],[ax+10*cam.s,ay],[ax+6*cam.s,ay-5*cam.s],[ax-5*cam.s,ay-5*cam.s]],'#47484b');box(x+.64,y+.17,.08,.08,20,'#4d3525');return true
+      }
+      if (kind === 'coffee') {
+        const [x,y,t]=args; box(x,y,.62,.55,34,'#74451f'); for(let k=0;k<3;k++)box(x-.03,y+.1+k*.16,.68,.04,3,'#484047',8+k*9); const [mx,my]=P(x+.3,y+.54,40);rrect(mx-6*cam.s,my-7*cam.s,12*cam.s,8*cam.s,2*cam.s,'#cfaa61');for(let k=0;k<2;k++){const q=(t*.5+k/2)%1;g.save();g.globalAlpha=1-q;circle(mx+Math.sin(q*5)*3*cam.s,my-10*cam.s-q*12*cam.s,(2+q*2)*cam.s,'#fff1d0',null);g.restore()}return true
+      }
+      if (kind === 'sofa') {
+        const [x,y]=args; box(x,y,2.3,.75,13,'#744b2c');box(x,y,2.3,.18,31,'#604126');box(x-.14,y,.18,.75,23,'#604126');box(x+2.28,y,.18,.75,23,'#604126');for(let k=0;k<3;k++)box(x+.13+k*.7,y+.18,.58,.46,8,k%2?'#7d4140':'#6f3738',13);return true
+      }
+      if (kind === 'plant') { const [x,y]=args;box(x,y,.42,.42,15,'#75502e');const [px,py]=P(x+.21,y+.21,32);for(let k=0;k<5;k++){const a=k*1.25;g.save();g.translate(px,py);g.rotate(a);g.fillStyle=k%2?'#618746':'#769b53';g.beginPath();g.ellipse(0,-8*cam.s,4*cam.s,10*cam.s,0,0,Math.PI*2);g.fill();g.restore()}return true }
+      if (kind === 'readingTable') { const t=args[0],x=.6,y=.85;for(const lx of[x+.05,x+2.62])box(lx,y+.05,.07,.36,17,'#4d301d');box(x,y,2.7,.45,5,'#765033',17);for(let k=0;k<3;k++){box(x+.32+k*.84,y+.15,.48,.23,2,'#dbc48d',22);const[sx,sy]=P(x+.55+k*.84,y+.19,31);circle(sx,sy,3*cam.s,'#f0bd58',null);if(ctx.inRoom('library').length){g.save();g.globalAlpha=.14;circle(sx,sy,15*cam.s,'#ffd66d',null);g.restore()}}return true }
+      if (kind === 'workbench') { const t=args[0],x=4,y=.9;for(const lx of[x+.05,x+1.6])box(lx,y+.05,.07,.32,20,'#4b3121');box(x,y,1.7,.4,5,'#745035',20);const[sx,sy]=P(x+.4,y+.3,34);poly([[sx-10*cam.s,sy],[sx+11*cam.s,sy],[sx+7*cam.s,sy-5*cam.s],[sx-6*cam.s,sy-5*cam.s]],'#535256');const[fx,fy]=P(x+1.25,y+.25,30);g.save();g.globalAlpha=.18;circle(fx,fy,(9+Math.sin(t*6))*cam.s,'#ff9b42',null);g.restore();circle(fx,fy,4*cam.s,'#f0ad48','#4f2b20',1);return true }
+      if (kind === 'cafeTable') { const[x,y]=args;box(x+.27,y+.27,.07,.07,16,'#51351f');const[cx,cy]=P(x+.3,y+.3,18);g.fillStyle='#704a2c';g.beginPath();g.ellipse(cx,cy,21*cam.s,10*cam.s,0,0,Math.PI*2);g.fill();g.strokeStyle=LINE;g.stroke();for(let k=0;k<3;k++)circle(cx-8*cam.s+k*8*cam.s,cy-3*cam.s,3*cam.s,['#d5a64a','#9b493e','#d5c37d'][k],null);return true }
+      if (kind === 'vending') { const[x,y]=args;box(x,y,.65,.52,21,'#674321');box(x+.04,y+.04,.57,.44,4,'#8b5d2f',21);for(let k=0;k<3;k++)box(x+.1+k*.16,y+.13,.1,.1,6,['#7ca05b','#b36b3d','#6a789c'][k],25);const[sx,sy]=P(x+.32,y+.51,35);rrect(sx-11*cam.s,sy-5*cam.s,22*cam.s,8*cam.s,2*cam.s,'#d2b26f',LINE,1);return true }
+      if (kind === 'radiator') { const[y0]=args,q=[P(-.31,y0,18),P(-.31,y0+1.1,18),P(-.31,y0+1.1,55),P(-.31,y0,55)];poly(q,'#74403d','#3b281d',1);const[a,b]=P(-.32,y0+.55,39);text('◆',a,b,14,'#d7b65e');return true }
+      if (kind === 'chair') { const[x,y]=args;box(x+.5,y-.43,.45,.34,10,'#6a4428');box(x+.53,y-.39,.07,.07,22,'#49301f');box(x+.85,y-.39,.07,.07,22,'#49301f');return true }
+      if (kind === 'decor') { const[w,t]=args,[x,y]=decorAt(w);if(w.decor==='plant'){box(x+.28,y+.18,.6,.45,18,'#76502d');for(let k=0;k<4;k++){const[sx,sy]=P(x+.38+k*.13,y+.43,35+k%2*7);circle(sx,sy,6*cam.s,k%2?'#668c4a':'#8daa5d')}}else if(w.decor==='shelf'){box(x+.08,y+.08,1.12,.34,48,'#644326');for(let k=0;k<5;k++)box(x+.15+k*.18,y+.15,.12,.18,4,BOOKS[k%BOOKS.length],48)}else if(w.decor==='beanbag'){box(x+.22,y+.16,.85,.52,20,'#704526');for(let k=0;k<3;k++)box(x+.3+k*.22,y+.25,.16,.18,6,['#8c3f3b','#667a47','#b18a43'][k],20)}else if(w.decor==='board'){box(x+.52,y+.25,.1,.1,24,'#604020');box(x+.23,y+.18,.68,.12,28,'#786145');const[sx,sy]=P(x+.57,y+.24,36);circle(sx,sy,8*cam.s,'#8e794d','#39291e',1.5)}else if(w.decor==='cat'){box(x+.22,y+.15,.85,.48,13,'#75502e');const[sx,sy]=P(x+.64,y+.4,21);circle(sx,sy,9*cam.s,'#d6944c');poly([[sx-6*cam.s,sy-6*cam.s],[sx-5*cam.s,sy-14*cam.s],[sx,sy-8*cam.s]],'#d6944c')}else{for(let k=0;k<3;k++)box(x+.24+k*.22,y+.18,.18,.32,22+k*7,['#794229','#6b824b','#96703e'][k])}return true }
+      if (kind === 'meeting') {
+        const[add,t]=args,m=meetingsNow[0],[tx0,tx1,ty0,ty1]=MEET.table
+        add(MEET.x0+MEET.y0,()=>{box(MEET.x0,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f');box(MEET.x1-.1,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f');box(MEET.x0,MEET.y0,MEET.x1-MEET.x0,.1,6,'#6d482a',42)},[MEET.x0,MEET.x1,MEET.y0,MEET.y0+.1])
+        add(tx1+ty1,()=>{for(const[lx,ly]of[[tx0+.1,ty0+.1],[tx1-.15,ty0+.1],[tx0+.1,ty1-.15],[tx1-.15,ty1-.15]])box(lx,ly,.06,.06,17,'#49301f');box(tx0,ty0,tx1-tx0,ty1-ty0,5,'#754c2d',17);const[cx,cy]=P((tx0+tx1)/2,(ty0+ty1)/2,23);text('◆',cx,cy,19,'#d1aa55');if(m){deskHits.push({sx:cx,sy:cy,r:30*cam.s,sid:m.lead,kind:'meeting',n:m.sids.length,meeting:m});text(m.sids.length+'명',cx,cy-9*cam.s,9,'#fff1c8')}},[tx0,tx1,ty0,ty1]);return true
+      }
+      if (kind === 'pool') return false
+      return false
+    },
+    drawBooth(ctx, bx, t) {
+      const { g, P, box, poly, circle, rrect, text, cam, inRoom, LINE } = ctx
+      const y0 = .05, caller = inRoom('phone').find((e) => Math.abs(e.x - (bx + .3)) < .2 && e.y < 1.3)
+      // An open carved alcove: stone plinth, timber uprights and a floating
+      // crystal orb. There is no handset or phone icon in this skin.
+      box(bx - .04, y0, .68, .65, 7, '#71695e')
+      for (const sx of [bx, bx + .58]) { box(sx, y0, .08, .62, 62, '#49301e'); box(sx - .03, y0, .14, .2, 8, '#8d8374') }
+      box(bx, y0, .66, .08, 8, '#50331e', 62)
+      const [cx, cy] = P(bx + .31, y0 + .24, 39), pulse = 1 + Math.sin(t * 3 + bx) * .08
+      g.save(); g.globalAlpha = caller ? .22 : .1; circle(cx, cy, 18 * pulse * cam.s, caller ? '#8ce7ef' : '#7b91a7', null); g.restore()
+      circle(cx, cy, 8 * pulse * cam.s, caller ? '#8ce7ef' : '#7389a0', '#27344c', 1.2)
+      circle(cx - 2 * cam.s, cy - 3 * cam.s, 2.5 * cam.s, '#e8ffff', null)
+      const [lx, ly] = P(bx + .31, y0 + .67, 68)
+      rrect(lx - 16 * cam.s, ly - 6 * cam.s, 32 * cam.s, 10 * cam.s, 3 * cam.s, caller ? '#d5bd68' : '#50402e', LINE, 1)
+      text(caller ? 'LINK' : '✦', lx, ly - cam.s, 7, caller ? '#2c2417' : '#c6b278')
+      // Orbiting runes make an active call visible without modern hardware.
+      if (caller) for (let i = 0; i < 4; i++) { const a = t * 1.8 + i * Math.PI / 2; text('·', cx + Math.cos(a) * 14 * cam.s, cy + Math.sin(a) * 7 * cam.s, 9, '#d8ffff') }
+    },
     drawDeskGear(ctx, d) {
       const { g, P, box, poly, circle, cam, BOOKS } = ctx
       const { x, y, top, job, on, t } = d

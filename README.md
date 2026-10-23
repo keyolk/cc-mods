@@ -372,13 +372,17 @@ else the first name of your account's full name, else your login name.
   오피스` keeps the original. `⚔ 클래식 판타지 길드홀` is an original
   early-2000s 2D-sprite-on-3D-isometric-world treatment: parchment-and-wood
   chrome; records archive, forge, crystal comms and tavern; oak, stone, rune
-  and woven-rug floors; timber posts, stone feet, wall torches, lantern warmth
-  and subtle screen grain. Its workers use a separate 32×48 low-resolution
-  sprite renderer with nearest-neighbour scaling, directional walk frames,
-  stepped hair, job headgear and props, rank crowns and zipped mouths. Desks
-  replace monitors with rune tablets, crystal orbs, scrying mirrors, magical
-  devices, books, parchment and messenger scrolls. The choice stays in this
-  browser. Skins never change room identity, geometry, hit boxes or routing.
+  and woven-rug floors; timber posts, stone feet, wall torches, a guild crest,
+  lantern warmth and subtle screen grain. Its workers use a separate 32×48
+  low-resolution sprite renderer with nearest-neighbour scaling, directional
+  walk frames, stepped hair, job headgear and props, rank crowns and zipped
+  mouths. Guild furniture replaces bookshelves, forge machinery, café, sofa,
+  vending machine, radiators, chairs, decorations and the glass meeting room.
+  The phone booth becomes a carved crystal-comms alcove, with a floating orb
+  rather than a handset or phone icon. Desks replace monitors with rune
+  tablets, crystal orbs, scrying mirrors, magical devices, books, parchment and
+  messenger scrolls. The choice stays in this browser. Skins never change room
+  identity, geometry, hit boxes or routing.
 - **Where things open is yours to pick**: `⚙` (or `,`) in the top row sets
   where web links and files open outside (that session's setting, TWeb on
   your Chrome / Electron / WebKit, the Chrome tab group, the default browser

@@ -24,12 +24,11 @@ canvas.drag { cursor: grabbing; }
 #tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
 #card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: 260px; max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
 #card.max { left: 10px !important; right: 10px !important; top: 10px !important; bottom: 10px !important; width: auto !important; height: auto !important; max-height: none; }
-#card h2 { margin: 0 54px 2px 0; font-size: 18px; font-weight: 400; cursor: grab; user-select: none; touch-action: none; }
-#card h2:active { cursor: grabbing; }
+#card .titlebar { position: sticky; top: -12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: -12px -14px 6px; padding: 10px 10px 7px 14px; background: #fffaf0; border-bottom: 2px solid rgba(59,42,53,.14); cursor: grab; user-select: none; touch-action: none; }
+#card .titlebar:active { cursor: grabbing; }
+#card h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
-#card .x, #card .maxb { position: absolute; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
-#card .x { right: 10px; }
-#card .maxb { right: 38px; }
+#card .x, #card .maxb { flex: 0 0 auto; border: 0; background: none; font-size: 18px; cursor: pointer; padding: 0 3px; }
 #card .resize { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 18px; cursor: nesw-resize; z-index: 2; opacity: .5; }
 #card .resize::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 9px; height: 9px; border-left: 2px solid #7a7090; border-bottom: 2px solid #7a7090; }
 #card.max .resize { display: none; }
@@ -87,7 +86,12 @@ body.picking #c { cursor: crosshair; }
 #settings .row { margin: 8px 0; }
 #settings .row > div:first-child { margin-bottom: 4px; }
 #settings .m { color: #6b6280; font-size: 11px; }
-#settings select { font: inherit; width: 100%; padding: 3px 6px; border: 2px solid var(--line); border-radius: 8px; background: #fff; }
+#settings .pick { position: relative; }
+#settings .pick > button { width: 100%; display: flex; justify-content: space-between; align-items: center; font: inherit; padding: 4px 8px; border: 2px solid var(--line); border-radius: 8px; background: #fff; color: #2a2033; cursor: pointer; }
+#settings .pick .opts { display: none; margin-top: 3px; padding: 4px; border: 2px solid var(--line); border-radius: 8px; background: #fffaf0; box-shadow: 0 4px 0 rgba(59,42,53,.2); }
+#settings .pick.open .opts { display: grid; gap: 2px; }
+#settings .pick .opts button { width: 100%; text-align: left; font: inherit; border: 0; border-radius: 6px; padding: 4px 7px; background: transparent; color: #2a2033; cursor: pointer; }
+#settings .pick .opts button:hover, #settings .pick .opts button:focus, #settings .pick .opts button.on { background: #e7d9bc; outline: none; }
 #settings label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 #pickbar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 8px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 7px 12px; font-size: 13px; max-width: calc(100vw - 32px); }
 #pickbar .m { color: #6b6280; font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -682,7 +686,7 @@ function fit() {
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
   // Room for the labels in the margin: the room callouts above the back
   // wall, the tmux labels left of the left wall.
-  const top = 48 + 60, bottom = 48, left = Math.min(170, VW * 0.14)
+  const top = 64, bottom = 48, left = Math.min(110, VW * 0.09)
   // Before the page has a size (VW/VH 0) this would go negative.
   cam.s = Math.max(0.1, Math.min((VW - 16 - left) / (maxX - minX), (VH - top - bottom) / (maxY - minY)))
   cam.ox = left + (VW - left - (maxX - minX) * cam.s) / 2 - minX * cam.s
@@ -874,16 +878,19 @@ function moveCardBy(dx, dy) {
   if (card.classList.contains('max')) toggleCardMax()
   setCardPosition(card.offsetLeft + dx, card.offsetTop + dy); saveCardLayout()
 }
-function cardChrome(add) {
-  const close = add('button', 'x', '✕'); close.title = '닫기 (Esc)'; close.onclick = closeCard
-  const max = add('button', 'maxb', card.classList.contains('max') ? '❐' : '□'); card.maxButton = max; max.onclick = toggleCardMax
+function cardChrome(add, titleHtml) {
+  const bar = add('div', 'titlebar')
+  const title = document.createElement('h2'); title.innerHTML = titleHtml; bar.appendChild(title)
+  const max = document.createElement('button'); max.className = 'maxb'; max.textContent = card.classList.contains('max') ? '❐' : '□'; max.onclick = toggleCardMax; bar.appendChild(max); card.maxButton = max
   max.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)'
+  const close = document.createElement('button'); close.className = 'x'; close.textContent = '✕'; close.title = '닫기 (Esc)'; close.onclick = closeCard; bar.appendChild(close)
+  makeCardMovable(bar)
   const grip = add('div', 'resize'); grip.title = '끌어서 카드 크기 조정 · ⌥+방향키'
   grip.onmousedown = (e) => { if (card.classList.contains('max')) return; e.preventDefault(); e.stopPropagation(); cardResize = { x: e.clientX, y: e.clientY, w: card.offsetWidth, h: card.offsetHeight } }
 }
-function makeCardMovable(title) {
-  title.title = '끌어서 대화창 이동 · ⌥⇧+방향키'
-  title.onmousedown = (e) => { if (card.classList.contains('max') || e.button !== 0) return; e.preventDefault(); cardMove = { x: e.clientX, y: e.clientY, left: card.offsetLeft, top: card.offsetTop } }
+function makeCardMovable(bar) {
+  bar.title = '끌어서 대화창 이동 · ⌥⇧+방향키'
+  bar.onmousedown = (e) => { if (e.target.closest('button') || card.classList.contains('max') || e.button !== 0) return; e.preventDefault(); cardMove = { x: e.clientX, y: e.clientY, left: card.offsetLeft, top: card.offsetTop } }
 }
 function resourceKeys(list, focus = false) {
   const links = [...list.querySelectorAll('a')]
@@ -939,9 +946,8 @@ async function openCard(sid, kind = null) {
   // the foot that stays at the card's bottom (the things to press).
   let into = card
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
-  cardChrome(add)
+  cardChrome(add, esc(d.window + ' ' + d.name))
   card.keys = []
-  const title = add('h2', '', esc(d.window + ' ' + d.name)); makeCardMovable(title)
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   // Busy or a reply already on its way: said first, before anything to press.
   card.busy = add('div', 'busy')
@@ -1290,15 +1296,24 @@ function pref(k, d) { try { return localStorage.getItem('office.' + k) ?? d } ca
 function setPref(k, v) { try { localStorage.setItem('office.' + k, v) } catch {} }
 const viewInside = () => pref('viewInside', '1') === '1'
 const settings = document.createElement('div'); settings.id = 'settings'; document.body.appendChild(settings)
+function settingPick(k, cur, options) {
+  const selected = options.find(([v]) => v === cur) || options[0]
+  return '<div class="pick" data-k="' + k + '"><button class="trigger" type="button" aria-expanded="false"><span>' + esc(selected[1]) + '</span><span>⌄</span></button><div class="opts">' + options.map(([v, label]) => '<button type="button" data-v="' + esc(v) + '" class="' + (v === cur ? 'on' : '') + '">' + esc(label) + '</button>').join('') + '</div></div>'
+}
 function openSettings() {
-  const opts = (cur, file) => PLACES.filter(([k]) => file || k !== 'finder').map(([k, name]) => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + name + '</option>').join('')
+  const web = PLACES.filter(([k]) => k !== 'finder'), file = PLACES
   settings.innerHTML = '<h3>⚙ 설정</h3>'
-    + '<div class="row"><div>🎨 Visual skin <span class="m">공간·UI·canvas 분위기</span></div><select data-k="skin">' + Object.entries(SKINS).map(([k, s]) => '<option value="' + k + '"' + (skin === s ? ' selected' : '') + '>' + s.name + '</option>').join('') + '</select></div>'
-    + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div><select data-k="place.web">' + opts(pref('place.web', 'session'), false) + '</select></div>'
-    + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div><select data-k="place.file">' + opts(pref('place.file', 'session'), true) + '</select></div>'
+    + '<div class="row"><div>🎨 Visual skin <span class="m">공간·UI·canvas 분위기</span></div>' + settingPick('skin', skin.key, Object.entries(SKINS).map(([k, s]) => [k, s.name])) + '</div>'
+    + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div>' + settingPick('place.web', pref('place.web', 'session'), web) + '</div>'
+    + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div>' + settingPick('place.file', pref('place.file', 'session'), file) + '</div>'
     + '<div class="row"><label><input type="checkbox" data-k="viewInside"' + (viewInside() ? ' checked' : '') + '> 볼 수 있는 파일은 먼저 안에서 보기 (👁)</label></div>'
     + '<div class="m">"이 세션 설정대로"는 그 세션 pane의 @browser를 따릅니다 (tmux-chrome). 고른 곳은 이 브라우저에 저장되고, 칩의 ▾·우클릭 메뉴에서 고른 것도 여기에 반영됩니다. <kbd>,</kbd> 또는 <kbd>Esc</kbd>로 닫기.</div>'
-  settings.querySelectorAll('select').forEach((el) => { el.onchange = () => { if (el.dataset.k === 'skin') setSkin(el.value); else setPref(el.dataset.k, el.value); toast('⚙ 저장했습니다') } })
+  settings.querySelectorAll('.pick').forEach((pick) => {
+    const trigger = pick.querySelector('.trigger'), opts = pick.querySelector('.opts')
+    trigger.onclick = () => { const open = !pick.classList.contains('open'); settings.querySelectorAll('.pick.open').forEach((p) => { p.classList.remove('open'); p.querySelector('.trigger').setAttribute('aria-expanded', 'false') }); pick.classList.toggle('open', open); trigger.setAttribute('aria-expanded', String(open)); if (open) (opts.querySelector('.on') || opts.querySelector('button'))?.focus() }
+    trigger.onkeydown = (e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trigger.click() } }
+    opts.querySelectorAll('button').forEach((b) => { b.onclick = () => { const k = pick.dataset.k; if (k === 'skin') setSkin(b.dataset.v); else setPref(k, b.dataset.v); toast('⚙ 저장했습니다'); openSettings() }; b.onkeydown = (e) => { const all = [...opts.querySelectorAll('button')], i = all.indexOf(b); if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); all[(i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length].focus() } } })
+  })
   settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); toast('⚙ 저장했습니다') } })
   settings.style.display = 'block'
 }
@@ -1306,6 +1321,11 @@ const closeSettings = () => { settings.style.display = 'none' }
 document.getElementById('gear').onclick = () => (settings.style.display === 'block' ? closeSettings() : openSettings())
 addEventListener('mousedown', (e) => { if (settings.style.display === 'block' && !e.target.closest('#settings, #gear')) closeSettings() }, true)
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
+function furniture(kind, fallback, ...args) {
+  const ctx = { g, P, box, poly, circle, rrect, text, tile, cam, LINE, BOOKS, inRoom, decorAt, meetingsNow, MEET, MEET_SEATS, deskHits, POOL, POOL_PEOPLE, POOL_SIZE, ents, drawCharacter }
+  if (skin.drawFurniture && skin.drawFurniture(ctx, kind, args)) return
+  fallback(...args)
+}
 
 // ---------- rooms ----------
 // Each room says what it is for: a standing sign at its front with when a
@@ -1383,6 +1403,7 @@ function phoneTag(e) {
 // A phone booth: glass sides, a hood with a lamp that lights while in use, a
 // wall phone, and the logo of whoever is being called on its hood.
 function booth(bx, t) {
+  if (skin.drawBooth) return skin.drawBooth({ g, P, box, poly, circle, rrect, text, cam, inRoom, LINE }, bx, t)
   const y0 = 0.05, d = 0.65, h = 78
   const caller = inRoom('phone').find((e) => Math.abs(e.x - (bx + 0.3)) < 0.2 && e.y < 1.3)
   poly([P(bx, y0, 0), P(bx + 0.6, y0, 0), P(bx + 0.6, y0, h), P(bx, y0, h)], '#e8edf7')
@@ -1691,6 +1712,7 @@ async function endMeeting(id) {
   } catch (e) { toast('✕ ' + e.message) }
 }
 function meetingFloor() {
+  if (skin.drawMeetingFloor) return skin.drawMeetingFloor({ tile, MEET })
   tile(MEET.x0, MEET.y0, MEET.x1 - MEET.x0, MEET.y1 - MEET.y0, '#d9e4f5', null)
   for (let x = MEET.x0 + 0.1; x < MEET.x1; x += 0.5) tile(x, MEET.y0 + 0.1, 0.25, MEET.y1 - MEET.y0 - 0.2, 'rgba(255,255,255,.25)', null)
 }
@@ -1756,38 +1778,27 @@ function callout(route, lx, ly, lines, fill, align = 'center') {
 }
 let labelBoxes = []
 function marginLabels() {
-  labelBoxes = []
-  // Rooms: above the building, in order, pushed apart sideways so none
-  // overlaps, each at its own height, joined to its room by an elbow line.
-  const k = labelScale(), items = Object.entries(ZONES).map(([key, z]) => {
-    const here = inRoom(key).length, lines = [z.label + (here ? ' · ' + here + '명' : ''), z.when]
-    g.font = 13 * k + 'px Jua, sans-serif'; const w0 = g.measureText(lines[0]).width
-    g.font = 10 * k + 'px Jua, sans-serif'; const w1 = g.measureText(lines[1]).width
-    const [ax, ay] = P((z.x0 + z.x1) / 2, -0.3, WALL_H + 2)
-    return { z, lines, ax, ay, w: Math.max(w0, w1) + 22 * k, x: 0 }
-  })
-  // Not one row: each label sits at its own height, out of the others' way.
-  const baseY = Math.min(...items.map((it) => it.ay)) - 30 * k, gap = 8
-  let right = -Infinity
-  for (const it of items) { it.x = Math.max(it.ax - it.w / 2, right + gap); right = it.x + it.w }
-  const over = right - (VW - 12)
-  if (over > 0) { let push = over; for (let i = items.length - 1; i >= 0; i--) { const it = items[i], room = i ? it.x - (items[i - 1].x + items[i - 1].w + gap) : it.x - 12; it.x -= push; push = Math.max(0, push - Math.max(0, room)) } }
-  items.forEach((it, i) => {
-    const ly = baseY - [0, 34, 10, 44][i % 4] * k, lx = it.x + it.w / 2, knee = ly + 12 * k
-    // An elbow: up from the room, across, up into the label.
-    callout([[it.ax, it.ay], [it.ax, Math.max(knee, Math.min(it.ay - 8 * k, knee))], [lx, knee], [lx, ly]], lx, ly, it.lines, it.z.sign)
-  })
-  // tmux sessions: a band along the left wall's top, a label out to the left.
+  const k = labelScale()
+  // Room plaques sit directly on the back wall cap. Their descriptions stay
+  // in the hover tooltip, so labels no longer reserve a large top margin.
+  for (const [key, z] of Object.entries(ZONES)) {
+    const here = inRoom(key).length, label = z.label + (here ? ' · ' + here + '명' : '')
+    const [ax, ay] = P((z.x0 + z.x1) / 2, -0.3, WALL_H + 3)
+    g.font = 11 * k + 'px Jua, sans-serif'; const w = g.measureText(label).width + 16 * k, h = 20 * k
+    const fill = skin.plaque || z.sign
+    rrect(ax - w / 2, ay - h + 2 * k, w, h, skin.key === 'guildhall' ? 3 * k : 7 * k, fill, 'rgba(255,248,238,.72)', 1.1 / cam.s)
+    g.fillStyle = '#fffaf0'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, ax, ay - h / 2 + 2 * k)
+  }
+  // tmux plaques hug the left wall. No leaders cross the scene.
   for (const sc of sections) {
     const c = hsl2hex(sc.hue, 55, 62)
     poly([P(-0.55, sc.y0 + 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H + 5), P(-0.55, sc.y0 + 0.08, WALL_H + 5)], c, 'rgba(59,42,53,.6)', 1)
-    const [ax, ay] = P(-0.55, (sc.y0 + sc.y1) / 2, WALL_H + 3)
-    const ly = ay - 20 * labelScale(), lx = ax - 46 * labelScale()
-    callout([[ax, ay], [ax, ly - 12 * labelScale()], [lx, ly - 12 * labelScale()]], lx, ly, ['🗂 tmux ' + sc.name + ' · ' + sc.n + '명'], dark(c, 0.25), 'right')
+    const label = '🗂 tmux ' + sc.name + ' · ' + sc.n + '명', [ax, ay] = P(-0.55, (sc.y0 + sc.y1) / 2, WALL_H + 3)
+    g.font = 11 * k + 'px Jua, sans-serif'; const w = g.measureText(label).width + 14 * k, h = 20 * k
+    rrect(ax - w - 5 * k, ay - h / 2, w, h, skin.key === 'guildhall' ? 3 * k : 7 * k, dark(c, .25), 'rgba(255,248,238,.72)', 1.1 / cam.s)
+    g.fillStyle = '#fffaf0'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, ax - w / 2 - 5 * k, ay)
   }
-  for (const f of labelBoxes) f()
 }
-
 // ---------- walls ----------
 // The back wall (the face at y = -0.3) and the left wall (x = -0.3): wainscot
 // and a skirting board, a window over the lounge sofa and a clock by the
@@ -2682,28 +2693,28 @@ function frame(now) {
   // b: the floor box [x0, x1, y0, y1] the thing stands on, for the sort below.
   const add = (depth, fn, b) => items.push([depth, fn, b])
   if (skin.addScene) skin.addScene({ g, box, P, poly, circle, cam, text, tile }, add, t)
-  for (let k = 0; k < 3; k++) { const x = 0.35 + k * 1.1; add(x + 0.7, () => shelf(x, 0.0), [x, x + 1.05, 0, 0.38]) }
-  add(3.95 + 0.8 + 0.7, () => machine(3.95, 0.05, t), [3.95, 4.75, 0.05, 0.7])
+  for (let k = 0; k < 3; k++) { const x = 0.35 + k * 1.1; add(x + 0.7, () => furniture('shelf', shelf, x, 0.0), [x, x + 1.05, 0, 0.38]) }
+  add(3.95 + 0.8 + 0.7, () => furniture('machine', machine, 3.95, 0.05, t), [3.95, 4.75, 0.05, 0.7])
   for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t), [bx - 0.03, bx + 0.63, 0.05, 0.7])
-  add(9.0, () => coffee(8.4, 0.1, t), [8.4, 9.02, 0.1, 0.65])
-  add(10.8, () => sofa(9.3, 0.25), [9.12, 11.82, 0.25, 1.0])
-  add(12.4, () => plant(12.05, 0.2), [12.05, 12.47, 0.2, 0.62])
-  poolCrowd(add, t)
-  meetingRoom(add, t)
-  add(3.3 + 1.3, () => readingTable(t), [0.6, 3.3, 0.85, 1.3])
-  add(5.7 + 1.3, () => workbench(t), [4.0, 5.7, 0.9, 1.3])
-  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
-  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t), [VEND[0], VEND[0] + 0.55, VEND[1], VEND[1] + 0.5])
-  for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))
+  add(9.0, () => furniture('coffee', coffee, 8.4, 0.1, t), [8.4, 9.02, 0.1, 0.65])
+  add(10.8, () => furniture('sofa', sofa, 9.3, 0.25), [9.12, 11.82, 0.25, 1.0])
+  add(12.4, () => furniture('plant', plant, 12.05, 0.2), [12.05, 12.47, 0.2, 0.62])
+  furniture('pool', poolCrowd, add, t)
+  furniture('meeting', meetingRoom, add, t)
+  add(3.3 + 1.3, () => furniture('readingTable', readingTable, t), [0.6, 3.3, 0.85, 1.3])
+  add(5.7 + 1.3, () => furniture('workbench', workbench, t), [4.0, 5.7, 0.9, 1.3])
+  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => furniture('cafeTable', cafeTable, CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
+  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => furniture('vending', vending, VEND[0], VEND[1], t), [VEND[0], VEND[0] + 0.55, VEND[1], VEND[1] + 0.5])
+  for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => furniture('radiator', radiator, y0 + 0.15, t))
   for (const w of windows) {
-    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t), [ddx + 0.1, ddx + 1.2, ddy + 0.1, ddy + 0.65]) }
+    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => furniture('decor', decorPiece, w, t), [ddx + 0.1, ddx + 1.2, ddy + 0.1, ddy + 0.65]) }
     w.sessions.forEach((p, k) => {
       const [dx, dy] = p.desk
       const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
       // Each with its floor box: drawSorted puts someone behind a desk
       // before it and someone in front after, along the whole desk.
       const away = p.room !== 'desk' || p.doing === 'napping'
-      if (away) add(dx + 0.92 + dy - 0.09, () => emptyChair(dx, dy, (w.hue + 120 + k * 40) % 360), [dx + 0.5, dx + 0.92, dy - 0.45, dy - 0.09])
+      if (away) add(dx + 0.92 + dy - 0.09, () => furniture('chair', emptyChair, dx, dy, (w.hue + 120 + k * 40) % 360), [dx + 0.5, dx + 0.92, dy - 0.45, dy - 0.09])
       if (p.compacts) add(dx + 1.71 + dy - 0.3, () => memoryBoxes(dx, dy, p), [dx + MEMORY_AT[0], dx + MEMORY_AT[0] + 0.56, dy + MEMORY_AT[1], dy + MEMORY_AT[1] + 0.2])
       add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, false, (w.hue + 120 + k * 40) % 360, p), [dx, dx + 1.6, dy, dy + 0.7])
     })
