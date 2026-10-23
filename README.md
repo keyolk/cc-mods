@@ -187,9 +187,11 @@ else the first name of your account's full name, else your login name.
   catches up; and a session that has just finished stays at its desk for 90
   s holding its answer up (a page with a tick) before it wanders off, so a
   short job shows as it coming back and answering.
-- **Going home**: a session that ends walks out through the `EXIT` door in
-  the left wall near the front and fades out there: after a long day (8 h or
-  2000 tool calls) slumped and slow, bags under its eyes, a grey cloud and
+- **Going home**: a session whose tmux pane is gone from three consecutive
+  polls walks out through the `EXIT` door in the left wall near the front and
+  fades out there. If the pane still exists, a missing pane-session option does
+  not start the animation. A session that returns before leaving cancels it. After a long day (8 h or 2000 tool
+  calls) it leaves slumped and slow, with bags under its eyes, a grey cloud and
   `휴… 퇴근`; after a short one (under an hour) hopping with its arms up and
   `퇴근이다!`; otherwise a wave and `수고했습니다`.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
@@ -375,9 +377,10 @@ else the first name of your account's full name, else your login name.
   open one directly). In a resource tab, `↑`/`↓` or `j`/`k` chooses an item
   and `Enter` opens it. The things to press (quick replies, the reply box,
   stop, go, 미루기, next) sit in a foot that stays at the card's bottom however
-  long the answer is. Drag the card's lower-left corner to resize it, press
-  `M` to maximize/restore it, or use `⌥`+arrows to change its width and height;
-  the browser remembers the size.
+  long the answer is. Drag the card's title to move it and its lower-left corner
+  to resize it. Press `M` to maximize/restore, use `⌥`+arrows to change its
+  width and height, or `⌥⇧`+arrows to move it; the browser remembers both its
+  size and position.
 - **Answers read as Markdown**: headings, nested lists, tables, code blocks,
   quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row

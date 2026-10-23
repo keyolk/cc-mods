@@ -54,6 +54,7 @@ WRITE = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
 DELEGATE = {"Agent", "Task", "Workflow", "SendMessage"}
 
 _paths: dict[str, str] = {}
+_live_panes: set[str] = set()
 
 
 def transcript(sid: str) -> str | None:
@@ -384,13 +385,15 @@ def compacting(pane: str) -> bool:
 
 
 def snapshot() -> list[dict]:
+    global _live_panes
     try:
         out = subprocess.run(["tmux", "list-panes", "-a", "-F", FMT], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []
+    rows = [line.split("|") for line in out.splitlines()]
+    _live_panes = {p[0] for p in rows if len(p) >= 12}
     seen, people = set(), []
-    for line in out.splitlines():
-        p = line.split("|")
+    for p in rows:
         if len(p) < 12 or not p[4] or p[4] in seen:
             continue
         seen.add(p[4])
@@ -1172,7 +1175,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             people = snapshot()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "muted": muted(), "talks": talks(), "meetings": meetings()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "muted": muted(), "talks": talks(), "meetings": meetings()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.

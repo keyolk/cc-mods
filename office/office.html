@@ -23,8 +23,9 @@ canvas.drag { cursor: grabbing; }
 #tip { position: fixed; pointer-events: none; z-index: 5; max-width: 320px; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; padding: 8px 11px; display: none; box-shadow: 0 4px 0 var(--line); }
 #tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
 #card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: 260px; max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
-#card.max { inset: 10px; width: auto !important; height: auto !important; max-height: none; }
-#card h2 { margin: 0 54px 2px 0; font-size: 18px; font-weight: 400; }
+#card.max { left: 10px !important; right: 10px !important; top: 10px !important; bottom: 10px !important; width: auto !important; height: auto !important; max-height: none; }
+#card h2 { margin: 0 54px 2px 0; font-size: 18px; font-weight: 400; cursor: grab; user-select: none; touch-action: none; }
+#card h2:active { cursor: grabbing; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
 #card .x, #card .maxb { position: absolute; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
 #card .x { right: 10px; }
@@ -169,7 +170,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥4</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
     <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
-    <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>카드 최대화 · 카드 폭과 높이 조정 (좌하단을 끌어서도 조정)</td></tr>
+    <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 · 폭과 높이 조정 (좌하단을 끌어서도 조정)</td></tr>
+    <tr><td>제목 끌기 · <kbd>⌥⇧←↑↓→</kbd></td><td>대화창 위치 이동</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
@@ -387,6 +389,9 @@ function findPath(ax, ay, bx, by) {
 // ---------- state ----------
 let windows = []
 const ents = new Map() // id -> a session or a subagent on the floor
+// tmux can omit one pane from an individual poll while windows are changing.
+// Require three consecutive misses before a real session starts going home.
+const sessionMisses = new Map()
 const spotTaken = Object.fromEntries(Object.keys(ZONES).map((k) => [k, new Map()]))
 let stats = { total: 0, work: 0, wait: 0, subs: 0 }
 
@@ -412,7 +417,8 @@ const pileY = (k) => ((hashOf('y' + k) % 100) / 100) * 1.3
 function releaseSpots(id, keep) {
   if (keep !== 'pile') { const i = napOrder.indexOf(id); if (i >= 0) napOrder.splice(i, 1) } for (const z of Object.keys(spotTaken)) if (z !== keep) spotTaken[z].delete(id) }
 
-function apply(people) {
+function apply(people, panes = []) {
+  const paneLive = new Set(panes)
   const byWin = new Map()
   for (const p of people) {
     if (!byWin.has(p.wid)) byWin.set(p.wid, { wid: p.wid, name: p.name, label: p.window, sessions: [] })
@@ -476,7 +482,8 @@ function apply(people) {
       if (mt) { tgt = MEET_SEATS[mt.sids.indexOf(p.id) % MEET_SEATS.length]; releaseSpots(p.id); if (p.doing === 'napping') p.doing = 'idle' } // nobody sleeps in a meeting
       let e = ents.get(p.id)
       if (!e) { e = { id: p.id, kind: 'session', x: tgt[0], y: tgt[1] }; ents.set(p.id, e) }
-      Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false })
+      Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false, gone: null, leftAt: null })
+      sessionMisses.delete(p.id)
       live.add(p.id)
       // A window's people stay together: subagents gather around their
       // session wherever it is (its desk, the library, the workshop) and
@@ -505,9 +512,16 @@ function apply(people) {
     if (live.has(id)) continue
     // Done: back to the corner and in through the door.
     if (e.kind === 'sub' && !e.leaving) { e.leaving = true; e.tx = POOL_IN[0]; e.ty = POOL_IN[1]; releaseSpots(id) }
-    // A session that ended goes home: out through the door, tired or glad
-    // by how long it worked.
-    else if (e.kind === 'session' && !e.leaving) { e.leaving = true; e.mood = homeMood(e.data); e.leftAt = performance.now(); e.data = { ...e.data, doing: 'leaving', room: 'out' }; const [d0, d1] = exitAt(); e.tx = 0.15; e.ty = (d0 + d1) / 2; releaseSpots(id) }
+    // A session that ended goes home only after three consecutive state polls
+    // miss it. One flaky tmux snapshot must not make it leave and return.
+    else if (e.kind === 'session' && !e.leaving) {
+      // If tmux still reports its pane, only the pane options were momentarily
+      // absent. Keep the worker where it was and wait for the next poll.
+      if (paneLive.has(e.data.pane)) { sessionMisses.delete(id); continue }
+      const misses = (sessionMisses.get(id) || 0) + 1; sessionMisses.set(id, misses)
+      if (misses < 3) continue
+      e.leaving = true; e.mood = homeMood(e.data); e.leftAt = performance.now(); e.data = { ...e.data, doing: 'leaving', room: 'out' }; const [d0, d1] = exitAt(); e.tx = 0.15; e.ty = (d0 + d1) / 2; releaseSpots(id)
+    }
   }
   document.getElementById('s1').innerHTML = '세션 <b>' + stats.total + '</b>'
   document.getElementById('s2').innerHTML = '일하는 중 <b>' + stats.work + '</b>'
@@ -646,7 +660,7 @@ function lookAt(e) {
 }
 
 // ---------- camera ----------
-function resize() { DPR = devicePixelRatio || 1; VW = innerWidth; VH = innerHeight; cv.width = VW * DPR; cv.height = VH * DPR; if (!cam.user) fit() }
+function resize() { DPR = devicePixelRatio || 1; VW = innerWidth; VH = innerHeight; cv.width = VW * DPR; cv.height = VH * DPR; if (!cam.user) fit(); if (typeof card !== 'undefined' && card.style.display === 'block') fitCardToViewport() }
 function fit() {
   cam.s = 1; cam.ox = 0; cam.oy = 0
   const pts = [P(0, 0, 150), P(W, 0, 150), P(0, D), P(W, D)]
@@ -679,7 +693,8 @@ cv.addEventListener('mousedown', (e) => {
   cv.classList.add('drag')
 })
 addEventListener('mouseup', (e) => {
-  if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); cardResize = null; saveCardSize(); return }
+  if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); cardResize = null; saveCardLayout(); return }
+  if (cardMove) { setCardPosition(cardMove.left + e.clientX - cardMove.x, cardMove.top + e.clientY - cardMove.y); cardMove = null; saveCardLayout(); return }
   cv.classList.remove('drag')
   if (drag && drag.lasso) {
     if (!drag.moved && drag.pickSid) togglePick(drag.pickSid)
@@ -695,6 +710,7 @@ addEventListener('mouseup', (e) => {
 })
 addEventListener('mousemove', (e) => {
   if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); return }
+  if (cardMove) { setCardPosition(cardMove.left + e.clientX - cardMove.x, cardMove.top + e.clientY - cardMove.y); return }
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true
@@ -790,39 +806,59 @@ addEventListener('keydown', (e) => {
 const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
 const CARD_MIN_W = 300, CARD_MIN_H = 260
-let cardResize = null
+let cardResize = null, cardMove = null
 function handleCardAlt(e) {
   const k = e.key, hit = (fn) => { e.preventDefault(); fn(); return true }
   if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
   if (k === 'm' || k === 'M' || e.code === 'KeyM') return hit(toggleCardMax)
+  if (e.shiftKey && k === 'ArrowLeft') return hit(() => moveCardBy(-40, 0))
+  if (e.shiftKey && k === 'ArrowRight') return hit(() => moveCardBy(40, 0))
+  if (e.shiftKey && k === 'ArrowUp') return hit(() => moveCardBy(0, -40))
+  if (e.shiftKey && k === 'ArrowDown') return hit(() => moveCardBy(0, 40))
   if (k === 'ArrowLeft') return hit(() => resizeCardBy(-40, 0))
   if (k === 'ArrowRight') return hit(() => resizeCardBy(40, 0))
   if (k === 'ArrowUp') return hit(() => resizeCardBy(0, -40))
   if (k === 'ArrowDown') return hit(() => resizeCardBy(0, 40))
   return false
 }
-function cardSize() {
-  try { return JSON.parse(localStorage.getItem('office-card-size') || 'null') } catch (_) { return null }
+function cardLayout() {
+  try { return JSON.parse(localStorage.getItem('office-card-layout') || localStorage.getItem('office-card-size') || 'null') } catch (_) { return null }
 }
-function saveCardSize() {
-  try { localStorage.setItem('office-card-size', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight })) } catch (_) {}
+function saveCardLayout() {
+  if (card.classList.contains('max')) return
+  try { localStorage.setItem('office-card-layout', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight, x: card.offsetLeft, y: card.offsetTop })) } catch (_) {}
+}
+function setCardPosition(x, y) {
+  const maxX = Math.max(0, innerWidth - card.offsetWidth), maxY = Math.max(0, innerHeight - card.offsetHeight)
+  card.style.left = Math.min(maxX, Math.max(0, x)) + 'px'; card.style.top = Math.min(maxY, Math.max(0, y)) + 'px'; card.style.right = 'auto'
 }
 function setCardSize(w, h) {
-  const maxW = Math.max(1, innerWidth - 20), maxH = Math.max(1, innerHeight - 62)
+  const maxW = Math.max(1, innerWidth - card.offsetLeft), maxH = Math.max(1, innerHeight - card.offsetTop)
   const minW = Math.min(CARD_MIN_W, maxW), minH = Math.min(CARD_MIN_H, maxH)
   card.style.width = Math.min(maxW, Math.max(minW, w)) + 'px'
   card.style.height = Math.min(maxH, Math.max(minH, h)) + 'px'
   card.style.maxHeight = 'none'
 }
-function restoreCardSize() { const z = cardSize(); if (z) setCardSize(z.w, z.h) }
+function restoreCardLayout() {
+  const z = cardLayout(); if (!z) return
+  setCardPosition(z.x == null ? innerWidth - z.w - 10 : z.x, z.y == null ? 52 : z.y); setCardSize(z.w, z.h)
+}
+function fitCardToViewport() {
+  if (card.classList.contains('max')) return
+  setCardPosition(card.offsetLeft, card.offsetTop); setCardSize(card.offsetWidth, card.offsetHeight)
+}
 function toggleCardMax() {
   card.classList.toggle('max')
-  if (!card.classList.contains('max')) restoreCardSize()
+  if (!card.classList.contains('max')) restoreCardLayout()
   if (card.maxButton) { card.maxButton.textContent = card.classList.contains('max') ? '❐' : '□'; card.maxButton.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)' }
 }
 function resizeCardBy(dw, dh) {
   if (card.classList.contains('max')) toggleCardMax()
-  setCardSize(card.offsetWidth + dw, card.offsetHeight + dh); saveCardSize()
+  setCardSize(card.offsetWidth + dw, card.offsetHeight + dh); saveCardLayout()
+}
+function moveCardBy(dx, dy) {
+  if (card.classList.contains('max')) toggleCardMax()
+  setCardPosition(card.offsetLeft + dx, card.offsetTop + dy); saveCardLayout()
 }
 function cardChrome(add) {
   const close = add('button', 'x', '✕'); close.title = '닫기 (Esc)'; close.onclick = closeCard
@@ -830,6 +866,10 @@ function cardChrome(add) {
   max.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)'
   const grip = add('div', 'resize'); grip.title = '끌어서 카드 크기 조정 · ⌥+방향키'
   grip.onmousedown = (e) => { if (card.classList.contains('max')) return; e.preventDefault(); e.stopPropagation(); cardResize = { x: e.clientX, y: e.clientY, w: card.offsetWidth, h: card.offsetHeight } }
+}
+function makeCardMovable(title) {
+  title.title = '끌어서 대화창 이동 · ⌥⇧+방향키'
+  title.onmousedown = (e) => { if (card.classList.contains('max') || e.button !== 0) return; e.preventDefault(); cardMove = { x: e.clientX, y: e.clientY, left: card.offsetLeft, top: card.offsetTop } }
 }
 function resourceKeys(list, focus = false) {
   const links = [...list.querySelectorAll('a')]
@@ -839,7 +879,7 @@ function resourceKeys(list, focus = false) {
   card.moveResource = links.length ? (dir) => { card.resourceIndex = (card.resourceIndex + dir + links.length) % links.length; links[card.resourceIndex].focus({ preventScroll: false }) } : null
   if (focus && links.length) links[0].focus({ preventScroll: false })
 }
-restoreCardSize()
+restoreCardLayout()
 let cardSid = null
 // One related item: a brand badge for a well-known place, else an icon chip.
 const CHIP_ICON = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
@@ -887,7 +927,7 @@ async function openCard(sid, kind = null) {
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
   cardChrome(add)
   card.keys = []
-  add('h2', '', esc(d.window + ' ' + d.name))
+  const title = add('h2', '', esc(d.window + ' ' + d.name)); makeCardMovable(title)
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   // Busy or a reply already on its way: said first, before anything to press.
   card.busy = add('div', 'busy')
@@ -2579,7 +2619,7 @@ function frame(now) {
     else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
     const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (e.leaving && e.kind === 'sub' && dist2 < 0.05) ents.delete(id)
-    if (e.leaving && e.kind === 'session' && (dist2 < 0.05 || now - e.leftAt > 40000)) { e.gone = e.gone || now; if (now - e.gone > 900) ents.delete(id) }
+    if (e.leaving && e.kind === 'session' && (dist2 < 0.05 || now - e.leftAt > 40000)) { e.gone = e.gone || now; if (now - e.gone > 900) { ents.delete(id); sessionMisses.delete(id) } }
     if (e.kind === 'sub' && Math.abs(e.x - POOL_OUT[0]) < 0.5 && e.y > POOL.y1 - 0.4 && e.y < POOL_OUT[1] + 0.3) doorOpenUntil = Math.max(doorOpenUntil, now + 600)
   }
   if (camGo.on) { const a = Math.min(1, dt * 6); cam.s += (camGo.s - cam.s) * a; cam.ox += (camGo.ox - cam.ox) * a; cam.oy += (camGo.oy - cam.oy) * a; if (Math.abs(camGo.ox - cam.ox) + Math.abs(camGo.oy - cam.oy) + Math.abs(camGo.s - cam.s) * 100 < 0.5) camGo.on = false }
@@ -2684,7 +2724,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; apply(j.people, j.panes || []); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)
