@@ -329,7 +329,10 @@ def sub_job(meta: dict, t: dict) -> str:
     return kind_of(t.get("tool") or "") if t.get("tool") else "shell"
 
 
-def room(state: str, attention: str, t: dict) -> tuple[str, str]:
+DONE_LINGER = 90
+
+
+def room(state: str, attention: str, t: dict, since: float | None = None) -> tuple[str, str]:
     tool = t.get("tool") or ""
     if state == "working":
         if not t.get("done"):
@@ -348,6 +351,11 @@ def room(state: str, attention: str, t: dict) -> tuple[str, str]:
         return "desk", "alert"
     if attention == "ask":
         return "desk", "asking"
+    # Just done: it stays at its desk a while with its answer (DONE_LINGER),
+    # so a short job you gave it shows as it coming back and answering, not
+    # as a walk from the lounge and straight back.
+    if since and time.time() - since < DONE_LINGER:
+        return "desk", "done"
     return "lounge", "idle"
 
 
@@ -388,7 +396,7 @@ def snapshot() -> list[dict]:
         seen.add(p[4])
         pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid = p[:12]
         t = last_tool(sid)
-        where, doing = room(state, attn, t)
+        where, doing = room(state, attn, t, int(since) if since.isdigit() else None)
         tc = tool_counts(sid)
         people.append(
             {
