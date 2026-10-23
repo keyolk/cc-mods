@@ -314,11 +314,11 @@ else the first name of your account's full name, else your login name.
   drawers in the card, a tab a kind: 📥 받은 것, 📤 보낸 것, 📝 스크래치, 📄
   파일, 🗂 exp, 🖼 아티팩트, each item a badge or chip one click away; `[`/`]`
   switch tabs. A click on one thing opens the drawers at its tab.
-- **Rooms say what they are for**: each room's name, when a session comes
-  there and how many are there now sit in the margin above the building, each
-  at its own height, joined to its room by an elbow line; the tmux sessions'
-  names sit left of the left wall the same way, over a band in their colour
-  along its top. Hovering a room's floor lights it up and lists who is there.
+- **Rooms say what they are for**: a compact tag sits on the back wall's top
+  over each room, the meeting room and the subagents' queue (with how many are
+  there now); hovering a room's floor lights it up and says when a session
+  comes there and who is there. The tmux sessions' names sit right against the
+  left wall, over a band in their colour along its top.
   The library has parquet, a long reading table with green lamps and a ladder;
   the workshop a concrete floor with a hazard stripe, a tool pegboard, a bench
   whose terminal shows what the people in the room are running and a machine

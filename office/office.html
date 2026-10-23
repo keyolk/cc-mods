@@ -639,7 +639,7 @@ function fit() {
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
   // Room for the labels in the margin: the room callouts above the back
   // wall, the tmux labels left of the left wall.
-  const top = 48 + 60, bottom = 48, left = Math.min(170, VW * 0.14)
+  const top = 48 + 16, bottom = 48, left = Math.min(110, VW * 0.09)
   // Before the page has a size (VW/VH 0) this would go negative.
   cam.s = Math.max(0.1, Math.min((VW - 16 - left) / (maxX - minX), (VH - top - bottom) / (maxY - minY)))
   cam.ox = left + (VW - left - (maxX - minX) * cam.s) / 2 - minX * cam.s
@@ -1561,33 +1561,31 @@ function callout(route, lx, ly, lines, fill, align = 'center') {
 let labelBoxes = []
 function marginLabels() {
   labelBoxes = []
-  // Rooms: above the building, in order, pushed apart sideways so none
-  // overlaps, each at its own height, joined to its room by an elbow line.
-  const k = labelScale(), items = Object.entries(ZONES).map(([key, z]) => {
-    const here = inRoom(key).length, lines = [z.label + (here ? ' · ' + here + '명' : ''), z.when]
-    g.font = 13 * k + 'px Jua, sans-serif'; const w0 = g.measureText(lines[0]).width
-    g.font = 10 * k + 'px Jua, sans-serif'; const w1 = g.measureText(lines[1]).width
-    const [ax, ay] = P((z.x0 + z.x1) / 2, -0.3, WALL_H + 2)
-    return { z, lines, ax, ay, w: Math.max(w0, w1) + 22 * k, x: 0 }
-  })
-  // Not one row: each label sits at its own height, out of the others' way.
-  const baseY = Math.min(...items.map((it) => it.ay)) - 30 * k, gap = 8
-  let right = -Infinity
-  for (const it of items) { it.x = Math.max(it.ax - it.w / 2, right + gap); right = it.x + it.w }
-  const over = right - (VW - 12)
-  if (over > 0) { let push = over; for (let i = items.length - 1; i >= 0; i--) { const it = items[i], room = i ? it.x - (items[i - 1].x + items[i - 1].w + gap) : it.x - 12; it.x -= push; push = Math.max(0, push - Math.max(0, room)) } }
-  items.forEach((it, i) => {
-    const ly = baseY - [0, 34, 10, 44][i % 4] * k, lx = it.x + it.w / 2, knee = ly + 12 * k
-    // An elbow: up from the room, across, up into the label.
-    callout([[it.ax, it.ay], [it.ax, Math.max(knee, Math.min(it.ay - 8 * k, knee))], [lx, knee], [lx, ly]], lx, ly, it.lines, it.z.sign)
-  })
+  // Rooms: a compact tag sitting on the back wall's top over each room (the
+  // "when" line is in the room's hover tooltip), so they read as part of the
+  // building and the view stays whole. The meeting room and the subagents'
+  // queue are named the same way.
+  const k = labelScale()
+  const tags = Object.entries(ZONES).map(([key, z]) => ({ x: (z.x0 + z.x1) / 2, text: z.label + (inRoom(key).length ? ' · ' + inRoom(key).length : ''), c: z.sign }))
+  tags.push({ x: (MEET.x0 + MEET.x1) / 2, text: '🗣 회의실' + (meetingsNow.length ? ' · ' + meetingsNow[0].sids.length : ''), c: '#4a6fa5' })
+  tags.push({ x: (POOL.x0 + POOL.x1) / 2, text: '🐣', c: '#8a6fb5' })
+  for (const tg of tags) {
+    const [ax, ay] = P(tg.x, -0.3, WALL_H + 4)
+    g.font = 11 * k + 'px Jua, sans-serif'
+    const w = g.measureText(tg.text).width + 14 * k, h = 18 * k
+    labelBoxes.push(() => {
+      rrect(ax - w / 2, ay - h, w, h, 8 * k, tg.c, 'rgba(255,248,238,.75)', 1.2 / cam.s)
+      g.font = 11 * k + 'px Jua, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fffaf0'; g.fillText(tg.text, ax, ay - h / 2)
+    })
+  }
   // tmux sessions: a band along the left wall's top, a label out to the left.
   for (const sc of sections) {
     const c = hsl2hex(sc.hue, 55, 62)
     poly([P(-0.55, sc.y0 + 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H + 5), P(-0.55, sc.y0 + 0.08, WALL_H + 5)], c, 'rgba(59,42,53,.6)', 1)
     const [ax, ay] = P(-0.55, (sc.y0 + sc.y1) / 2, WALL_H + 3)
-    const ly = ay - 20 * labelScale(), lx = ax - 46 * labelScale()
-    callout([[ax, ay], [ax, ly - 12 * labelScale()], [lx, ly - 12 * labelScale()]], lx, ly, ['🗂 tmux ' + sc.name + ' · ' + sc.n + '명'], dark(c, 0.25), 'right')
+    // Right against the wall's top, a short tick to it.
+    const lx = ax - 10 * labelScale(), ly = ay - 4 * labelScale()
+    callout([[ax, ay], [lx, ly]], lx, ly + 10 * labelScale(), ['🗂 tmux ' + sc.name + ' · ' + sc.n], dark(c, 0.25), 'right')
   }
   for (const f of labelBoxes) f()
 }
