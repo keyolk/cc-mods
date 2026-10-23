@@ -426,6 +426,11 @@ function apply(people) {
       p.desk = desk
       if (p.state === 'working') stats.work++
       if (p.doing === 'asking' || p.doing === 'alert') stats.wait++
+      // Just called on from here: up and to its desk at once, until the
+      // session itself says it is working (or a minute passes).
+      const call = summoned.get(p.id)
+      if (call && (p.state === 'working' || Date.now() - call > 60000)) summoned.delete(p.id)
+      else if (call && p.room === 'lounge') { p.room = 'desk'; p.doing = 'summoned' }
       if (p.doing === 'idle' && p.since && Date.now() / 1000 - p.since > NAP_S) p.doing = 'napping'
       noteCompaction(p)
       let tgt
@@ -481,6 +486,7 @@ function apply(people) {
 // asking for a confirmation meanwhile.
 // Set aside (office.py mute): sid -> {since, until}; until null is "until you
 // speak first" (zipped), a time is a plain 💤 for a while.
+const summoned = new Map()
 let mutedSince = {}
 const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
 const isZipped = (id) => !!mutedSince[id] && !mutedSince[id].until
@@ -804,6 +810,7 @@ async function openCard(sid, kind = null) {
       // An answer sent: on to whoever waits next; a stop or a pick that keeps
       // it busy here just refreshes the card.
       const done = body.kind === 'reply' || body.kind === 'key' || body.kind === 'grant'
+      if (done) { summoned.set(sid, Date.now()); const e = ents.get(sid); if (e && e.data.room !== 'desk') { e.data.room = 'desk'; e.data.doing = 'summoned'; e.tx = e.data.desk[0] + 0.42; e.ty = e.data.desk[1] - 0.32; e.path = null } }
       setTimeout(() => { if (cardSid !== sid) return; if (done && waiting().some((p) => p.id !== sid)) { msg.textContent += ' → 다음'; setTimeout(() => step(1, sid), 500) } else if (done) closeCard(); else openCard(sid) }, 700)
     } catch (e) { msg.className = 'msg err'; msg.textContent = '못 보냄: ' + e.message }
   }
@@ -849,7 +856,7 @@ async function openCard(sid, kind = null) {
 
 // ---------- hover ----------
 const tip = document.getElementById('tip')
-const DOING = { napping: '😴 휴게실에 드러누워 자는 중 (한참 쉼)', reading: '📖 자료실에서 읽는 중', running: '🛠 작업실에서 명령 실행 중', calling: '📞 통화 부스에서 외부 서비스 호출 중', typing: '✏️ 책상에서 쓰는 중', delegating: '🐣 서브에이전트에게 맡기는 중', thinking: '🤔 턱 괴고 고민 중', asking: '❓ 답을 기다리는 중', alert: '❗ 확인이 필요함', idle: '☕ 쉬는 중' }
+const DOING = { done: '📮 방금 끝내고 자리에서 답을 들고 있음', summoned: '🏃 부름 받고 자리로 가는 중', napping: '😴 휴게실에 드러누워 자는 중 (한참 쉼)', reading: '📖 자료실에서 읽는 중', running: '🛠 작업실에서 명령 실행 중', calling: '📞 통화 부스에서 외부 서비스 호출 중', typing: '✏️ 책상에서 쓰는 중', delegating: '🐣 서브에이전트에게 맡기는 중', thinking: '🤔 턱 괴고 고민 중', asking: '❓ 답을 기다리는 중', alert: '❗ 확인이 필요함', idle: '☕ 쉬는 중' }
 function ago(sec) { if (!sec) return ''; const m = Math.round((Date.now() / 1000 - sec) / 60); return m < 1 ? '방금' : m < 60 ? m + '분째' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분째' }
 function hit(mx, my) {
   let best = null, bd = 1e9
@@ -2067,6 +2074,8 @@ function drawChibi(e, t, z0) {
   else if (d === 'reading' || d === 'running' || d === 'calling') roomPose(d, x, by, s, t, h, arm)
   else if (d === 'thinking') { arm(-9, -12); arm(5, -27) }
   else if (d === 'idle') roomPose('idle', x, by, s, t, h, arm)
+  // Just done: holding its answer up, a page with a tick, bobbing a little.
+  else if (d === 'done') { const up = Math.abs(Math.sin(t * 2.4)) * 2; arm(-9, -12); arm(9, -30 - up); rrect(x + 6 * s, by - (46 + up) * s, 12 * s, 14 * s, 1.5 * s, '#fffdf6'); text('✓', x + 12 * s, by - (39 + up) * s, 9, '#2f8a5c') }
   else if (d === 'napping') { arm(-10, -14); arm(10, -14) }
   else if (d === 'walk') walkPose(jk, x, by, s, t, stepHz, arm)
   else { arm(-9, -12); arm(9, -12) }
@@ -2182,7 +2191,7 @@ function reactExtras(kind, hx, hy, s, t, rx, since) {
   }
   g.globalAlpha = 1
 }
-const ICON = { thinking: '…', reading: '📖', running: '>_', calling: '🔌', typing: '✏️', delegating: '🐣', asking: '?', alert: '!', idle: '☕' }
+const ICON = { summoned: '❗', thinking: '…', reading: '📖', running: '>_', calling: '🔌', typing: '✏️', delegating: '🐣', asking: '?', alert: '!', idle: '☕' }
 function bubble(e, p, x, y, s, t, sleepy) {
   // Compacting, or just done: the head says so itself (compactingFx, afterCompactFx).
   if (e.kind === 'session' && (p.compacting || justCompacted(p))) return
@@ -2224,6 +2233,7 @@ function frame(now) {
     // Ease into the last stretch instead of stopping dead.
     const left = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (left < 0.5) sp *= 0.45 + left
+    if (e.data.doing === 'summoned') sp *= 1.8 // called: it hurries
     // Straight at the waypoint: a heading that lags behind the target made a
     // fast walker circle it forever. Reaching it within this frame's step
     // snaps to it and moves on to the next, so nobody overshoots.

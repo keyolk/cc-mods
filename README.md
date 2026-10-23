@@ -182,6 +182,11 @@ else the first name of your account's full name, else your login name.
   📚 library while reading, 🛠 workshop while running a command, 📞 a phone
   booth during an MCP call, its desk while writing (typing) or with no tool (chin in hand, `…`),
   `?` / `!` over its head while it waits on you.
+- **Back to its desk**: a reply, a pick or a grant sent from the office gets
+  the session up at once (`❗`, hurrying) to its desk, before its own state
+  catches up; and a session that has just finished stays at its desk for 90
+  s holding its answer up (a page with a tick) before it wanders off, so a
+  short job shows as it coming back and answering.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
   minutes they lie down in a pile in front of the sofa, asleep.
 - **Subagents** (`<project>/<sid>/subagents/agent-*.jsonl`, live while written
