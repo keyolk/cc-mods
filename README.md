@@ -280,7 +280,8 @@ else the first name of your account's full name, else your login name.
   office, or anything you type to it yourself: a human prompt in its
   transcript after you set it aside), and a timed one also ends on its time.
   A timed one wears `💤` (`💤!` with something to say); one waiting for you to
-  speak wears tape over its mouth and, with something to say, strains:
+  speak has its mouth zipped shut and, with something to say, strains (the
+  pull tab jiggling):
   cheeks puffed and reddening, a hand up and waving, a muffled `음! 음음!`
   bubble going nowhere. Chips: `💤 name · N분`, `🤐 name · 할 말 참는 중 N분`.
   Kept in `~/.claude/state/office/mute.json`.
