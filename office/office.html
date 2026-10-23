@@ -149,7 +149,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 </head>
 <body>
 <header>
-  <h1>🏢 __OFFICE_OWNER__네 사무실</h1>
+  <h1 id="office-title">🏢 __OFFICE_OWNER__네 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
   <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
@@ -191,6 +191,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 처음 한 번 <kbd>i</kbd>(insert)로 키를 페이지에 넘기세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
 </div>
 <script src="brands.js"></script>
+<script src="skins.js"></script>
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
@@ -247,6 +248,19 @@ function circle(x, y, r, fill, stroke = LINE, lw = 1.4) {
 function text(t, x, y, size, color = '#2a2033', align = 'center') {
   g.font = Math.max(8, size * cam.s) + 'px Jua, sans-serif'; g.textAlign = align; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(t, x, y)
 }
+
+// ---------- visual skins ----------
+const SKINS = window.OFFICE_SKINS
+let skin = SKINS.office
+const skinStyle = document.createElement('style'); skinStyle.id = 'office-skin'; document.head.appendChild(skinStyle)
+function setSkin(key, save = true) {
+  skin = SKINS[key] || SKINS.office
+  skinStyle.textContent = skin.css || ''
+  document.getElementById('office-title').textContent = skin.title
+  for (const [k, [label, when]] of Object.entries(skin.zones)) { ZONES[k].label = label; ZONES[k].when = when }
+  if (save) { try { localStorage.setItem('office.skin', skin.key) } catch {} }
+}
+function savedSkin() { try { return localStorage.getItem('office.skin') || 'office' } catch { return 'office' } }
 
 // ---------- world layout ----------
 // Pods: a row of two desks per window, a second row when it holds 3-4
@@ -1279,11 +1293,12 @@ const settings = document.createElement('div'); settings.id = 'settings'; docume
 function openSettings() {
   const opts = (cur, file) => PLACES.filter(([k]) => file || k !== 'finder').map(([k, name]) => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + name + '</option>').join('')
   settings.innerHTML = '<h3>⚙ 설정</h3>'
+    + '<div class="row"><div>🎨 Visual skin <span class="m">공간·UI·canvas 분위기</span></div><select data-k="skin">' + Object.entries(SKINS).map(([k, s]) => '<option value="' + k + '"' + (skin === s ? ' selected' : '') + '>' + s.name + '</option>').join('') + '</select></div>'
     + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div><select data-k="place.web">' + opts(pref('place.web', 'session'), false) + '</select></div>'
     + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div><select data-k="place.file">' + opts(pref('place.file', 'session'), true) + '</select></div>'
     + '<div class="row"><label><input type="checkbox" data-k="viewInside"' + (viewInside() ? ' checked' : '') + '> 볼 수 있는 파일은 먼저 안에서 보기 (👁)</label></div>'
     + '<div class="m">"이 세션 설정대로"는 그 세션 pane의 @browser를 따릅니다 (tmux-chrome). 고른 곳은 이 브라우저에 저장되고, 칩의 ▾·우클릭 메뉴에서 고른 것도 여기에 반영됩니다. <kbd>,</kbd> 또는 <kbd>Esc</kbd>로 닫기.</div>'
-  settings.querySelectorAll('select').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.value); toast('⚙ 저장했습니다') } })
+  settings.querySelectorAll('select').forEach((el) => { el.onchange = () => { if (el.dataset.k === 'skin') setSkin(el.value); else setPref(el.dataset.k, el.value); toast('⚙ 저장했습니다') } })
   settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); toast('⚙ 저장했습니다') } })
   settings.style.display = 'block'
 }
@@ -1301,6 +1316,21 @@ const inRoom = (k) => [...ents.values()].filter((e) => e.kind !== 'sub' && e.dat
 // workshop, a navy carpet by the booths, a soft patterned one in the lounge.
 function zoneFloors(t) {
   const L = ZONES.library, S = ZONES.workshop, Ph = ZONES.phone, Lo = ZONES.lounge
+  if (skin === SKINS.guildhall) {
+    // Records: old oak boards and an emerald runner.
+    for (let y = 0.4; y < 4.2; y += 0.28) for (let x = L.x0; x < L.x1; x += 0.9) tile(x + ((y * 4) % 2 ? 0.25 : 0), y, Math.min(0.9, L.x1 - x), 0.27, ((x + y) * 3 | 0) % 2 ? '#8e6841' : '#7c5937', 'rgba(48,28,14,.35)')
+    tile(L.x0 + 0.5, 1.35, L.x1 - L.x0 - 1, 2.65, '#355b42', '#d1aa55'); tile(L.x0 + 0.6, 1.45, L.x1 - L.x0 - 1.2, 2.45, '#416c4e', '#8c692f')
+    // Forge: uneven flagstones, a sooty working strip and ember glow.
+    for (let x = S.x0; x < S.x1; x += 0.55) for (let y = 0.4; y < 4.2; y += 0.55) tile(x, y, Math.min(0.53, S.x1 - x), 0.53, ((x * 2 + y * 2) | 0) % 3 ? '#777064' : '#69635b', 'rgba(35,26,20,.32)')
+    tile(S.x0 + 0.12, 3.65, S.x1 - S.x0 - 0.24, 0.34, '#332923', '#b96b36'); g.save(); g.globalAlpha = .11 + Math.sin(t * 4) * .025; tile(S.x0 + 0.15, .55, S.x1 - S.x0 - .3, 1.1, '#ff8b3d', null); g.restore()
+    // Crystal comms: midnight carpet with two softly pulsing rune circles.
+    tile(Ph.x0, 0.35, Ph.x1 - Ph.x0, 3.9, '#263552', null)
+    for (const cx of [Ph.x0 + .62, Ph.x1 - .62]) { const [px, py] = P(cx, 2.55); g.save(); g.globalAlpha = .28 + Math.sin(t * 2.2 + cx) * .06; g.strokeStyle = '#73cde0'; g.lineWidth = 2 * cam.s; g.beginPath(); g.ellipse(px, py, 31 * cam.s, 15 * cam.s, 0, 0, Math.PI * 2); g.stroke(); g.beginPath(); g.ellipse(px, py, 20 * cam.s, 10 * cam.s, 0, 0, Math.PI * 2); g.stroke(); for (let a = 0; a < 6; a++) text('·', px + Math.cos(a * Math.PI / 3) * 25 * cam.s, py + Math.sin(a * Math.PI / 3) * 12 * cam.s, 10, '#9fe9ef'); g.restore() }
+    // Tavern: warm planks and a wine-red woven rug.
+    for (let y = .4; y < 4.2; y += .33) tile(Lo.x0, y, Lo.x1 - Lo.x0, .31, ((y * 3) | 0) % 2 ? '#936841' : '#a67848', 'rgba(61,35,18,.25)')
+    tile(Lo.x0 + .35, 1.2, Lo.x1 - Lo.x0 - .7, 2.65, '#783d3a', '#d2a75b'); for (let x = Lo.x0 + .55; x < Lo.x1 - .4; x += .55) for (let y = 1.45; y < 3.7; y += .5) { const [px, py] = P(x, y); circle(px, py, 2.3 * cam.s, '#d4aa5d', null) }
+    return
+  }
   for (let x = L.x0; x < L.x1 - 0.01; x += 0.5) for (let y = 0.4; y < 4.2; y += 0.25) tile(x + ((y * 4) % 2 ? 0.25 : 0), y, Math.min(0.5, L.x1 - x - ((y * 4) % 2 ? 0.25 : 0)), 0.25, ((x * 2 + y * 4) | 0) % 2 ? '#d9b98f' : '#cfae83', 'rgba(120,85,50,.18)')
   tile(L.x0 + 0.6, 1.6, L.x1 - L.x0 - 1.2, 2.3, '#3f7a5c', null); tile(L.x0 + 0.7, 1.7, L.x1 - L.x0 - 1.4, 2.1, '#4f8f6c', null)
   // Workshop: concrete slabs, an oil stain, a hazard stripe at the front.
@@ -2627,15 +2657,17 @@ function frame(now) {
   g.clearRect(0, 0, VW, VH)
   deskHits = []
   resetBtn.style.display = cam.user ? 'inline-block' : 'none'
-  tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
-  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, Math.min(1, W - gx), Math.min(1, D - gy), 'rgba(160,120,80,.07)', null) // clipped: a whole last tile hung off the floor
+  const pal = skin.palette
+  if (skin.beforeFrame) skin.beforeFrame(t)
+  tile(-0.3, -0.3, W + 0.6, D + 0.6, pal.ground, LINE)
+  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, Math.min(1, W - gx), Math.min(1, D - gy), pal.grid, null) // clipped: a whole last tile hung off the floor
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
   zoneFloors(t)
   meetingFloor()
-  for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, 40, 90), 'rgba(59,42,53,.12)')
+  for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, pal.sectionS, pal.sectionL), 'rgba(59,42,53,.12)')
   for (const w of windows) {
     const need = w.sessions.some((p) => wantsToTalk(p) && !isMuted(p.id))
-    tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, 55, 87), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
+    tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, pal.podS, pal.podL), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
     rug(w, t)
     if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
   }
@@ -2682,6 +2714,7 @@ function frame(now) {
   add(1e9 + 3, () => drawFlights(t))
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
   drawSorted(items)
+  if (skin.afterFrame) skin.afterFrame({ g, width: VW, height: VH, cam, P }, t)
 }
 
 // Painter's order for the floor: one number per thing (x + y) cannot order a
@@ -2730,6 +2763,7 @@ async function tick() {
     renderBusy(cardSid)
   }
 }
+setSkin(savedSkin(), false)
 resize(); tick(); setInterval(tick, 2000); requestAnimationFrame(frame)
 </script>
 </body>
