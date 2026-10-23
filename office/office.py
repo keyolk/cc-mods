@@ -54,6 +54,7 @@ WRITE = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
 DELEGATE = {"Agent", "Task", "Workflow", "SendMessage"}
 
 _paths: dict[str, str] = {}
+_live_panes: set[str] = set()
 
 
 def transcript(sid: str) -> str | None:
@@ -384,13 +385,15 @@ def compacting(pane: str) -> bool:
 
 
 def snapshot() -> list[dict]:
+    global _live_panes
     try:
         out = subprocess.run(["tmux", "list-panes", "-a", "-F", FMT], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []
+    rows = [line.split("|") for line in out.splitlines()]
+    _live_panes = {p[0] for p in rows if len(p) >= 12}
     seen, people = set(), []
-    for line in out.splitlines():
-        p = line.split("|")
+    for p in rows:
         if len(p) < 12 or not p[4] or p[4] in seen:
             continue
         seen.add(p[4])
@@ -740,7 +743,7 @@ def detail(sid: str, kind: str | None = None) -> dict:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid, "all", 60), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
 # Something for a session to read as the person's prompt: its inbox file,
@@ -1172,7 +1175,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
             people = snapshot()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "muted": muted(), "talks": talks(), "meetings": meetings()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "muted": muted(), "talks": talks(), "meetings": meetings()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
@@ -1184,9 +1187,10 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path == "/brands.js":
-            with open(os.path.join(HERE, "brands.js"), "rb") as f:
-                return self.send(200, f.read(), "text/javascript; charset=utf-8")
+        if self.path in ("/brands.js", "/skins.js"):
+            with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
+                skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
+                return self.send(200, skin, "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
                 page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())

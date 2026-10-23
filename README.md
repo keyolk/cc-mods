@@ -187,9 +187,11 @@ else the first name of your account's full name, else your login name.
   catches up; and a session that has just finished stays at its desk for 90
   s holding its answer up (a page with a tick) before it wanders off, so a
   short job shows as it coming back and answering.
-- **Going home**: a session that ends walks out through the `EXIT` door in
-  the left wall near the front and fades out there: after a long day (8 h or
-  2000 tool calls) slumped and slow, bags under its eyes, a grey cloud and
+- **Going home**: a session whose tmux pane is gone from three consecutive
+  polls walks out through the `EXIT` door in the left wall near the front and
+  fades out there. If the pane still exists, a missing pane-session option does
+  not start the animation. A session that returns before leaving cancels it. After a long day (8 h or 2000 tool
+  calls) it leaves slumped and slow, with bags under its eyes, a grey cloud and
   `휴… 퇴근`; after a short one (under an hour) hopping with its arms up and
   `퇴근이다!`; otherwise a wave and `수고했습니다`.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
@@ -332,10 +334,11 @@ else the first name of your account's full name, else your login name.
   cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
 - **Several at once, and meetings**: `V` (or the `☑ 고르기` chip in the top row)
-  turns on pick mode, where a click picks a session and a drag lassoes several
-  (a dashed ring each); `⇧click` / `⇧drag` do the same where the terminal lets
-  Shift+mouse through (many keep it for their own text selection); a bar then offers `🗣 회의`, `📣 공지`
-  and `💤 미루기` for all of them. A meeting (2 to 8, a topic typed in the bar)
+  turns on pick mode. Clicking either a person or their desk picks the same
+  session. A drag lassoes sessions whose person or desk is inside it (a dashed
+  ring on the person and a blue outline on the desk); `⇧click` / `⇧drag` do the
+  same where the terminal lets Shift+mouse through. A bar then offers `🗂 창
+  옮기기`, `🗣 회의`, `📣 공지` and `💤 미루기`. A meeting (2 to 8, a topic typed in the bar)
   walks them into the glass meeting room (the corner between the lounge and the
   crowd, as deep as the rooms) round its table; each is told,
   through its inbox, who else is there by the names `SendMessage` takes, who
@@ -347,13 +350,14 @@ else the first name of your account's full name, else your login name.
   back to their desks. The chip's topic, or the table, opens the minutes. An
   announcement goes to each picked one's inbox; messages waiting there are
   kept and the new one added after them.
-- **Move windows by dragging**: drag a desk (its whole tmux window) onto
-  another pod to merge it into that window, or onto another tmux session's
-  block to send it there. The drop asks first (`⏎` moves, `Esc` drops it),
-  then the office runs tmc's own moves, `tmc window merge|send` (the TUI's `x
-  m` / `x s`; keyolk/tmc#18). The windows are resolved from tmux by the
-  sessions they hold, never taken from the page; `OFFICE_TMC` points at
-  another tmc.
+- **Move windows while picking**: in pick mode, drag either a picked person or
+  their desk (the whole tmux window) onto another pod to merge it into that
+  window, or onto another tmux session's block to send it there. Normal desk
+  dragging no longer moves a window accidentally. The drop asks first (`⏎`
+  moves, `Esc` drops it), then the office runs tmc's own moves, `tmc window
+  merge|send` (the TUI's `x m` / `x s`; keyolk/tmc#18). The windows are
+  resolved from tmux by the sessions they hold, never taken from the page;
+  `OFFICE_TMC` points at another tmc.
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
@@ -362,12 +366,38 @@ else the first name of your account's full name, else your login name.
   framed, so links open outside, by default where that session's own links
   go: `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
   Chrome (signed in) or the tab group.
+- **Visual skins**: `⚙` switches the scene renderer, not only CSS. A skin in
+  `office/skins.js` supplies UI CSS, title, room presentation, canvas palette,
+  and optional scene, desk, character and frame renderer hooks. `🏢 모던
+  오피스` keeps the original. `⚔ 클래식 판타지 길드홀` is an original
+  early-2000s 2D-sprite-on-3D-isometric-world treatment: parchment-and-wood
+  chrome; records archive, forge, crystal comms and tavern; oak, stone, rune
+  and woven-rug floors; timber posts, stone feet, wall torches, a guild crest,
+  lantern warmth and subtle screen grain. Its workers use a separate 32×48
+  low-resolution sprite renderer with nearest-neighbour scaling, directional
+  walk frames, stepped hair, job headgear and props, rank crowns and zipped
+  mouths. Guild furniture replaces bookshelves, forge machinery, café, sofa,
+  vending machine, radiators, chairs, decorations and the glass meeting room.
+  The phone booth becomes a carved crystal-comms alcove, with a floating orb
+  rather than a handset or phone icon. Desks replace monitors with rune
+  tablets, crystal orbs, scrying mirrors, magical devices, books, parchment and
+  messenger scrolls. The choice stays in this browser. Skins never change room
+  identity, geometry, hit boxes or routing.
 - **Where things open is yours to pick**: `⚙` (or `,`) in the top row sets
   where web links and files open outside (that session's setting, TWeb on
   your Chrome / Electron / WebKit, the Chrome tab group, the default browser
   or app, Finder) and whether a viewable file opens inside first. A chip's
   right click (or `⇧O` in the viewer) asks once and remembers the pick; kept
   in this browser.
+- **The card in tabs, its buttons always in view**: `💬 답변`, `📥 받은 것`,
+  `📤 보낸 것`, `📎 파일` (from its outputs; `[` `]` cycle and `⌥1`-`⌥4`
+  open one directly). In a resource tab, `↑`/`↓` or `j`/`k` chooses an item
+  and `Enter` opens it. The things to press (quick replies, the reply box,
+  stop, go, 미루기, next) sit in a foot that stays at the card's bottom however
+  long the answer is. Drag the card's title to move it and its lower-left corner
+  to resize it. Press `M` to maximize/restore, use `⌥`+arrows to change its
+  width and height, or `⌥⇧`+arrows to move it; the browser remembers both its
+  size and position.
 - **Answers read as Markdown**: headings, nested lists, tables, code blocks,
   quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row

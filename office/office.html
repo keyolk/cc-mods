@@ -22,10 +22,16 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; 
 canvas.drag { cursor: grabbing; }
 #tip { position: fixed; pointer-events: none; z-index: 5; max-width: 320px; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; padding: 8px 11px; display: none; box-shadow: 0 4px 0 var(--line); }
 #tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
-#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
-#card h2 { margin: 0 0 2px; font-size: 18px; font-weight: 400; }
+#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: 260px; max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
+#card.max { left: 10px !important; right: 10px !important; top: 10px !important; bottom: 10px !important; width: auto !important; height: auto !important; max-height: none; }
+#card .titlebar { position: sticky; top: -12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: -12px -14px 6px; padding: 10px 10px 7px 14px; background: #fffaf0; border-bottom: 2px solid rgba(59,42,53,.14); cursor: grab; user-select: none; touch-action: none; }
+#card .titlebar:active { cursor: grabbing; }
+#card h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
-#card .x { position: absolute; right: 10px; top: 8px; border: 0; background: none; font-size: 18px; cursor: pointer; }
+#card .x, #card .maxb { flex: 0 0 auto; border: 0; background: none; font-size: 18px; cursor: pointer; padding: 0 3px; }
+#card .resize { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 18px; cursor: nesw-resize; z-index: 2; opacity: .5; }
+#card .resize::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 9px; height: 9px; border-left: 2px solid #7a7090; border-bottom: 2px solid #7a7090; }
+#card.max .resize { display: none; }
 #card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
 #card .scrollhint { font-size: 11px; color: #9a90b0; text-align: right; margin-bottom: 8px; }
 #card .q { font-size: 14px; margin: 6px 0; }
@@ -80,7 +86,12 @@ body.picking #c { cursor: crosshair; }
 #settings .row { margin: 8px 0; }
 #settings .row > div:first-child { margin-bottom: 4px; }
 #settings .m { color: #6b6280; font-size: 11px; }
-#settings select { font: inherit; width: 100%; padding: 3px 6px; border: 2px solid var(--line); border-radius: 8px; background: #fff; }
+#settings .pick { position: relative; }
+#settings .pick > button { width: 100%; display: flex; justify-content: space-between; align-items: center; font: inherit; padding: 4px 8px; border: 2px solid var(--line); border-radius: 8px; background: #fff; color: #2a2033; cursor: pointer; }
+#settings .pick .opts { display: none; margin-top: 3px; padding: 4px; border: 2px solid var(--line); border-radius: 8px; background: #fffaf0; box-shadow: 0 4px 0 rgba(59,42,53,.2); }
+#settings .pick.open .opts { display: grid; gap: 2px; }
+#settings .pick .opts button { width: 100%; text-align: left; font: inherit; border: 0; border-radius: 6px; padding: 4px 7px; background: transparent; color: #2a2033; cursor: pointer; }
+#settings .pick .opts button:hover, #settings .pick .opts button:focus, #settings .pick .opts button.on { background: #e7d9bc; outline: none; }
 #settings label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 #pickbar { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); display: none; align-items: center; gap: 8px; z-index: 7; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 14px; box-shadow: 0 4px 0 var(--line); padding: 7px 12px; font-size: 13px; max-width: calc(100vw - 32px); }
 #pickbar .m { color: #6b6280; font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -110,6 +121,13 @@ body.picking #c { cursor: crosshair; }
 #card .busy hr { border: 0; border-top: 1px dashed #e8a23a; margin: 5px 0; }
 #card .busy .m { color: #8a5a1e; font-size: 11.5px; }
 #card.isbusy .act.go { opacity: .55; }
+#card .ctabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+#card .ctabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
+#card .ctabs button.on { background: #2a2033; color: #fff; }
+#card .ctabs button:focus-visible, #card .rel a:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 2px; }
+#card .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
+#card .cfoot { position: sticky; bottom: -12px; margin: 8px -14px -12px; padding: 8px 14px 10px; background: #fffaf0; border-top: 2px dashed rgba(59,42,53,.18); box-shadow: 0 -6px 10px rgba(255,250,240,.9); }
+#card .cfoot .row:last-of-type { margin-bottom: 4px; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .shelf .tabs button.on { background: #2a2033; color: #fff; }
@@ -135,10 +153,10 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 </head>
 <body>
 <header>
-  <h1>🏢 __OFFICE_OWNER__네 사무실</h1>
+  <h1 id="office-title">🏢 __OFFICE_OWNER__네 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
-  <button id="pickchip" class="chip" title="여러 명 고르기 (V): 클릭으로 고르고 드래그로 묶기">☑ 고르기 · V</button>
+  <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
 </header>
 <div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
@@ -154,13 +172,16 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>책상 서랍 탭 이동 (받은 것 · 보낸 것 · 스크래치 …)</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥4</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
+    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
+    <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 · 폭과 높이 조정 (좌하단을 끌어서도 조정)</td></tr>
+    <tr><td>제목 끌기 · <kbd>⌥⇧←↑↓→</kbd></td><td>대화창 위치 이동</td></tr>
     <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
     <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
-    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>여러 명 고르기 → 🗣 회의(회의실에 모여 SendMessage로 의논, 회의록) · 📣 공지 · 💤 미루기</td></tr>
-    <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
+    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>사람이나 책상으로 세션 선택 → 🗂 사람·책상을 끌어 창 옮기기 · 🗣 회의 · 📣 공지 · 💤 미루기</td></tr>
+    <tr><td>고르기에서 사람·책상 끌기</td><td>그 세션의 tmux 창을 다른 책상 묶음에 합치거나 다른 tmux 구획으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
@@ -174,6 +195,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 처음 한 번 <kbd>i</kbd>(insert)로 키를 페이지에 넘기세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
 </div>
 <script src="brands.js"></script>
+<script src="skins.js"></script>
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
@@ -230,6 +252,19 @@ function circle(x, y, r, fill, stroke = LINE, lw = 1.4) {
 function text(t, x, y, size, color = '#2a2033', align = 'center') {
   g.font = Math.max(8, size * cam.s) + 'px Jua, sans-serif'; g.textAlign = align; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(t, x, y)
 }
+
+// ---------- visual skins ----------
+const SKINS = window.OFFICE_SKINS
+let skin = SKINS.office
+const skinStyle = document.createElement('style'); skinStyle.id = 'office-skin'; document.head.appendChild(skinStyle)
+function setSkin(key, save = true) {
+  skin = SKINS[key] || SKINS.office
+  skinStyle.textContent = skin.css || ''
+  document.getElementById('office-title').textContent = skin.title
+  for (const [k, [label, when]] of Object.entries(skin.zones)) { ZONES[k].label = label; ZONES[k].when = when }
+  if (save) { try { localStorage.setItem('office.skin', skin.key) } catch {} }
+}
+function savedSkin() { try { return localStorage.getItem('office.skin') || 'office' } catch { return 'office' } }
 
 // ---------- world layout ----------
 // Pods: a row of two desks per window, a second row when it holds 3-4
@@ -372,6 +407,9 @@ function findPath(ax, ay, bx, by) {
 // ---------- state ----------
 let windows = []
 const ents = new Map() // id -> a session or a subagent on the floor
+// tmux can omit one pane from an individual poll while windows are changing.
+// Require three consecutive misses before a real session starts going home.
+const sessionMisses = new Map()
 const spotTaken = Object.fromEntries(Object.keys(ZONES).map((k) => [k, new Map()]))
 let stats = { total: 0, work: 0, wait: 0, subs: 0 }
 
@@ -397,7 +435,8 @@ const pileY = (k) => ((hashOf('y' + k) % 100) / 100) * 1.3
 function releaseSpots(id, keep) {
   if (keep !== 'pile') { const i = napOrder.indexOf(id); if (i >= 0) napOrder.splice(i, 1) } for (const z of Object.keys(spotTaken)) if (z !== keep) spotTaken[z].delete(id) }
 
-function apply(people) {
+function apply(people, panes = []) {
+  const paneLive = new Set(panes)
   const byWin = new Map()
   for (const p of people) {
     if (!byWin.has(p.wid)) byWin.set(p.wid, { wid: p.wid, name: p.name, label: p.window, sessions: [] })
@@ -461,7 +500,8 @@ function apply(people) {
       if (mt) { tgt = MEET_SEATS[mt.sids.indexOf(p.id) % MEET_SEATS.length]; releaseSpots(p.id); if (p.doing === 'napping') p.doing = 'idle' } // nobody sleeps in a meeting
       let e = ents.get(p.id)
       if (!e) { e = { id: p.id, kind: 'session', x: tgt[0], y: tgt[1] }; ents.set(p.id, e) }
-      Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false })
+      Object.assign(e, { tx: tgt[0], ty: tgt[1], data: p, hue: w.hue, leaving: false, gone: null, leftAt: null })
+      sessionMisses.delete(p.id)
       live.add(p.id)
       // A window's people stay together: subagents gather around their
       // session wherever it is (its desk, the library, the workshop) and
@@ -490,9 +530,16 @@ function apply(people) {
     if (live.has(id)) continue
     // Done: back to the corner and in through the door.
     if (e.kind === 'sub' && !e.leaving) { e.leaving = true; e.tx = POOL_IN[0]; e.ty = POOL_IN[1]; releaseSpots(id) }
-    // A session that ended goes home: out through the door, tired or glad
-    // by how long it worked.
-    else if (e.kind === 'session' && !e.leaving) { e.leaving = true; e.mood = homeMood(e.data); e.leftAt = performance.now(); e.data = { ...e.data, doing: 'leaving', room: 'out' }; const [d0, d1] = exitAt(); e.tx = 0.15; e.ty = (d0 + d1) / 2; releaseSpots(id) }
+    // A session that ended goes home only after three consecutive state polls
+    // miss it. One flaky tmux snapshot must not make it leave and return.
+    else if (e.kind === 'session' && !e.leaving) {
+      // If tmux still reports its pane, only the pane options were momentarily
+      // absent. Keep the worker where it was and wait for the next poll.
+      if (paneLive.has(e.data.pane)) { sessionMisses.delete(id); continue }
+      const misses = (sessionMisses.get(id) || 0) + 1; sessionMisses.set(id, misses)
+      if (misses < 3) continue
+      e.leaving = true; e.mood = homeMood(e.data); e.leftAt = performance.now(); e.data = { ...e.data, doing: 'leaving', room: 'out' }; const [d0, d1] = exitAt(); e.tx = 0.15; e.ty = (d0 + d1) / 2; releaseSpots(id)
+    }
   }
   document.getElementById('s1').innerHTML = '세션 <b>' + stats.total + '</b>'
   document.getElementById('s2').innerHTML = '일하는 중 <b>' + stats.work + '</b>'
@@ -631,7 +678,7 @@ function lookAt(e) {
 }
 
 // ---------- camera ----------
-function resize() { DPR = devicePixelRatio || 1; VW = innerWidth; VH = innerHeight; cv.width = VW * DPR; cv.height = VH * DPR; if (!cam.user) fit() }
+function resize() { DPR = devicePixelRatio || 1; VW = innerWidth; VH = innerHeight; cv.width = VW * DPR; cv.height = VH * DPR; if (!cam.user) fit(); if (typeof card !== 'undefined' && card.style.display === 'block') fitCardToViewport() }
 function fit() {
   cam.s = 1; cam.ox = 0; cam.oy = 0
   const pts = [P(0, 0, 150), P(W, 0, 150), P(0, D), P(W, D)]
@@ -639,7 +686,7 @@ function fit() {
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
   // Room for the labels in the margin: the room callouts above the back
   // wall, the tmux labels left of the left wall.
-  const top = 48 + 60, bottom = 48, left = Math.min(170, VW * 0.14)
+  const top = 64, bottom = 48, left = Math.min(110, VW * 0.09)
   // Before the page has a size (VW/VH 0) this would go negative.
   cam.s = Math.max(0.1, Math.min((VW - 16 - left) / (maxX - minX), (VH - top - bottom) / (maxY - minY)))
   cam.ox = left + (VW - left - (maxX - minX) * cam.s) / 2 - minX * cam.s
@@ -653,29 +700,43 @@ cv.addEventListener('wheel', (e) => {
 }, { passive: false })
 let drag = null
 cv.addEventListener('mousedown', (e) => {
-  const st = hitStuff(e.clientX, e.clientY), w = st && windowOf(st.sid)
-  const lasso = e.shiftKey || pickMode
-  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: lasso ? null : w || null, lasso }
+  const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY)
+  const sid = h?.kind === 'session' ? h.id : st?.kind === 'desk' ? st.sid : null
+  const choosing = e.shiftKey || pickMode
+  const w = choosing && sid ? windowOf(sid) : null
+  // Moving a tmux window is intentionally available only while choosing. A
+  // click picks either its person or anything on its desk; dragging either
+  // carries the whole pod.
+  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: w || null, lasso: choosing && !w, pickSid: choosing ? sid : null }
   cv.classList.add('drag')
 })
 addEventListener('mouseup', (e) => {
+  if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); cardResize = null; saveCardLayout(); return }
+  if (cardMove) { setCardPosition(cardMove.left + e.clientX - cardMove.x, cardMove.top + e.clientY - cardMove.y); cardMove = null; saveCardLayout(); return }
   cv.classList.remove('drag')
   if (drag && drag.lasso) {
-    const h = !drag.moved && hit(e.clientX, e.clientY)
-    if (h && h.kind === 'session') togglePick(h.id)
+    if (!drag.moved && drag.pickSid) togglePick(drag.pickSid)
     else if (drag.moved) lassoPick(drag.x, drag.y, e.clientX, e.clientY)
     drag = null; lasso = null; renderPicks(); return
   }
-  if (drag && drag.moved && drag.pod) { const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return }
+  if (drag && drag.pod) {
+    if (!drag.moved) { if (drag.pickSid) togglePick(drag.pickSid); drag = null; renderPicks(); return }
+    const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return
+  }
   if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st && st.kind === 'meeting') viewFile(st.meeting.minutes, st.meeting.lead); else if (st) openCard(st.sid, st.kind === 'memory' ? null : st.kind) }
   drag = null
 })
 addEventListener('mousemove', (e) => {
+  if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); return }
+  if (cardMove) { setCardPosition(cardMove.left + e.clientX - cardMove.x, cardMove.top + e.clientY - cardMove.y); return }
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true
     if (drag.lasso) { lasso = drag.moved ? [drag.x, drag.y, e.clientX, e.clientY] : null; return }
-    if (drag.moved && drag.pod) { podDrag = { w: drag.pod, x: e.clientX, y: e.clientY, drop: dropAt(drag.pod, e.clientX, e.clientY) }; tip.style.display = 'none'; return }
+    if (drag.moved && drag.pod) {
+      if (!drag.picked) { drag.picked = true; if (drag.pickSid) { picked.add(drag.pickSid); renderPicks() } }
+      podDrag = { w: drag.pod, x: e.clientX, y: e.clientY, drop: dropAt(drag.pod, e.clientX, e.clientY) }; tip.style.display = 'none'; return
+    }
     if (drag.moved) { cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy }
   }
   hover(e)
@@ -696,10 +757,11 @@ function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(p
 const help = document.getElementById('help')
 addEventListener('keydown', (e) => {
   const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
-  if (typing) return // the reply box handles its own keys
-  if (e.metaKey || e.ctrlKey || e.altKey) return
-  const k = e.key
   const open = card.style.display === 'block'
+  if (e.metaKey || e.ctrlKey) return
+  if (open && e.altKey && handleCardAlt(e)) return
+  if (typing) return // the reply box handles its own keys
+  const k = e.key
   const hit = (fn) => { e.preventDefault(); fn() }
   if (viewer.path && k === 'Escape') return hit(closeViewer)
   if (k === ',' ) return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
@@ -717,6 +779,8 @@ addEventListener('keydown', (e) => {
   if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
   if (k === '0') return hit(resetView)
+  if (open && (k === 'm' || k === 'M' || k === 'ㅡ')) return hit(toggleCardMax)
+  if (open && card.openCurrent && k === 'Enter') return hit(card.openCurrent)
   if (open && card.shelfTab && k === 'Enter' && card.keys && card.keys[0]) return hit(() => card.keys[0].click())
   if (open && card.shelfTab && (k === '[' || k === ']')) return hit(() => card.shelfTab(k === ']' ? 1 : -1))
   if (k === 'n' || k === 'N' || k === 'ㅜ') return hit(() => step(1))
@@ -729,6 +793,8 @@ addEventListener('keydown', (e) => {
   if (quietMenu.id_ && k === 'Escape') return hit(hideQuiet)
   if (open && (k === 'z' || k === 'Z' || k === 'ㅋ') && card.mute) return hit(() => card.mute.click())
   if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
+  if (open && card.moveResource && (k === 'ArrowUp' || k === 'k' || k === 'ㅏ')) return hit(() => card.moveResource(-1))
+  if (open && card.moveResource && (k === 'ArrowDown' || k === 'j' || k === 'ㅓ')) return hit(() => card.moveResource(1))
   if (open && card.said) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
     if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
@@ -757,6 +823,84 @@ addEventListener('keydown', (e) => {
 // the person's own prompt; a dialog choice is its digit key.
 const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
+const CARD_MIN_W = 300, CARD_MIN_H = 260
+let cardResize = null, cardMove = null
+function handleCardAlt(e) {
+  const k = e.key, hit = (fn) => { e.preventDefault(); fn(); return true }
+  if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
+  if (k === 'm' || k === 'M' || e.code === 'KeyM') return hit(toggleCardMax)
+  if (e.shiftKey && k === 'ArrowLeft') return hit(() => moveCardBy(-40, 0))
+  if (e.shiftKey && k === 'ArrowRight') return hit(() => moveCardBy(40, 0))
+  if (e.shiftKey && k === 'ArrowUp') return hit(() => moveCardBy(0, -40))
+  if (e.shiftKey && k === 'ArrowDown') return hit(() => moveCardBy(0, 40))
+  if (k === 'ArrowLeft') return hit(() => resizeCardBy(-40, 0))
+  if (k === 'ArrowRight') return hit(() => resizeCardBy(40, 0))
+  if (k === 'ArrowUp') return hit(() => resizeCardBy(0, -40))
+  if (k === 'ArrowDown') return hit(() => resizeCardBy(0, 40))
+  return false
+}
+function cardLayout() {
+  try { return JSON.parse(localStorage.getItem('office-card-layout') || localStorage.getItem('office-card-size') || 'null') } catch (_) { return null }
+}
+function saveCardLayout() {
+  if (card.classList.contains('max')) return
+  try { localStorage.setItem('office-card-layout', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight, x: card.offsetLeft, y: card.offsetTop })) } catch (_) {}
+}
+function setCardPosition(x, y) {
+  const maxX = Math.max(0, innerWidth - card.offsetWidth), maxY = Math.max(0, innerHeight - card.offsetHeight)
+  card.style.left = Math.min(maxX, Math.max(0, x)) + 'px'; card.style.top = Math.min(maxY, Math.max(0, y)) + 'px'; card.style.right = 'auto'
+}
+function setCardSize(w, h) {
+  const maxW = Math.max(1, innerWidth - card.offsetLeft), maxH = Math.max(1, innerHeight - card.offsetTop)
+  const minW = Math.min(CARD_MIN_W, maxW), minH = Math.min(CARD_MIN_H, maxH)
+  card.style.width = Math.min(maxW, Math.max(minW, w)) + 'px'
+  card.style.height = Math.min(maxH, Math.max(minH, h)) + 'px'
+  card.style.maxHeight = 'none'
+}
+function restoreCardLayout() {
+  const z = cardLayout(); if (!z) return
+  setCardPosition(z.x == null ? innerWidth - z.w - 10 : z.x, z.y == null ? 52 : z.y); setCardSize(z.w, z.h)
+}
+function fitCardToViewport() {
+  if (card.classList.contains('max')) return
+  setCardPosition(card.offsetLeft, card.offsetTop); setCardSize(card.offsetWidth, card.offsetHeight)
+}
+function toggleCardMax() {
+  card.classList.toggle('max')
+  if (!card.classList.contains('max')) restoreCardLayout()
+  if (card.maxButton) { card.maxButton.textContent = card.classList.contains('max') ? '❐' : '□'; card.maxButton.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)' }
+}
+function resizeCardBy(dw, dh) {
+  if (card.classList.contains('max')) toggleCardMax()
+  setCardSize(card.offsetWidth + dw, card.offsetHeight + dh); saveCardLayout()
+}
+function moveCardBy(dx, dy) {
+  if (card.classList.contains('max')) toggleCardMax()
+  setCardPosition(card.offsetLeft + dx, card.offsetTop + dy); saveCardLayout()
+}
+function cardChrome(add, titleHtml) {
+  const bar = add('div', 'titlebar')
+  const title = document.createElement('h2'); title.innerHTML = titleHtml; bar.appendChild(title)
+  const max = document.createElement('button'); max.className = 'maxb'; max.textContent = card.classList.contains('max') ? '❐' : '□'; max.onclick = toggleCardMax; bar.appendChild(max); card.maxButton = max
+  max.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)'
+  const close = document.createElement('button'); close.className = 'x'; close.textContent = '✕'; close.title = '닫기 (Esc)'; close.onclick = closeCard; bar.appendChild(close)
+  makeCardMovable(bar)
+  const grip = add('div', 'resize'); grip.title = '끌어서 카드 크기 조정 · ⌥+방향키'
+  grip.onmousedown = (e) => { if (card.classList.contains('max')) return; e.preventDefault(); e.stopPropagation(); cardResize = { x: e.clientX, y: e.clientY, w: card.offsetWidth, h: card.offsetHeight } }
+}
+function makeCardMovable(bar) {
+  bar.title = '끌어서 대화창 이동 · ⌥⇧+방향키'
+  bar.onmousedown = (e) => { if (e.target.closest('button') || card.classList.contains('max') || e.button !== 0) return; e.preventDefault(); cardMove = { x: e.clientX, y: e.clientY, left: card.offsetLeft, top: card.offsetTop } }
+}
+function resourceKeys(list, focus = false) {
+  const links = [...list.querySelectorAll('a')]
+  links.forEach((a) => { a.tabIndex = -1 })
+  card.resourceLinks = links; card.resourceIndex = links.length ? 0 : -1
+  card.openCurrent = links.length ? () => links[card.resourceIndex].click() : null
+  card.moveResource = links.length ? (dir) => { card.resourceIndex = (card.resourceIndex + dir + links.length) % links.length; links[card.resourceIndex].focus({ preventScroll: false }) } : null
+  if (focus && links.length) links[0].focus({ preventScroll: false })
+}
+restoreCardLayout()
 let cardSid = null
 // One related item: a brand badge for a well-known place, else an icon chip.
 const CHIP_ICON = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
@@ -796,10 +940,14 @@ async function openCard(sid, kind = null) {
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
   cardRoute = d.route || 'default'
   card.innerHTML = ''
-  const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; card.appendChild(e); return e }
-  const close = add('button', 'x', '✕'); close.onclick = closeCard
+  card.selectTab = card.openCurrent = card.moveResource = null
+  card.resourceLinks = []
+  // add() puts things where `into` points: the card, then its tab panes, then
+  // the foot that stays at the card's bottom (the things to press).
+  let into = card
+  const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
+  cardChrome(add, esc(d.window + ' ' + d.name))
   card.keys = []
-  add('h2', '', esc(d.window + ' ' + d.name))
   add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
   // Busy or a reply already on its way: said first, before anything to press.
   card.busy = add('div', 'busy')
@@ -816,13 +964,15 @@ async function openCard(sid, kind = null) {
     const avail = TABS.map(([k, label, f]) => [k, label, d.shelf.filter(f)]).filter(([, , items]) => items.length)
     const want = ['pr', 'slack', 'ticket'].includes(kind) ? 'out' : kind
     let cur = Math.max(0, avail.findIndex(([k]) => k === want))
-    const show = () => {
+    const show = (focus = false) => {
       tabs.innerHTML = ''; list.innerHTML = ''
-      avail.forEach(([, label, items], i) => { const b = document.createElement('button'); b.className = i === cur ? 'on' : ''; b.textContent = label + ' ' + items.length; b.onclick = () => { cur = i; show() }; tabs.appendChild(b) })
-      if (!avail.length) { list.innerHTML = '<span class="m">책상이 비어 있습니다 (링크나 경로가 있는 항목이 없음)</span>'; return }
+      avail.forEach(([, label, items], i) => { const b = document.createElement('button'); b.className = i === cur ? 'on' : ''; b.textContent = '⌥' + (i + 1) + ' ' + label + ' ' + items.length; b.onclick = () => { cur = i; show() }; tabs.appendChild(b) })
+      if (!avail.length) { list.innerHTML = '<span class="m">책상이 비어 있습니다 (링크나 경로가 있는 항목이 없음)</span>'; resourceKeys(list); return }
       for (const o of avail[cur][2]) list.appendChild(chip(o))
+      resourceKeys(list, focus)
     }
-    card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show() } }
+    card.selectTab = (i) => { if (i < avail.length) { cur = i; show(true) } }
+    card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show(true) } }
     show()
     // The drawer is the whole card: no conversation, just a way to it.
     card.said = card.reply = card.stop = card.grant = card.mute = card.go = null
@@ -831,6 +981,25 @@ async function openCard(sid, kind = null) {
     card.keys[0] = talk
     return
   } else card.shelfTab = null
+  // Tabs: the answer, and what it was handed, sent and wrote (from its
+  // outputs), so the answer is not pushed down by a wall of chips. [ ] switch.
+  const groups = [['said', '💬 답변', null], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)]]
+    .map(([k, label, f]) => [k, label, f ? (d.related || []).filter(f) : null]).filter(([k, , items]) => k === 'said' || items.length)
+  const tabbar = add('div', 'ctabs'), panes = {}
+  for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; card.appendChild(panes[k]) }
+  let curTab = 0
+  const showTab = (i, focus = false) => {
+    curTab = (i + groups.length) % groups.length
+    tabbar.innerHTML = ''
+    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
+    const rel = panes[groups[curTab][0]].querySelector('.rel')
+    if (rel) resourceKeys(rel, focus); else { card.resourceLinks = []; card.openCurrent = card.moveResource = null }
+  }
+  card.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
+  if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir, true)
+  for (const [k, , items] of groups) if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
+  into = panes.said
   card.said = null
   if (d.text) {
     const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
@@ -839,17 +1008,16 @@ async function openCard(sid, kind = null) {
     card.said = said
     if (said.scrollHeight > said.clientHeight + 4) add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
   }
+  showTab(0)
+  if (groups.length < 2) tabbar.style.display = 'none'
+  // The foot: everything to press stays in view at the card's bottom.
+  const foot = document.createElement('div'); foot.className = 'cfoot'; card.appendChild(foot); into = foot
   // Policy: what Jev thinks this session needs before it can go on, for one press.
   if (d.grant) {
     const gbox = add('div', 'grant', '🔐 <b>정책 제안</b> · ' + esc(d.grant.label) + ' · ' + d.grant.minutes + '분<div class="why">' + esc(d.grant.why) + '</div>')
     const gb = document.createElement('button'); gb.className = 'act grantb'; gb.innerHTML = '<span class="key">A</span>승인하고 계속'; gb.onclick = () => send({ kind: 'grant' }, d.grant.label + ' ' + d.grant.minutes + '분 허용')
     gbox.appendChild(gb); card.grant = gb
   } else card.grant = null
-  // What it made or was handed: PRs, threads, tickets, files — one click away.
-  if (d.related && d.related.length) {
-    const rel = add('div', 'rel')
-    if (!d.shelf) for (const o of d.related) rel.appendChild(chip(o))
-  }
   const msg = document.createElement('div'); msg.className = 'msg'
   let armed = null
   const send = async (body, label) => {
@@ -891,6 +1059,9 @@ async function openCard(sid, kind = null) {
     const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
     ta.onkeydown = (e) => {
       if (e.isComposing || e.keyCode === 229) return // the Korean IME is still composing this syllable
+      // These bubble to the card-level shortcuts, even while this field owns
+      // ordinary typing and arrows.
+      if (e.altKey && (/^[1-9]$/.test(e.key) || e.key.startsWith('Arrow') || e.code === 'KeyM')) return
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
@@ -911,7 +1082,7 @@ async function openCard(sid, kind = null) {
   zz.innerHTML = '<span class="key">Z</span>' + (!q ? '💤 미루기 ▾' : q.until ? '💤 ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분 남음 ▾' : '🤐 말 걸 때까지 ▾')
   zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
-  card.appendChild(msg)
+  foot.appendChild(msg)
   // A dialog has no reply box; the card itself takes the keys then.
   setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } }, 30)
 }
@@ -1125,14 +1296,24 @@ function pref(k, d) { try { return localStorage.getItem('office.' + k) ?? d } ca
 function setPref(k, v) { try { localStorage.setItem('office.' + k, v) } catch {} }
 const viewInside = () => pref('viewInside', '1') === '1'
 const settings = document.createElement('div'); settings.id = 'settings'; document.body.appendChild(settings)
+function settingPick(k, cur, options) {
+  const selected = options.find(([v]) => v === cur) || options[0]
+  return '<div class="pick" data-k="' + k + '"><button class="trigger" type="button" aria-expanded="false"><span>' + esc(selected[1]) + '</span><span>⌄</span></button><div class="opts">' + options.map(([v, label]) => '<button type="button" data-v="' + esc(v) + '" class="' + (v === cur ? 'on' : '') + '">' + esc(label) + '</button>').join('') + '</div></div>'
+}
 function openSettings() {
-  const opts = (cur, file) => PLACES.filter(([k]) => file || k !== 'finder').map(([k, name]) => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + name + '</option>').join('')
+  const web = PLACES.filter(([k]) => k !== 'finder'), file = PLACES
   settings.innerHTML = '<h3>⚙ 설정</h3>'
-    + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div><select data-k="place.web">' + opts(pref('place.web', 'session'), false) + '</select></div>'
-    + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div><select data-k="place.file">' + opts(pref('place.file', 'session'), true) + '</select></div>'
+    + '<div class="row"><div>🎨 Visual skin <span class="m">공간·UI·canvas 분위기</span></div>' + settingPick('skin', skin.key, Object.entries(SKINS).map(([k, s]) => [k, s.name])) + '</div>'
+    + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div>' + settingPick('place.web', pref('place.web', 'session'), web) + '</div>'
+    + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div>' + settingPick('place.file', pref('place.file', 'session'), file) + '</div>'
     + '<div class="row"><label><input type="checkbox" data-k="viewInside"' + (viewInside() ? ' checked' : '') + '> 볼 수 있는 파일은 먼저 안에서 보기 (👁)</label></div>'
     + '<div class="m">"이 세션 설정대로"는 그 세션 pane의 @browser를 따릅니다 (tmux-chrome). 고른 곳은 이 브라우저에 저장되고, 칩의 ▾·우클릭 메뉴에서 고른 것도 여기에 반영됩니다. <kbd>,</kbd> 또는 <kbd>Esc</kbd>로 닫기.</div>'
-  settings.querySelectorAll('select').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.value); toast('⚙ 저장했습니다') } })
+  settings.querySelectorAll('.pick').forEach((pick) => {
+    const trigger = pick.querySelector('.trigger'), opts = pick.querySelector('.opts')
+    trigger.onclick = () => { const open = !pick.classList.contains('open'); settings.querySelectorAll('.pick.open').forEach((p) => { p.classList.remove('open'); p.querySelector('.trigger').setAttribute('aria-expanded', 'false') }); pick.classList.toggle('open', open); trigger.setAttribute('aria-expanded', String(open)); if (open) (opts.querySelector('.on') || opts.querySelector('button'))?.focus() }
+    trigger.onkeydown = (e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trigger.click() } }
+    opts.querySelectorAll('button').forEach((b) => { b.onclick = () => { const k = pick.dataset.k; if (k === 'skin') setSkin(b.dataset.v); else setPref(k, b.dataset.v); toast('⚙ 저장했습니다'); openSettings() }; b.onkeydown = (e) => { const all = [...opts.querySelectorAll('button')], i = all.indexOf(b); if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); all[(i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length].focus() } } })
+  })
   settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); toast('⚙ 저장했습니다') } })
   settings.style.display = 'block'
 }
@@ -1140,6 +1321,11 @@ const closeSettings = () => { settings.style.display = 'none' }
 document.getElementById('gear').onclick = () => (settings.style.display === 'block' ? closeSettings() : openSettings())
 addEventListener('mousedown', (e) => { if (settings.style.display === 'block' && !e.target.closest('#settings, #gear')) closeSettings() }, true)
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
+function furniture(kind, fallback, ...args) {
+  const ctx = { g, P, box, poly, circle, rrect, text, tile, cam, LINE, BOOKS, inRoom, decorAt, meetingsNow, MEET, MEET_SEATS, deskHits, POOL, POOL_PEOPLE, POOL_SIZE, ents, drawCharacter }
+  if (skin.drawFurniture && skin.drawFurniture(ctx, kind, args)) return
+  fallback(...args)
+}
 
 // ---------- rooms ----------
 // Each room says what it is for: a standing sign at its front with when a
@@ -1150,6 +1336,21 @@ const inRoom = (k) => [...ents.values()].filter((e) => e.kind !== 'sub' && e.dat
 // workshop, a navy carpet by the booths, a soft patterned one in the lounge.
 function zoneFloors(t) {
   const L = ZONES.library, S = ZONES.workshop, Ph = ZONES.phone, Lo = ZONES.lounge
+  if (skin === SKINS.guildhall) {
+    // Records: old oak boards and an emerald runner.
+    for (let y = 0.4; y < 4.2; y += 0.28) for (let x = L.x0; x < L.x1; x += 0.9) tile(x + ((y * 4) % 2 ? 0.25 : 0), y, Math.min(0.9, L.x1 - x), 0.27, ((x + y) * 3 | 0) % 2 ? '#8e6841' : '#7c5937', 'rgba(48,28,14,.35)')
+    tile(L.x0 + 0.5, 1.35, L.x1 - L.x0 - 1, 2.65, '#355b42', '#d1aa55'); tile(L.x0 + 0.6, 1.45, L.x1 - L.x0 - 1.2, 2.45, '#416c4e', '#8c692f')
+    // Forge: uneven flagstones, a sooty working strip and ember glow.
+    for (let x = S.x0; x < S.x1; x += 0.55) for (let y = 0.4; y < 4.2; y += 0.55) tile(x, y, Math.min(0.53, S.x1 - x), 0.53, ((x * 2 + y * 2) | 0) % 3 ? '#777064' : '#69635b', 'rgba(35,26,20,.32)')
+    tile(S.x0 + 0.12, 3.65, S.x1 - S.x0 - 0.24, 0.34, '#332923', '#b96b36'); g.save(); g.globalAlpha = .11 + Math.sin(t * 4) * .025; tile(S.x0 + 0.15, .55, S.x1 - S.x0 - .3, 1.1, '#ff8b3d', null); g.restore()
+    // Crystal comms: midnight carpet with two softly pulsing rune circles.
+    tile(Ph.x0, 0.35, Ph.x1 - Ph.x0, 3.9, '#263552', null)
+    for (const cx of [Ph.x0 + .62, Ph.x1 - .62]) { const [px, py] = P(cx, 2.55); g.save(); g.globalAlpha = .28 + Math.sin(t * 2.2 + cx) * .06; g.strokeStyle = '#73cde0'; g.lineWidth = 2 * cam.s; g.beginPath(); g.ellipse(px, py, 31 * cam.s, 15 * cam.s, 0, 0, Math.PI * 2); g.stroke(); g.beginPath(); g.ellipse(px, py, 20 * cam.s, 10 * cam.s, 0, 0, Math.PI * 2); g.stroke(); for (let a = 0; a < 6; a++) text('·', px + Math.cos(a * Math.PI / 3) * 25 * cam.s, py + Math.sin(a * Math.PI / 3) * 12 * cam.s, 10, '#9fe9ef'); g.restore() }
+    // Tavern: warm planks and a wine-red woven rug.
+    for (let y = .4; y < 4.2; y += .33) tile(Lo.x0, y, Lo.x1 - Lo.x0, .31, ((y * 3) | 0) % 2 ? '#936841' : '#a67848', 'rgba(61,35,18,.25)')
+    tile(Lo.x0 + .35, 1.2, Lo.x1 - Lo.x0 - .7, 2.65, '#783d3a', '#d2a75b'); for (let x = Lo.x0 + .55; x < Lo.x1 - .4; x += .55) for (let y = 1.45; y < 3.7; y += .5) { const [px, py] = P(x, y); circle(px, py, 2.3 * cam.s, '#d4aa5d', null) }
+    return
+  }
   for (let x = L.x0; x < L.x1 - 0.01; x += 0.5) for (let y = 0.4; y < 4.2; y += 0.25) tile(x + ((y * 4) % 2 ? 0.25 : 0), y, Math.min(0.5, L.x1 - x - ((y * 4) % 2 ? 0.25 : 0)), 0.25, ((x * 2 + y * 4) | 0) % 2 ? '#d9b98f' : '#cfae83', 'rgba(120,85,50,.18)')
   tile(L.x0 + 0.6, 1.6, L.x1 - L.x0 - 1.2, 2.3, '#3f7a5c', null); tile(L.x0 + 0.7, 1.7, L.x1 - L.x0 - 1.4, 2.1, '#4f8f6c', null)
   // Workshop: concrete slabs, an oil stain, a hazard stripe at the front.
@@ -1202,6 +1403,7 @@ function phoneTag(e) {
 // A phone booth: glass sides, a hood with a lamp that lights while in use, a
 // wall phone, and the logo of whoever is being called on its hood.
 function booth(bx, t) {
+  if (skin.drawBooth) return skin.drawBooth({ g, P, box, poly, circle, rrect, text, cam, inRoom, LINE }, bx, t)
   const y0 = 0.05, d = 0.65, h = 78
   const caller = inRoom('phone').find((e) => Math.abs(e.x - (bx + 0.3)) < 0.2 && e.y < 1.3)
   poly([P(bx, y0, 0), P(bx + 0.6, y0, 0), P(bx + 0.6, y0, h), P(bx, y0, h)], '#e8edf7')
@@ -1375,9 +1577,9 @@ function partition(x0, x1, y, hue) {
 }
 // A standing sign at the section's left end: the tmux session and its count.
 
-// ---------- moving windows by dragging pods ----------
-// A desk dragged off its pod carries its whole tmux window: dropped on another
-// pod it merges into that window, dropped on another tmux session's block it
+// ---------- moving windows from pick mode ----------
+// A person or desk dragged while pick mode is on carries its whole tmux window:
+// dropped on another pod it merges into that window; dropped on another tmux
 // moves there. Nothing happens on the drop itself: a bar asks first (Enter /
 // Esc), then the office runs tmc's move (`tmc window merge|send`).
 let podDrag = null, pendingMove = null
@@ -1436,11 +1638,25 @@ async function doMove() {
 
 // ---------- picking several, and meetings ----------
 let lasso = null
-function setPickMode(on) { pickMode = on; document.getElementById('pickchip').classList.toggle('on', on); document.body.classList.toggle('picking', on); if (!on) { picked.clear(); renderPicks() } else toast('☑ 고르기: 클릭으로 고르고, 드래그로 묶기 · V나 Esc로 끝') }
+function setPickMode(on) { pickMode = on; document.getElementById('pickchip').classList.toggle('on', on); document.body.classList.toggle('picking', on); if (!on) { picked.clear(); podDrag = null; renderPicks() } else toast('☑ 사람·책상 고르기: 클릭/영역 선택 · 사람이나 책상을 끌어 창 옮기기 · V나 Esc로 끝') }
 function togglePick(id) { if (picked.has(id)) picked.delete(id); else picked.add(id) }
 function lassoPick(x0, y0, x1, y1) {
   const [a, b, c, d] = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]
-  for (const e of ents.values()) if (e.kind === 'session' && e.sx !== undefined && e.sx >= a && e.sx <= c && e.sy - 30 * cam.s >= b && e.sy - 30 * cam.s <= d) picked.add(e.id)
+  const inside = (x, y) => x >= a && x <= c && y >= b && y <= d
+  // A lasso catches either representation of a session: its person or the
+  // centre of its desk. The Set keeps a session selected only once.
+  for (const e of ents.values()) if (e.kind === 'session' && e.sx !== undefined && (inside(e.sx, e.sy - 30 * cam.s) || (e.data.desk && inside(...P(e.data.desk[0] + 0.8, e.data.desk[1] + 0.35, 24))))) picked.add(e.id)
+}
+function drawPickedDesks() {
+  if (!picked.size) return
+  g.save(); g.strokeStyle = '#7dd3fc'; g.fillStyle = 'rgba(125,211,252,.16)'; g.lineWidth = 2.5 * cam.s; g.setLineDash([5 * cam.s, 4 * cam.s])
+  for (const id of picked) {
+    const p = ents.get(id)?.data
+    if (!p?.desk) continue
+    const [x, y] = p.desk, q = [P(x - 0.04, y - 0.04), P(x + 1.64, y - 0.04), P(x + 1.64, y + 0.74), P(x - 0.04, y + 0.74)]
+    g.beginPath(); g.moveTo(...q[0]); for (const pt of q.slice(1)) g.lineTo(...pt); g.closePath(); g.fill(); g.stroke()
+  }
+  g.restore()
 }
 function drawLasso() {
   if (!lasso) return
@@ -1466,11 +1682,12 @@ function renderPicks() {
     pickbar.style.display = 'flex'; setTimeout(() => inp.focus(), 0)
     return
   }
-  pickbar.innerHTML = '<b>' + picked.size + '명</b> <span class="m">' + esc(names.join(', ')) + '</span>'
-    + '<button data-a="meeting">🗣 회의</button><button data-a="broadcast">📣 공지</button><button data-a="quiet">💤 미루기</button><button data-a="clear">✕</button>'
+  pickbar.innerHTML = '<b>' + picked.size + '개 세션</b> <span class="m">' + esc(names.join(', ')) + '</span>'
+    + '<button data-a="move">🗂 창 옮기기</button><button data-a="meeting">🗣 회의</button><button data-a="broadcast">📣 공지</button><button data-a="quiet">💤 미루기</button><button data-a="clear">✕</button>'
   pickbar.querySelectorAll('button').forEach((b) => { b.onclick = () => {
     const a = b.dataset.a
     if (a === 'clear') { picked.clear(); renderPicks() }
+    else if (a === 'move') toast(picked.size === 1 ? '🗂 고른 사람이나 책상을 다른 책상 묶음 또는 tmux 구획으로 끌어 놓으세요' : '🗂 창 이동은 한 세션씩: 하나만 남기고 사람이나 책상을 끌어 주세요')
     else if (a === 'quiet') showQuiet([...picked], b)
     else if (a === 'meeting' && (picked.size < 2 || picked.size > 8)) toast('회의는 2명에서 8명까지')
     else { pickbar.dataset.mode = a; renderPicks() }
@@ -1495,6 +1712,7 @@ async function endMeeting(id) {
   } catch (e) { toast('✕ ' + e.message) }
 }
 function meetingFloor() {
+  if (skin.drawMeetingFloor) return skin.drawMeetingFloor({ tile, MEET })
   tile(MEET.x0, MEET.y0, MEET.x1 - MEET.x0, MEET.y1 - MEET.y0, '#d9e4f5', null)
   for (let x = MEET.x0 + 0.1; x < MEET.x1; x += 0.5) tile(x, MEET.y0 + 0.1, 0.25, MEET.y1 - MEET.y0 - 0.2, 'rgba(255,255,255,.25)', null)
 }
@@ -1560,38 +1778,27 @@ function callout(route, lx, ly, lines, fill, align = 'center') {
 }
 let labelBoxes = []
 function marginLabels() {
-  labelBoxes = []
-  // Rooms: above the building, in order, pushed apart sideways so none
-  // overlaps, each at its own height, joined to its room by an elbow line.
-  const k = labelScale(), items = Object.entries(ZONES).map(([key, z]) => {
-    const here = inRoom(key).length, lines = [z.label + (here ? ' · ' + here + '명' : ''), z.when]
-    g.font = 13 * k + 'px Jua, sans-serif'; const w0 = g.measureText(lines[0]).width
-    g.font = 10 * k + 'px Jua, sans-serif'; const w1 = g.measureText(lines[1]).width
-    const [ax, ay] = P((z.x0 + z.x1) / 2, -0.3, WALL_H + 2)
-    return { z, lines, ax, ay, w: Math.max(w0, w1) + 22 * k, x: 0 }
-  })
-  // Not one row: each label sits at its own height, out of the others' way.
-  const baseY = Math.min(...items.map((it) => it.ay)) - 30 * k, gap = 8
-  let right = -Infinity
-  for (const it of items) { it.x = Math.max(it.ax - it.w / 2, right + gap); right = it.x + it.w }
-  const over = right - (VW - 12)
-  if (over > 0) { let push = over; for (let i = items.length - 1; i >= 0; i--) { const it = items[i], room = i ? it.x - (items[i - 1].x + items[i - 1].w + gap) : it.x - 12; it.x -= push; push = Math.max(0, push - Math.max(0, room)) } }
-  items.forEach((it, i) => {
-    const ly = baseY - [0, 34, 10, 44][i % 4] * k, lx = it.x + it.w / 2, knee = ly + 12 * k
-    // An elbow: up from the room, across, up into the label.
-    callout([[it.ax, it.ay], [it.ax, Math.max(knee, Math.min(it.ay - 8 * k, knee))], [lx, knee], [lx, ly]], lx, ly, it.lines, it.z.sign)
-  })
-  // tmux sessions: a band along the left wall's top, a label out to the left.
+  const k = labelScale()
+  // Room plaques sit directly on the back wall cap. Their descriptions stay
+  // in the hover tooltip, so labels no longer reserve a large top margin.
+  for (const [key, z] of Object.entries(ZONES)) {
+    const here = inRoom(key).length, label = z.label + (here ? ' · ' + here + '명' : '')
+    const [ax, ay] = P((z.x0 + z.x1) / 2, -0.3, WALL_H + 3)
+    g.font = 11 * k + 'px Jua, sans-serif'; const w = g.measureText(label).width + 16 * k, h = 20 * k
+    const fill = skin.plaque || z.sign
+    rrect(ax - w / 2, ay - h + 2 * k, w, h, skin.key === 'guildhall' ? 3 * k : 7 * k, fill, 'rgba(255,248,238,.72)', 1.1 / cam.s)
+    g.fillStyle = '#fffaf0'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, ax, ay - h / 2 + 2 * k)
+  }
+  // tmux plaques hug the left wall. No leaders cross the scene.
   for (const sc of sections) {
     const c = hsl2hex(sc.hue, 55, 62)
     poly([P(-0.55, sc.y0 + 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H), P(-0.55, sc.y1 - 0.08, WALL_H + 5), P(-0.55, sc.y0 + 0.08, WALL_H + 5)], c, 'rgba(59,42,53,.6)', 1)
-    const [ax, ay] = P(-0.55, (sc.y0 + sc.y1) / 2, WALL_H + 3)
-    const ly = ay - 20 * labelScale(), lx = ax - 46 * labelScale()
-    callout([[ax, ay], [ax, ly - 12 * labelScale()], [lx, ly - 12 * labelScale()]], lx, ly, ['🗂 tmux ' + sc.name + ' · ' + sc.n + '명'], dark(c, 0.25), 'right')
+    const label = '🗂 tmux ' + sc.name + ' · ' + sc.n + '명', [ax, ay] = P(-0.55, (sc.y0 + sc.y1) / 2, WALL_H + 3)
+    g.font = 11 * k + 'px Jua, sans-serif'; const w = g.measureText(label).width + 14 * k, h = 20 * k
+    rrect(ax - w - 5 * k, ay - h / 2, w, h, skin.key === 'guildhall' ? 3 * k : 7 * k, dark(c, .25), 'rgba(255,248,238,.72)', 1.1 / cam.s)
+    g.fillStyle = '#fffaf0'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, ax - w / 2 - 5 * k, ay)
   }
-  for (const f of labelBoxes) f()
 }
-
 // ---------- walls ----------
 // The back wall (the face at y = -0.3) and the left wall (x = -0.3): wainscot
 // and a skirting board, a window over the lounge sofa and a clock by the
@@ -1760,8 +1967,9 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
   // The empty chair behind the desk while its owner is elsewhere.
   if (away) emptyChair(x, y, seatHue)
   const top = style === 'standing' ? 34 : 24
-  if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, '#7a7f95'); box(x, y, 1.6, 0.7, 4, DESK_COLOR[style], top - 4) }
-  else box(x, y, 1.6, 0.7, top, DESK_COLOR[style] || '#d9a46b')
+  const deskColor = skin.deskColor || DESK_COLOR[style] || '#d9a46b'
+  if (style === 'standing') { box(x + 0.1, y + 0.1, 0.08, 0.5, top, skin.deskLeg || '#7a7f95'); box(x + 1.42, y + 0.1, 0.08, 0.5, top, skin.deskLeg || '#7a7f95'); box(x, y, 1.6, 0.7, 4, deskColor, top - 4) }
+  else box(x, y, 1.6, 0.7, top, deskColor)
   // Seniority: a plant, then a trophy.
   if (rank >= 3) { const [px, py] = P(x + 0.7, y + 0.2, top + 6); rrect(px - 3 * cam.s, py - 1 * cam.s, 6 * cam.s, 6 * cam.s, 1.5 * cam.s, '#c9875a'); circle(px, py - 4 * cam.s, 5 * cam.s, '#6fbf73') }
   if (rank >= 5) { const [tx, ty] = P(x + 0.95, y + 0.55, 30); rrect(tx - 3 * cam.s, ty - 9 * cam.s, 6 * cam.s, 8 * cam.s, 2 * cam.s, '#ffd36b'); rrect(tx - 4.5 * cam.s, ty - 1.5 * cam.s, 9 * cam.s, 3 * cam.s, 1 * cam.s, '#b8864a') }
@@ -1769,7 +1977,8 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
   // What's on the desk follows the job: two screens, a laptop and a lamp, a
   // wide screen, a little rack, a book pile, a phone.
   const glow = (gx, gy, gz, r0) => { if (!on) return; const [mx, my] = P(gx, gy, gz); g.globalAlpha = 0.35 + Math.sin(t * 6) * 0.15; circle(mx, my, r0 * cam.s, '#8fd1ff', null); g.globalAlpha = 1 }
-  if (job === 'code') { box(x + 0.85, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); box(x + 1.2, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); glow(x + 1.0, y + 0.22, top + 8, 7); glow(x + 1.35, y + 0.22, top + 8, 7) }
+  if (skin.drawDeskGear) skin.drawDeskGear({ g, P, box, poly, circle, rrect, cam, BOOKS }, { x, y, top, job, on, t })
+  else if (job === 'code') { box(x + 0.85, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); box(x + 1.2, y + 0.12, 0.3, 0.1, 16, '#4b4f6b', top); glow(x + 1.0, y + 0.22, top + 8, 7); glow(x + 1.35, y + 0.22, top + 8, 7) }
   else if (job === 'write') { box(x + 1.0, y + 0.2, 0.36, 0.26, 2, '#c7ccd8', top); poly([P(x + 1.0, y + 0.2, top + 2), P(x + 1.36, y + 0.2, top + 2), P(x + 1.36, y + 0.2, top + 14), P(x + 1.0, y + 0.2, top + 14)], '#d7dbe5'); glow(x + 1.18, y + 0.2, top + 8, 6); const [lx, ly] = P(x + 1.45, y + 0.15, top); g.strokeStyle = '#3a3f55'; g.lineWidth = 1.6 * cam.s; g.beginPath(); g.moveTo(lx, ly); g.lineTo(lx - 4 * cam.s, ly - 16 * cam.s); g.lineTo(lx - 12 * cam.s, ly - 12 * cam.s); g.stroke(); circle(lx - 13 * cam.s, ly - 10 * cam.s, 4 * cam.s, '#ffd36b') }
   else if (job === 'watch') { box(x + 0.75, y + 0.12, 0.75, 0.1, 15, '#3a3f55', top); glow(x + 1.12, y + 0.22, top + 8, 11) }
   else if (job === 'ops') { box(x + 1.15, y + 0.12, 0.34, 0.1, 17, '#4b4f6b', top); glow(x + 1.32, y + 0.22, top + 9, 8); box(x + 1.65, y + 0.1, 0.32, 0.4, 34, '#3d4a66'); for (let u = 0; u < 3; u++) { const [lx, ly] = P(x + 1.9, y + 0.5, 8 + u * 9); circle(lx, ly, 1.5 * cam.s, Math.sin(t * 3 + u) > 0 ? '#7dffb0' : '#25402f', null) } }
@@ -1830,7 +2039,7 @@ function poolCrowd(add, t) {
   for (const p of stay) add(p.x + p.y, () => {
     const [x, y] = P(p.x, p.y), h = hashOf(p.id)
     g.save(); g.translate(x, y); g.scale(1.06, 0.88 + Math.sin(t * 2 + h) * 0.03); g.translate(-x + Math.sin(t * 1.3 + h) * 1.2 * cam.s, -y)
-    drawChibi(p, t, 0); g.restore()
+    drawCharacter(p, t, 0); g.restore()
   }, [p.x - 0.14, p.x + 0.14, p.y - 0.12, p.y + 0.12])
   add(POOL.x0 + 0.08 + POOL.y1, () => box(POOL.x0, POOL.y0, 0.08, POOL.y1 - POOL.y0, 22, '#b9a7d6'), [POOL.x0, POOL.x0 + 0.08, POOL.y0, POOL.y1])
   add(POOL.door[0] + POOL.y1 + 0.06, () => box(POOL.x0, POOL.y1 - 0.06, POOL.door[0] - POOL.x0, 0.08, 22, '#b9a7d6'), [POOL.x0, POOL.door[0], POOL.y1 - 0.06, POOL.y1 + 0.02])
@@ -1852,7 +2061,7 @@ function subChibi(e, t) {
     g.strokeStyle = hsl2hex(e.hue, 60, 72); g.lineWidth = 1.4 * cam.s; g.setLineDash([2 * cam.s, 3 * cam.s])
     g.beginPath(); g.moveTo(pe.sx, pe.sy - 30 * cam.s); g.quadraticCurveTo((pe.sx + x) / 2, Math.min(pe.sy, y) - 50 * cam.s, x, y - 26 * cam.s); g.stroke(); g.setLineDash([])
   }
-  drawChibi(e, t, 0)
+  drawCharacter(e, t, 0)
 }
 // Going home. Tired: slumped and slow, bags under the eyes, a sweat drop, a
 // grey cloud and "휴… 퇴근". Glad: hopping, arms up, sparkles and "퇴근이다!".
@@ -1864,7 +2073,7 @@ function leavingChibi(e, t) {
   const hop = mood === 'glad' ? -Math.abs(Math.sin(t * 9)) * 6 * cam.s : 0, slump = mood === 'tired' ? 3 * cam.s : 0
   g.translate(0, hop + slump)
   if (mood === 'tired') { g.translate(x, y); g.rotate(-0.08); g.translate(-x, -y) }
-  drawChibi(e, t, 0)
+  drawCharacter(e, t, 0)
   g.restore()
   const s = cam.s, hy = y - 36 * s + hop + slump
   g.save(); g.globalAlpha = fade
@@ -1889,7 +2098,7 @@ function chibi(e, t) {
     const k = napOrder.indexOf(e.id), layer = Math.max(0, Math.floor(k / 4))
     const [bx, by] = P(e.x, e.y, layer * 9)
     g.save(); g.translate(bx, by); g.rotate((hashOf(e.id) % 2 ? 1 : -1) * 1.35); g.translate(-bx, -by)
-    drawChibi(e, t, layer * 9)
+    drawCharacter(e, t, layer * 9)
     g.restore()
     const [hx, hy] = P(e.x, e.y, layer * 9 + 20)
     e.sx = hx; e.sy = hy + 24 * cam.s
@@ -1898,7 +2107,7 @@ function chibi(e, t) {
   }
   if (e.kind === 'sub') return subChibi(e, t)
   if (e.leaving) return leavingChibi(e, t)
-  drawChibi(e, t, 0)
+  drawCharacter(e, t, 0)
 }
 // How a character takes the cursor over it, by what it is doing:
 // waiting on you - eager (sparkly eyes, hops, hearts); working - nervous
@@ -2233,7 +2442,11 @@ function reactionOf(e) {
   if (d === 'idle' || d === 'napping') return 'startled'
   return 'nervous'
 }
-function drawChibi(e, t, z0) {
+function drawCharacter(e, t, z0) {
+  if (skin.drawCharacter) return skin.drawCharacter({ g, P, cam, hashOf, hsl2hex, picked, isZipped }, e, t, z0)
+  return vectorChibi(e, t, z0)
+}
+function vectorChibi(e, t, z0) {
   const p = e.data, sub = e.kind === 'sub'
   const rx = e.react || 0, kind = rx > 0 ? reactionOf(e) : null, since = t - (e.hlAt || t)
   let [x, y] = P(e.x, e.y, z0)
@@ -2453,7 +2666,7 @@ function frame(now) {
     else { e.x = e.tx; e.y = e.ty; e.walking = false; e.path = [] }
     const dist2 = Math.hypot(e.tx - e.x, e.ty - e.y)
     if (e.leaving && e.kind === 'sub' && dist2 < 0.05) ents.delete(id)
-    if (e.leaving && e.kind === 'session' && (dist2 < 0.05 || now - e.leftAt > 40000)) { e.gone = e.gone || now; if (now - e.gone > 900) ents.delete(id) }
+    if (e.leaving && e.kind === 'session' && (dist2 < 0.05 || now - e.leftAt > 40000)) { e.gone = e.gone || now; if (now - e.gone > 900) { ents.delete(id); sessionMisses.delete(id) } }
     if (e.kind === 'sub' && Math.abs(e.x - POOL_OUT[0]) < 0.5 && e.y > POOL.y1 - 0.4 && e.y < POOL_OUT[1] + 0.3) doorOpenUntil = Math.max(doorOpenUntil, now + 600)
   }
   if (camGo.on) { const a = Math.min(1, dt * 6); cam.s += (camGo.s - cam.s) * a; cam.ox += (camGo.ox - cam.ox) * a; cam.oy += (camGo.oy - cam.oy) * a; if (Math.abs(camGo.ox - cam.ox) + Math.abs(camGo.oy - cam.oy) + Math.abs(camGo.s - cam.s) * 100 < 0.5) camGo.on = false }
@@ -2461,15 +2674,17 @@ function frame(now) {
   g.clearRect(0, 0, VW, VH)
   deskHits = []
   resetBtn.style.display = cam.user ? 'inline-block' : 'none'
-  tile(-0.3, -0.3, W + 0.6, D + 0.6, '#efe3cf', LINE)
-  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, Math.min(1, W - gx), Math.min(1, D - gy), 'rgba(160,120,80,.07)', null) // clipped: a whole last tile hung off the floor
+  const pal = skin.palette
+  if (skin.beforeFrame) skin.beforeFrame(t)
+  tile(-0.3, -0.3, W + 0.6, D + 0.6, pal.ground, LINE)
+  for (let gx = 0; gx < W; gx += 1) for (let gy = 0; gy < D; gy += 1) if ((gx + gy) % 2 === 0) tile(gx, gy, Math.min(1, W - gx), Math.min(1, D - gy), pal.grid, null) // clipped: a whole last tile hung off the floor
   for (const z of Object.values(ZONES)) tile(z.x0, 0.35, z.x1 - z.x0, 3.9, z.floor, null)
   zoneFloors(t)
   meetingFloor()
-  for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, 40, 90), 'rgba(59,42,53,.12)')
+  for (const sc of sections) tile(0.15, sc.y0 + 0.05, W - 0.5, sc.y1 - sc.y0 - 0.1, hsl2hex(sc.hue, pal.sectionS, pal.sectionL), 'rgba(59,42,53,.12)')
   for (const w of windows) {
     const need = w.sessions.some((p) => wantsToTalk(p) && !isMuted(p.id))
-    tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, 55, 87), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
+    tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, hsl2hex(w.hue, pal.podS, pal.podL), need ? '#e08a2e' : 'rgba(59,42,53,.25)')
     rug(w, t)
     if (need) { g.globalAlpha = 0.22 + Math.sin(t * 4) * 0.14; tile(w.px + 0.05, w.py + 0.25, POD_W - 0.2, w.pd - 0.3, '#ffcf5a', null); g.globalAlpha = 1 }
   }
@@ -2477,28 +2692,29 @@ function frame(now) {
   const items = []
   // b: the floor box [x0, x1, y0, y1] the thing stands on, for the sort below.
   const add = (depth, fn, b) => items.push([depth, fn, b])
-  for (let k = 0; k < 3; k++) { const x = 0.35 + k * 1.1; add(x + 0.7, () => shelf(x, 0.0), [x, x + 1.05, 0, 0.38]) }
-  add(3.95 + 0.8 + 0.7, () => machine(3.95, 0.05, t), [3.95, 4.75, 0.05, 0.7])
+  if (skin.addScene) skin.addScene({ g, box, P, poly, circle, cam, text, tile }, add, t)
+  for (let k = 0; k < 3; k++) { const x = 0.35 + k * 1.1; add(x + 0.7, () => furniture('shelf', shelf, x, 0.0), [x, x + 1.05, 0, 0.38]) }
+  add(3.95 + 0.8 + 0.7, () => furniture('machine', machine, 3.95, 0.05, t), [3.95, 4.75, 0.05, 0.7])
   for (const bx of BOOTHS) add(bx + 0.6 + 0.7, () => booth(bx, t), [bx - 0.03, bx + 0.63, 0.05, 0.7])
-  add(9.0, () => coffee(8.4, 0.1, t), [8.4, 9.02, 0.1, 0.65])
-  add(10.8, () => sofa(9.3, 0.25), [9.12, 11.82, 0.25, 1.0])
-  add(12.4, () => plant(12.05, 0.2), [12.05, 12.47, 0.2, 0.62])
-  poolCrowd(add, t)
-  meetingRoom(add, t)
-  add(3.3 + 1.3, () => readingTable(t), [0.6, 3.3, 0.85, 1.3])
-  add(5.7 + 1.3, () => workbench(t), [4.0, 5.7, 0.9, 1.3])
-  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => cafeTable(CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
-  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => vending(VEND[0], VEND[1], t), [VEND[0], VEND[0] + 0.55, VEND[1], VEND[1] + 0.5])
-  for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => radiator(y0 + 0.15, t))
+  add(9.0, () => furniture('coffee', coffee, 8.4, 0.1, t), [8.4, 9.02, 0.1, 0.65])
+  add(10.8, () => furniture('sofa', sofa, 9.3, 0.25), [9.12, 11.82, 0.25, 1.0])
+  add(12.4, () => furniture('plant', plant, 12.05, 0.2), [12.05, 12.47, 0.2, 0.62])
+  furniture('pool', poolCrowd, add, t)
+  furniture('meeting', meetingRoom, add, t)
+  add(3.3 + 1.3, () => furniture('readingTable', readingTable, t), [0.6, 3.3, 0.85, 1.3])
+  add(5.7 + 1.3, () => furniture('workbench', workbench, t), [4.0, 5.7, 0.9, 1.3])
+  add(CAFE[0] + 0.6 + CAFE[1] + 0.6, () => furniture('cafeTable', cafeTable, CAFE[0], CAFE[1]), [CAFE[0], CAFE[0] + 0.6, CAFE[1], CAFE[1] + 0.6])
+  add(VEND[0] + 0.55 + VEND[1] + 0.5, () => furniture('vending', vending, VEND[0], VEND[1], t), [VEND[0], VEND[0] + 0.55, VEND[1], VEND[1] + 0.5])
+  for (const y0 of leftWindows()) add(-0.14 + y0 + 1.5, () => furniture('radiator', radiator, y0 + 0.15, t))
   for (const w of windows) {
-    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => decorPiece(w, t), [ddx + 0.1, ddx + 1.2, ddy + 0.1, ddy + 0.65]) }
+    if (w.decor) { const [ddx, ddy] = decorAt(w); add(ddx + 1.3 + ddy + 0.75 - 0.01, () => furniture('decor', decorPiece, w, t), [ddx + 0.1, ddx + 1.2, ddy + 0.1, ddy + 0.65]) }
     w.sessions.forEach((p, k) => {
       const [dx, dy] = p.desk
       const label = w.name + (w.sessions.length > 1 ? ' #' + (k + 1) : '')
       // Each with its floor box: drawSorted puts someone behind a desk
       // before it and someone in front after, along the whole desk.
       const away = p.room !== 'desk' || p.doing === 'napping'
-      if (away) add(dx + 0.92 + dy - 0.09, () => emptyChair(dx, dy, (w.hue + 120 + k * 40) % 360), [dx + 0.5, dx + 0.92, dy - 0.45, dy - 0.09])
+      if (away) add(dx + 0.92 + dy - 0.09, () => furniture('chair', emptyChair, dx, dy, (w.hue + 120 + k * 40) % 360), [dx + 0.5, dx + 0.92, dy - 0.45, dy - 0.09])
       if (p.compacts) add(dx + 1.71 + dy - 0.3, () => memoryBoxes(dx, dy, p), [dx + MEMORY_AT[0], dx + MEMORY_AT[0] + 0.56, dy + MEMORY_AT[1], dy + MEMORY_AT[1] + 0.2])
       add(dx + 1.6 + dy + 0.7 - 0.01, () => deskBox(dx, dy, p.state === 'working', t, p.doing === 'idle' || p.doing === 'napping', label, hsl2hex(w.hue, 60, 78), p.rank, w.desk, p.job, false, (w.hue + 120 + k * 40) % 360, p), [dx, dx + 1.6, dy, dy + 0.7])
     })
@@ -2509,12 +2725,14 @@ function frame(now) {
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t), [e.x - 0.16, e.x + 0.16, e.y - 0.16, e.y + 0.16])
   add(1e9, () => roomTags())
   add(1e9 + 1, () => marginLabels())
+  add(1e9 + 1.5, () => drawPickedDesks())
   add(1e9 + 2, () => drawPodDrag())
   add(1e9 + 4, () => drawLasso())
   add(1e9 - 2, () => drawThreads())
   add(1e9 + 3, () => drawFlights(t))
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
   drawSorted(items)
+  if (skin.afterFrame) skin.afterFrame({ g, width: VW, height: VH, cam, P }, t)
 }
 
 // Painter's order for the floor: one number per thing (x + y) cannot order a
@@ -2557,12 +2775,13 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; apply(j.people); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; apply(j.people, j.panes || []); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)
   }
 }
+setSkin(savedSkin(), false)
 resize(); tick(); setInterval(tick, 2000); requestAnimationFrame(frame)
 </script>
 </body>
