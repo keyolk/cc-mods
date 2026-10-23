@@ -767,7 +767,7 @@ def inbox_put(sid: str, text: str) -> None:
 # or after MEET_TTL. Kept in a file so a reload sees the same.
 MEET_FILE = os.path.expanduser("~/.claude/state/office/meetings.json")
 MEET_DIR = os.path.expanduser("~/.claude/state/office/meetings")
-MEET_MAX = 6
+MEET_MAX = 8
 MEET_TTL = 2 * 3600
 
 
