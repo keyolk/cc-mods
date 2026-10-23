@@ -151,7 +151,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <h1>🏢 __OFFICE_OWNER__네 사무실</h1>
   <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
-  <button id="pickchip" class="chip" title="여러 명 고르기 (V): 클릭으로 고르고 드래그로 묶기">☑ 고르기 · V</button>
+  <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
 </header>
 <div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
@@ -174,8 +174,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
     <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
     <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
-    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>여러 명 고르기 → 🗣 회의(회의실에 모여 SendMessage로 의논, 회의록) · 📣 공지 · 💤 미루기</td></tr>
-    <tr><td>책상 끌기</td><td>그 창을 다른 책상 묶음에 합치거나 다른 tmux 구획(세션)으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
+    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>사람이나 책상으로 세션 선택 → 🗂 사람·책상을 끌어 창 옮기기 · 🗣 회의 · 📣 공지 · 💤 미루기</td></tr>
+    <tr><td>고르기에서 사람·책상 끌기</td><td>그 세션의 tmux 창을 다른 책상 묶음에 합치거나 다른 tmux 구획으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
     <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
     <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
@@ -668,21 +668,28 @@ cv.addEventListener('wheel', (e) => {
 }, { passive: false })
 let drag = null
 cv.addEventListener('mousedown', (e) => {
-  const st = hitStuff(e.clientX, e.clientY), w = st && windowOf(st.sid)
-  const lasso = e.shiftKey || pickMode
-  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: lasso ? null : w || null, lasso }
+  const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY)
+  const sid = h?.kind === 'session' ? h.id : st?.kind === 'desk' ? st.sid : null
+  const choosing = e.shiftKey || pickMode
+  const w = choosing && sid ? windowOf(sid) : null
+  // Moving a tmux window is intentionally available only while choosing. A
+  // click picks either its person or anything on its desk; dragging either
+  // carries the whole pod.
+  drag = { x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy, moved: false, pod: w || null, lasso: choosing && !w, pickSid: choosing ? sid : null }
   cv.classList.add('drag')
 })
 addEventListener('mouseup', (e) => {
   if (cardResize) { setCardSize(cardResize.w + cardResize.x - e.clientX, cardResize.h + e.clientY - cardResize.y); cardResize = null; saveCardSize(); return }
   cv.classList.remove('drag')
   if (drag && drag.lasso) {
-    const h = !drag.moved && hit(e.clientX, e.clientY)
-    if (h && h.kind === 'session') togglePick(h.id)
+    if (!drag.moved && drag.pickSid) togglePick(drag.pickSid)
     else if (drag.moved) lassoPick(drag.x, drag.y, e.clientX, e.clientY)
     drag = null; lasso = null; renderPicks(); return
   }
-  if (drag && drag.moved && drag.pod) { const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return }
+  if (drag && drag.pod) {
+    if (!drag.moved) { if (drag.pickSid) togglePick(drag.pickSid); drag = null; renderPicks(); return }
+    const d = podDrag && podDrag.drop; podDrag = null; drag = null; cv.classList.remove('drag'); if (d) askMove(d); return
+  }
   if (drag && !drag.moved) { const h = hit(e.clientX, e.clientY), st = !h && hitStuff(e.clientX, e.clientY); if (h) openCard(h.data.parent ? h.data.parent.id : h.data.id); else if (st && st.kind === 'meeting') viewFile(st.meeting.minutes, st.meeting.lead); else if (st) openCard(st.sid, st.kind === 'memory' ? null : st.kind) }
   drag = null
 })
@@ -692,7 +699,10 @@ addEventListener('mousemove', (e) => {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true
     if (drag.lasso) { lasso = drag.moved ? [drag.x, drag.y, e.clientX, e.clientY] : null; return }
-    if (drag.moved && drag.pod) { podDrag = { w: drag.pod, x: e.clientX, y: e.clientY, drop: dropAt(drag.pod, e.clientX, e.clientY) }; tip.style.display = 'none'; return }
+    if (drag.moved && drag.pod) {
+      if (!drag.picked) { drag.picked = true; if (drag.pickSid) { picked.add(drag.pickSid); renderPicks() } }
+      podDrag = { w: drag.pod, x: e.clientX, y: e.clientY, drop: dropAt(drag.pod, e.clientX, e.clientY) }; tip.style.display = 'none'; return
+    }
     if (drag.moved) { cam.user = true; camGo.on = false; cam.ox = drag.ox + dx; cam.oy = drag.oy + dy }
   }
   hover(e)
@@ -1476,9 +1486,9 @@ function partition(x0, x1, y, hue) {
 }
 // A standing sign at the section's left end: the tmux session and its count.
 
-// ---------- moving windows by dragging pods ----------
-// A desk dragged off its pod carries its whole tmux window: dropped on another
-// pod it merges into that window, dropped on another tmux session's block it
+// ---------- moving windows from pick mode ----------
+// A person or desk dragged while pick mode is on carries its whole tmux window:
+// dropped on another pod it merges into that window; dropped on another tmux
 // moves there. Nothing happens on the drop itself: a bar asks first (Enter /
 // Esc), then the office runs tmc's move (`tmc window merge|send`).
 let podDrag = null, pendingMove = null
@@ -1537,11 +1547,25 @@ async function doMove() {
 
 // ---------- picking several, and meetings ----------
 let lasso = null
-function setPickMode(on) { pickMode = on; document.getElementById('pickchip').classList.toggle('on', on); document.body.classList.toggle('picking', on); if (!on) { picked.clear(); renderPicks() } else toast('☑ 고르기: 클릭으로 고르고, 드래그로 묶기 · V나 Esc로 끝') }
+function setPickMode(on) { pickMode = on; document.getElementById('pickchip').classList.toggle('on', on); document.body.classList.toggle('picking', on); if (!on) { picked.clear(); podDrag = null; renderPicks() } else toast('☑ 사람·책상 고르기: 클릭/영역 선택 · 사람이나 책상을 끌어 창 옮기기 · V나 Esc로 끝') }
 function togglePick(id) { if (picked.has(id)) picked.delete(id); else picked.add(id) }
 function lassoPick(x0, y0, x1, y1) {
   const [a, b, c, d] = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)]
-  for (const e of ents.values()) if (e.kind === 'session' && e.sx !== undefined && e.sx >= a && e.sx <= c && e.sy - 30 * cam.s >= b && e.sy - 30 * cam.s <= d) picked.add(e.id)
+  const inside = (x, y) => x >= a && x <= c && y >= b && y <= d
+  // A lasso catches either representation of a session: its person or the
+  // centre of its desk. The Set keeps a session selected only once.
+  for (const e of ents.values()) if (e.kind === 'session' && e.sx !== undefined && (inside(e.sx, e.sy - 30 * cam.s) || (e.data.desk && inside(...P(e.data.desk[0] + 0.8, e.data.desk[1] + 0.35, 24))))) picked.add(e.id)
+}
+function drawPickedDesks() {
+  if (!picked.size) return
+  g.save(); g.strokeStyle = '#7dd3fc'; g.fillStyle = 'rgba(125,211,252,.16)'; g.lineWidth = 2.5 * cam.s; g.setLineDash([5 * cam.s, 4 * cam.s])
+  for (const id of picked) {
+    const p = ents.get(id)?.data
+    if (!p?.desk) continue
+    const [x, y] = p.desk, q = [P(x - 0.04, y - 0.04), P(x + 1.64, y - 0.04), P(x + 1.64, y + 0.74), P(x - 0.04, y + 0.74)]
+    g.beginPath(); g.moveTo(...q[0]); for (const pt of q.slice(1)) g.lineTo(...pt); g.closePath(); g.fill(); g.stroke()
+  }
+  g.restore()
 }
 function drawLasso() {
   if (!lasso) return
@@ -1567,11 +1591,12 @@ function renderPicks() {
     pickbar.style.display = 'flex'; setTimeout(() => inp.focus(), 0)
     return
   }
-  pickbar.innerHTML = '<b>' + picked.size + '명</b> <span class="m">' + esc(names.join(', ')) + '</span>'
-    + '<button data-a="meeting">🗣 회의</button><button data-a="broadcast">📣 공지</button><button data-a="quiet">💤 미루기</button><button data-a="clear">✕</button>'
+  pickbar.innerHTML = '<b>' + picked.size + '개 세션</b> <span class="m">' + esc(names.join(', ')) + '</span>'
+    + '<button data-a="move">🗂 창 옮기기</button><button data-a="meeting">🗣 회의</button><button data-a="broadcast">📣 공지</button><button data-a="quiet">💤 미루기</button><button data-a="clear">✕</button>'
   pickbar.querySelectorAll('button').forEach((b) => { b.onclick = () => {
     const a = b.dataset.a
     if (a === 'clear') { picked.clear(); renderPicks() }
+    else if (a === 'move') toast(picked.size === 1 ? '🗂 고른 사람이나 책상을 다른 책상 묶음 또는 tmux 구획으로 끌어 놓으세요' : '🗂 창 이동은 한 세션씩: 하나만 남기고 사람이나 책상을 끌어 주세요')
     else if (a === 'quiet') showQuiet([...picked], b)
     else if (a === 'meeting' && (picked.size < 2 || picked.size > 8)) toast('회의는 2명에서 8명까지')
     else { pickbar.dataset.mode = a; renderPicks() }
@@ -2610,6 +2635,7 @@ function frame(now) {
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t), [e.x - 0.16, e.x + 0.16, e.y - 0.16, e.y + 0.16])
   add(1e9, () => roomTags())
   add(1e9 + 1, () => marginLabels())
+  add(1e9 + 1.5, () => drawPickedDesks())
   add(1e9 + 2, () => drawPodDrag())
   add(1e9 + 4, () => drawLasso())
   add(1e9 - 2, () => drawThreads())
