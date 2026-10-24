@@ -46,6 +46,8 @@ export type Org = {
   awsSsoStartUrl?: string
   // ArgoCD host suffix -> label suffix ("" for the main one).
   argocdDomains: Record<string, string>
+  // Coder instance label -> deployment URL. The Auth tab probes only these.
+  coderInstances?: Record<string, string>
   // Region maintenance-window files (YAML), ~ expanded.
   regionFiles: string[]
 }
@@ -57,6 +59,7 @@ export const EMPTY_ORG: Org = {
   stacks: [],
   awsSsoProfiles: [],
   argocdDomains: {},
+  coderInstances: {},
   regionFiles: [],
 }
 
@@ -98,6 +101,7 @@ export function parseOrg(text: string | undefined): Org {
     awsSsoProfiles: strings(j.awsSsoProfiles),
     awsSsoStartUrl: str(j.awsSsoStartUrl),
     argocdDomains: record(j.argocdDomains),
+    coderInstances: Object.fromEntries(Object.entries(record(j.coderInstances)).filter(([, u]) => /^https:\/\//.test(u.replace(/\/$/, '')))),
     regionFiles: strings(j.regionFiles),
   }
 }

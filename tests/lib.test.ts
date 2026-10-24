@@ -8,7 +8,7 @@ import { cockpitColumns } from '../hooks/lib/layout'
 // Pure library tests: no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
+import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
 import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
 import { linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
@@ -51,6 +51,7 @@ setOrg({
   ],
   awsSsoProfiles: ['cloud', 'edge', 'terraform', 'atlantis', 'sops'],
   argocdDomains: { 'tools.acme.io': '', 'edge.acme.io': ' (edge)' },
+  coderInstances: { east: 'https://coder-east.example.com', west: 'https://coder-west.example.com' },
   regionFiles: [],
 })
 
@@ -127,6 +128,8 @@ test('auth: expiry states, gh status parsing, credential mapping', async () => {
   expect(worst([...gh])).toBe('expired')
   expect(credentialFor('aws s3 ls --profile edge-dev --region ap-northeast-2')).toBe('aws-sso')
   expect(credentialFor('kubectl --context main-prod-apne2 get pods')).toBe('aws-sso')
+  expect(credentialFor('coder --url https://coder-east.example.com list')).toBe('coder:east')
+  expect(credentialFor('CODER_URL=https://coder-west.example.com coder list')).toBe('coder:west')
   expect(credentialFor('ls -la')).toBeUndefined()
 })
 
@@ -1009,6 +1012,31 @@ test('unblock: a guard refusal is recorded and released by the grant that covers
   expect(resumePrompt([merge])).toContain('gh_merge keyolk/tweb: `gh pr merge 169`')
 })
 
+test('coder: local config finds the selected deployment without a network probe', () => {
+  const instances = { apne2: 'https://coder-apne2.example.com', usw2: 'https://coder-usw2.example.com/' }
+  expect(coderLocalItems('https://coder-apne2.example.com\n', true, instances)).toEqual([
+    { id: 'coder:apne2', label: 'Coder apne2', state: 'ok', detail: 'coder-apne2.example.com · local session present', fix: undefined },
+    { id: 'coder:usw2', label: 'Coder usw2', state: 'unknown', detail: 'coder-usw2.example.com · not selected', fix: ['coder', 'login', 'https://coder-usw2.example.com'] },
+  ])
+  expect(coderLocalItems('https://coder-apne2.example.com', false, instances)[0]).toMatchObject({ state: 'expired', detail: 'no local session' })
+})
+
+test('coder: auth failures offer the exact instance login; network failures stay unknown', () => {
+  expect(coderItem('apne2', 'https://coder-apne2.example.com', { exitCode: 0 })).toMatchObject({ id: 'coder:apne2', state: 'ok', fix: undefined })
+  expect(coderItem('usw2', 'https://coder-usw2.example.com', { exitCode: 1, stderr: 'You are not logged in. Run coder login.' })).toEqual({
+    id: 'coder:usw2',
+    label: 'Coder usw2',
+    state: 'expired',
+    detail: 'login required',
+    fix: ['coder', 'login', 'https://coder-usw2.example.com'],
+  })
+  expect(coderItem('apne2', 'https://coder-apne2.example.com', { exitCode: 1, stderr: 'request timed out' })).toMatchObject({
+    state: 'unknown',
+    detail: 'unreachable: request timed out',
+    fix: undefined,
+  })
+})
+
 test('aws: a login that leaves the expiry in place reused the portal session', () => {
   expect(awsLoginReused(1_000_000, 1_000_000)).toBe(true)
   expect(awsLoginReused(1_000_000, 1_000_000 + 8 * 3600_000)).toBe(false)
@@ -1300,11 +1328,13 @@ test('org: parsed from the file, bad fields dropped, and with none each feature 
     github: { accounts: { Acme: 'w', other: '' } },
     stacks: [{ name: 'Main', prefixes: ['prod-'] }, { name: '', prefixes: ['x'] }, { name: 'Empty', prefixes: [] }],
     awsSsoProfiles: ['cloud', 1],
+    coderInstances: { apne2: 'https://coder-apne2.example.com', usw2: 'http://insecure.example.com', bad: 7 },
   }))
   expect(o.slack.defaultTargets).toEqual({ C1: '#r' })
   expect(o.jira).toEqual({ baseUrl: 'https://acme.atlassian.net', projects: ['ABC'] })
   expect(o.stacks).toEqual([{ name: 'Main', prefixes: ['prod-'] }])
   expect(o.awsSsoProfiles).toEqual(['cloud'])
+  expect(o.coderInstances).toEqual({ apne2: 'https://coder-apne2.example.com' })
   expect(orgAccount('acme/repo', o)).toBe('w')
   expect(orgAccount('other/repo', o)).toBeUndefined()
   expect(orgAccount('nobody/repo', o)).toBeUndefined()
