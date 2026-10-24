@@ -8,6 +8,7 @@ export const K = {
   radar: 'radar', // Radar, shared
   prs: 'prs', // Record<key, PrStatus>, shared
   prWatch: 'pr-watch', // Record<key, { session, at }>, shared: which PRs to poll
+  mcpList: 'mcp-list', // { at, items: AuthItem[] }, shared: the last `claude mcp list` (one session runs it)
   sources: 'complete-sources', // Sources, shared
   outputs: (sid: string) => 'outputs:' + sid, // Output[] for one session
   sessions: 'sessions', // Record<sid, { cwd, repo, window, at }>, shared

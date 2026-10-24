@@ -59,7 +59,8 @@ import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseO
 import { focusWindowArgv, parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
 import { ORG_PATH, org, parseOrg, setOrg } from './lib/org'
 import { answerBody, freshItems, itemKey, parseAttention, parseRuns, resultPrompt, runOutputs, toastFor, type NarwhalItem, type NarwhalRun } from './lib/narwhal'
-import { backoff, classify, decide as resumeDecide, slept, type Pending } from './lib/resume'
+import { RESUME_SPREAD_MS, backoff, classify, decide as resumeDecide, slept, type Pending } from './lib/resume'
+import { mayRun, parseLease, settled, spread, taken, type Lease, type LeaseTimes } from './lib/lease'
 import { mcpText, newestTs, parseChannelName, parseThread, unseenReplies, type SlackThreadState, followDue, type SlackFollow } from './lib/slack'
 import { unlockFor } from './lib/unlock'
 import { renderBand, type Neighbor } from './views/band'
@@ -89,6 +90,8 @@ const OFFICE_PORT = 8796
 const IDLE_MS = 30 * 60_000
 const RADAR_MS = 5 * 60_000
 const PR_POLL_MS = 90_000
+// One PR poll machine-wide per PR_POLL_MS; after failures, 90 s doubling to 15 min.
+const PR_LEASE: LeaseTimes = { runMs: 60_000, freshMs: PR_POLL_MS - 10_000, baseMs: PR_POLL_MS, capMs: 15 * 60_000 }
 // Slack threads this session touched are re-read this often for new replies.
 const SLACK_POLL_MS = 3 * 60_000
 const SLACK_SERVER = 'claude.ai Slack'
@@ -456,20 +459,32 @@ const loggedInAt = new Map<string, number>()
 const LOGGED_IN_HOLD_MS = 15 * 60_000
 let mcpListRunning = false
 
+// `claude mcp list` health-checks every MCP server (a claude process and each
+// stdio server it starts): one session runs it for the machine and shares the
+// list in $.store; on failure everyone waits 10 minutes, doubling to an hour.
+const MCP_LIST_LEASE: LeaseTimes = { runMs: 120_000, freshMs: 10 * 60_000, baseMs: 10 * 60_000, capMs: 60 * 60_000 }
+
 async function refreshMcpList($: any) {
   mcpListRunning = true
   try {
-    const r = await $.process.run(['claude', 'mcp', 'list'], { timeoutMs: 90_000 })
-    const items = parseMcpList(r.stdout ?? '')
-    if (items.length) {
+    await withLease($, 'mcp-list', MCP_LIST_LEASE, async () => {
+      const r = await $.process.run(['claude', 'mcp', 'list'], { timeoutMs: 90_000 })
+      const items = parseMcpList(r.stdout ?? '')
+      if (!items.length) return false
       mcpList = { at: Date.now(), items }
+      await $.store.set(K.mcpList, mcpList)
       await runRadar($, true)
-    }
-  } catch {
-    // keep the cache's view
+      return true
+    })
   } finally {
     mcpListRunning = false
   }
+}
+
+// The list another session ran, when it is newer than this one's.
+async function sharedMcpList($: any) {
+  const got = (await $.store.get(K.mcpList).catch(() => undefined)) as typeof mcpList
+  if (got && Array.isArray(got.items) && typeof got.at === 'number' && (!mcpList || got.at > mcpList.at)) mcpList = got
 }
 
 // A login page in the person's own Chrome. Not `open URL`: a headless Chrome
@@ -568,7 +583,7 @@ async function slackChannelName($: any, channel: string): Promise<string | undef
   const names = ((await $.store.get(K.slackNames)) ?? {}) as Record<string, string>
   if (names[channel]) return names[channel]
   try {
-    const r = await $.mcp.call(SLACK_SERVER, 'slack_read_channel', { channel_id: channel, limit: 1, response_format: 'concise' })
+    const r = await mcpTimed($, SLACK_SERVER, 'slack_read_channel', { channel_id: channel, limit: 1, response_format: 'concise' })
     const name = parseChannelName(mcpText(r))
     if (name) {
       names[channel] = name
@@ -580,7 +595,27 @@ async function slackChannelName($: any, channel: string): Promise<string | undef
   }
 }
 
+// An MCP call bounded in time: $.mcp.call itself names no timeout, and a
+// connector that hangs on a bad network must not hold the poll for ever.
+const SLACK_CALL_MS = 20_000
+function mcpTimed($: any, server: string, tool: string, args: unknown): Promise<any> {
+  return Promise.race([$.mcp.call(server, tool, args), $.clock.sleep(SLACK_CALL_MS).then(() => Promise.reject(new Error(tool + ' timed out')))])
+}
+
+// One poll at a time: a slow connector would otherwise stack one more every
+// SLACK_POLL_MS.
+let slackPolling = false
 async function pollSlack($: any) {
+  if (slackPolling) return
+  slackPolling = true
+  try {
+    await pollSlackOnce($)
+  } finally {
+    slackPolling = false
+  }
+}
+
+async function pollSlackOnce($: any) {
   const outs = ((await read($, outputsA)) as Output[]).filter((o) => o.kind === 'slack' && Date.now() - o.at < 3 * 86_400_000).slice(0, 10)
   if (!outs.length) return
   const seen = ((await $.store.get(K.slackSeen)) ?? {}) as Record<string, string>
@@ -597,7 +632,7 @@ async function pollSlack($: any) {
     }
     let text = ''
     try {
-      text = mcpText(await $.mcp.call(SLACK_SERVER, 'slack_read_thread', { channel_id: channel, message_ts: root, limit: 200 }))
+      text = mcpText(await mcpTimed($, SLACK_SERVER, 'slack_read_thread', { channel_id: channel, message_ts: root, limit: 200 }))
     } catch {
       continue
     }
@@ -829,6 +864,28 @@ async function bridge($: any, cmd: string, req: unknown): Promise<any> {
   }
 }
 
+// Runs `fn` in one session at a time, machine-wide, with a shared backoff after
+// a failure (lib/lease.ts). False when another session holds it or everyone is
+// backing off; `fn` answers whether it succeeded. Two sessions that read a free
+// lease in the same instant may both run: the second read narrows that to the
+// gap between a write and a read, which is all this needs.
+async function withLease($: any, name: string, t: LeaseTimes, fn: () => Promise<boolean>, opts: { overHold?: boolean } = {}): Promise<boolean> {
+  if (!home || !sid) return (await fn().catch(() => false), true)
+  const file = home + '/.claude/state/cc-mods/lease/' + name + '.json'
+  // The engine's clock (wall time in a session; tests drive it).
+  const now = await clockNow($)
+  const before = parseLease(await readText($, file))
+  if (!mayRun(before, sid, now) && !(opts.overHold && before!.failUntil <= now)) return false
+  const mine = taken(before, sid, now, t)
+  const write = (l: Lease) => $.fs.write(file, JSON.stringify(l)).catch(() => undefined)
+  await write(mine)
+  const check = parseLease(await readText($, file))
+  if (check && check.by !== sid && !opts.overHold) return false
+  const ok = await fn().catch(() => false)
+  await write(settled(mine, await clockNow($), ok, t))
+  return true
+}
+
 async function readText($: any, path: string): Promise<string | undefined> {
   try {
     if (!(await $.fs.exists(path))) return undefined
@@ -954,6 +1011,61 @@ async function addOutputs($: any, add: Output[]) {
   }
 }
 
+// One GraphQL query per owner account. False when any account's query failed
+// (no answer, a non-zero exit, the rate limit): the lease backs everyone off.
+// The shared cache is written only when a query answered, so a failed tick
+// does not rewrite the store for nothing.
+async function pollPrsOnce($: any, refs: NonNullable<ReturnType<typeof parsePrKey>>[], cache: Record<string, PrStatus>, now: number): Promise<boolean> {
+  let ok = true
+  let answered = false
+  // One query per owner account, since a token only sees its own private repos.
+  const byAcct = new Map<string, typeof refs>()
+  for (const r of refs) {
+    const a = ghAccountFor(r.repo) ?? ''
+    byAcct.set(a, [...(byAcct.get(a) ?? []), r])
+  }
+  for (const [acct, group] of byAcct) {
+    const env = acct ? await ghEnv($, acct) : {}
+    try {
+      const r = await $.process.run(['gh', 'api', 'graphql', '-f', 'query=' + graphqlQuery(group)], { env, timeoutMs: 20000 })
+      const got = parseGraphql(r.stdout, group, now)
+      if (got.length) answered = true
+      // gh exits non-zero on a network error, with nothing on stdout.
+      if (r.exitCode !== 0 && !got.length) ok = false
+      for (const s of got) {
+        // GitOps summaries come from comments, read apart and only when the
+        // head moved or 5 minutes passed; otherwise keep the last ones.
+        const old = cache[s.key]
+        if (s.iac?.kind === 'gitops') {
+          const due = !old?.iac || old.head !== s.head || now - (gitopsRead.get(s.key) ?? 0) > 300_000
+          if (due) {
+            try {
+              const c = await $.process.run(['gh', ...gitopsCommentsArgv(parsePrKey(s.key)!)], { env, timeoutMs: 20000 })
+              if (c.exitCode === 0) {
+                Object.assign(s.iac, gitopsFromComments(c.stdout, s.head))
+                gitopsRead.set(s.key, now)
+              }
+            } catch {}
+          } else if (old?.iac) Object.assign(s.iac, { argodiff: old.iac.argodiff, codex: old.iac.codex })
+        }
+        cache[s.key] = s
+      }
+      // The account's GraphQL budget is shared with every gh call on this
+      // machine (other sessions' PR monitors spend most of it). When it is
+      // gone the rows would silently keep old values; say so instead.
+      if (/RATE_LIMIT|rate limit/i.test(r.stdout + r.stderr)) {
+        ok = false
+        await notePrLimit($, acct, env)
+      } else if (prLimit?.account === acct) prLimit = undefined
+    } catch {
+      // network blip (or the 20 s timeout): keep the cached rows, back off
+      ok = false
+    }
+  }
+  if (answered) await $.store.set(K.prs, cache)
+  return ok
+}
+
 async function pollPrs($: any) {
   const watch = ((await $.store.get(K.prWatch)) ?? {}) as Record<string, { session: string; at: number }>
   const cache = ((await $.store.get(K.prs)) ?? {}) as Record<string, PrStatus>
@@ -970,44 +1082,10 @@ async function pollPrs($: any) {
   const refs = keys.map(parsePrKey).filter((r): r is NonNullable<typeof r> => !!r)
   const fresh = refs.length && keys.every((k) => cache[k] && now - cache[k]!.at < PR_POLL_MS / 2)
   if (refs.length && !fresh) {
-    // One query per owner account, since a token only sees its own private repos.
-    const byAcct = new Map<string, typeof refs>()
-    for (const r of refs) {
-      const a = ghAccountFor(r.repo) ?? ''
-      byAcct.set(a, [...(byAcct.get(a) ?? []), r])
-    }
-    for (const [acct, group] of byAcct) {
-      const env = acct ? await ghEnv($, acct) : {}
-      try {
-        const r = await $.process.run(['gh', 'api', 'graphql', '-f', 'query=' + graphqlQuery(group)], { env, timeoutMs: 20000 })
-        for (const s of parseGraphql(r.stdout, group, now)) {
-          // GitOps summaries come from comments, read apart and only when the
-          // head moved or 5 minutes passed; otherwise keep the last ones.
-          const old = cache[s.key]
-          if (s.iac?.kind === 'gitops') {
-            const due = !old?.iac || old.head !== s.head || now - (gitopsRead.get(s.key) ?? 0) > 300_000
-            if (due) {
-              try {
-                const c = await $.process.run(['gh', ...gitopsCommentsArgv(parsePrKey(s.key)!)], { env, timeoutMs: 20000 })
-                if (c.exitCode === 0) {
-                  Object.assign(s.iac, gitopsFromComments(c.stdout, s.head))
-                  gitopsRead.set(s.key, now)
-                }
-              } catch {}
-            } else if (old?.iac) Object.assign(s.iac, { argodiff: old.iac.argodiff, codex: old.iac.codex })
-          }
-          cache[s.key] = s
-        }
-        // The account's GraphQL budget is shared with every gh call on this
-        // machine (other sessions' PR monitors spend most of it). When it is
-        // gone the rows would silently keep old values; say so instead.
-        if (/RATE_LIMIT|rate limit/i.test(r.stdout + r.stderr)) await notePrLimit($, acct, env)
-        else if (prLimit?.account === acct) prLimit = undefined
-      } catch {
-        // network blip: keep the cached rows
-      }
-    }
-    await $.store.set(K.prs, cache)
+    // A PR not polled yet (just opened here) goes over another session's hold;
+    // a backoff after failures still stops it.
+    const unseen = keys.some((k) => !cache[k])
+    await withLease($, 'pr-poll', PR_LEASE, () => pollPrsOnce($, refs, cache, now), { overHold: unseen })
   }
   const mine = [...own].map((k) => cache[k]).filter((s): s is PrStatus => !!s)
   const before = (await read($, prsA)) as PrStatus[]
@@ -1061,11 +1139,18 @@ function prLimitNote(now: number): string | undefined {
   return prLimit && prLimit.until > now ? 'GitHub limit · resets ' + new Date(prLimit.until).toTimeString().slice(0, 5) : undefined
 }
 
+// A token read is a gh process (and through the shim, pass): kept 10 minutes,
+// not read again on every poll.
+const ghTokens = new Map<string, { env: Record<string, string>; at: number }>()
 async function ghEnv($: any, account: string): Promise<Record<string, string>> {
+  const kept = ghTokens.get(account)
+  if (kept && Date.now() - kept.at < 10 * 60_000) return kept.env
   try {
     const r = await $.process.run(['gh', 'auth', 'token', '--user', account], { timeoutMs: 5000 })
     const token = r.stdout.trim()
-    return r.exitCode === 0 && token ? { GH_TOKEN: token } : {}
+    if (r.exitCode !== 0 || !token) return {}
+    ghTokens.set(account, { env: { GH_TOKEN: token }, at: Date.now() })
+    return { GH_TOKEN: token }
   } catch {
     return {}
   }
@@ -1083,6 +1168,7 @@ const credFiles = (h: string) => [
   h + '/.claude/daemon-auth-status.json',
 ]
 let credStamp: string | undefined
+const RADAR_FORCE_LEASE: LeaseTimes = { runMs: 30_000, freshMs: 30_000, baseMs: 30_000, capMs: 5 * 60_000 }
 
 async function watchCredentials($: any): Promise<void> {
   if (!home) return
@@ -1090,7 +1176,12 @@ async function watchCredentials($: any): Promise<void> {
   const stamp = stamps.join(',')
   const changed = credStamp !== undefined && stamp !== credStamp
   credStamp = stamp
-  if (changed) await runRadar($, true)
+  // Every session sees the same file change within CRED_WATCH_MS: one of them
+  // refreshes the radar for all, the others read it a little later, each at
+  // its own delay so a store that lags does not send them out together.
+  if (changed && !(await withLease($, 'radar-force', RADAR_FORCE_LEASE, async () => (await runRadar($, true), true)))) {
+    $.clock.after(5_000 + spread(sid, 20_000), () => void runRadar($))
+  }
   // The policy file too: a grant made from another terminal (or this one's
   // Policy tab in another module load) should resume blocked work as well.
   if (sid) {
@@ -1138,6 +1229,7 @@ async function runRadar($: any, force = false): Promise<AuthItem[]> {
   }
   // `claude mcp list` (22s: it health-checks every server) runs in the
   // background at most every 10 minutes; until it has, the needs-auth cache.
+  await sharedMcpList($)
   const listed = mcpList && Date.now() - mcpList.at < 30 * 60_000 ? mcpList.items : undefined
   if (!mcpListRunning && (!mcpList || Date.now() - mcpList.at > 10 * 60_000)) void refreshMcpList($)
   // A login finished here outranks the list for a while: the list may have
@@ -1287,6 +1379,7 @@ async function healMcpTool($: any, tool: string) {
 let ownResume = false // the next main turn is our keep-going
 let ownResumeAt = 0
 let resumeTick = 0 // when the probe last ran, to notice the machine slept
+let reachableAt = 0 // when the probe first found the API answering again (0: not answering)
 
 // Is the API reachable over the path this session uses? The same host the
 // request goes to (/etc/hosts sends it through the mesh), any HTTP status
@@ -1321,7 +1414,17 @@ async function resumeProbe($: any) {
   // A submit lost for two minutes frees the next try.
   if (ownResume && now - ownResumeAt < 120_000) return
   ownResume = false
-  const d = resumeDecide(p, now, { reachable: await apiReachable($), turnSince: mainTurnAt > p.at, enabled: await resumeEnabled($) })
+  const reachable = await apiReachable($)
+  // When the API first answered again in this streak of probes.
+  if (!reachable) reachableAt = 0
+  else if (!reachableAt) reachableAt = now
+  const d = resumeDecide(p, now, {
+    reachable,
+    turnSince: mainTurnAt > p.at,
+    enabled: await resumeEnabled($),
+    reachableForMs: reachable ? now - reachableAt : 0,
+    jitterMs: spread(sid, RESUME_SPREAD_MS),
+  })
   if (d.act === 'wait') return
   if (d.act === 'drop') {
     await update($, resumeA, () => null)

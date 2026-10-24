@@ -31,6 +31,8 @@ export type Pending = {
 }
 
 export const MAX_ATTEMPTS = 3
+// Sessions resume spread over this long after the network is back.
+export const RESUME_SPREAD_MS = 30_000
 export const GIVE_UP_MS = 6 * 3600_000
 
 // How long to wait after a failure before the first try, by class: a network
@@ -45,12 +47,19 @@ export type Decision = { act: 'wait' } | { act: 'drop'; why: string } | { act: '
 
 // One probe tick. `reachable`: the API answered over the same path the session
 // uses. `turnSince`: a turn started after the failure (someone else resumed).
-export function decide(p: Pending, now: number, s: { reachable: boolean; turnSince: boolean; enabled: boolean }): Decision {
+// `reachableForMs` / `jitterMs`: how long the API has answered, and how long
+// this session waits after that. Every session stalled by the same outage sees
+// the network come back on the same tick; without the wait they all resend
+// their whole context together.
+export function decide(p: Pending, now: number, s: { reachable: boolean; turnSince: boolean; enabled: boolean; reachableForMs?: number; jitterMs?: number }): Decision {
   if (!s.enabled) return { act: 'drop', why: 'auto-resume is off' }
   if (s.turnSince) return { act: 'drop', why: 'a new turn started' }
   if (p.attempts >= MAX_ATTEMPTS) return { act: 'drop', why: MAX_ATTEMPTS + ' tries without an answer' }
   if (now - p.at > GIVE_UP_MS) return { act: 'drop', why: 'offline too long' }
-  if (now < p.nextAt || !s.reachable) return { act: 'wait' }
+  // The wait applies after a backoff too: a 503 for everyone ends for everyone at once.
+  const jitter = s.jitterMs ?? 0
+  if (now < p.nextAt + jitter || !s.reachable) return { act: 'wait' }
+  if ((s.reachableForMs ?? Infinity) < jitter) return { act: 'wait' }
   return { act: 'resume' }
 }
 

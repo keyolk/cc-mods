@@ -13,7 +13,7 @@ const TEST_ORG = JSON.stringify({
   argocdDomains: { 'tools.acme.io': '', 'edge.acme.io': ' (edge)' },
 })
 
-function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown } = {}) {
+function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined } = {}) {
   const runs = opts.runs ?? []
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? opts.pane : undefined }))
@@ -35,7 +35,7 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
   on('fs.exists', (_$: any, e: any) => ({ value: fileFor(e.path) !== undefined || (!!policyText() && e.path.endsWith('sid-1.json')) }))
   on('fs.read', (_$: any, e: any) => ({ value: fileFor(e.path) ?? policyText() ?? '' }))
   // A policy file's mtime follows its text, so a rewrite shows as a change.
-  on('fs.stat', (_$: any, e: any) => ({ value: e.path.endsWith('sid-1.json') ? { mtimeMs: (policyText() ?? '').length } : { mtimeMs: 1 } }))
+  on('fs.stat', (_$: any, e: any) => ({ value: e.path.endsWith('sid-1.json') ? { mtimeMs: (policyText() ?? '').length } : { mtimeMs: opts.mtime?.(e.path) ?? 1 } }))
   on('fs.write', (_$: any, e: any) => {
     if (opts.written) opts.written[e.path] = String(e.data ?? e.text ?? e.content ?? '')
     return { value: undefined }
@@ -1637,6 +1637,10 @@ test('a turn killed by a disconnect is continued once the API answers again, and
   expect(submitted).toEqual([]) // still offline
   up = true
   await clock.advance(16_000)
+  // Back, but every session stalled by the outage sees that on the same tick:
+  // this one waits its own share of RESUME_SPREAD_MS (sid-1: 26.5 s) first.
+  expect(submitted).toEqual([])
+  await clock.advance(30_000)
   expect(submitted).toEqual(['keep going'])
   expect(runs.some((a) => a[0] === '/usr/bin/curl')).toBe(true)
   await clock.advance(30_000)
@@ -1645,7 +1649,8 @@ test('a turn killed by a disconnect is continued once the API answers again, and
   await $.turn.start({ turnId: 'a2', text: 'keep going' })
   await $.turn.complete({ turnId: 'a2', answer: '', reason: 'error', durationMs: 5, isAborted: false, usage: null } as any)
   await $.classic.StopFailure({ hook_event_name: 'StopFailure', session_id: 'sid-1', transcript_path: '', cwd: '/work', error: 'unknown', last_assistant_message: 'API Error: No response from API' } as any)
-  await clock.advance(30_000)
+  // Its 10 s backoff, plus the same spread.
+  await clock.advance(45_000)
   expect(submitted).toEqual(['keep going', 'keep going'])
   await $.turn.start({ turnId: 'a3', text: 'keep going' })
   await $.turn.complete({ turnId: 'a3', answer: 'done', reason: 'answer', durationMs: 5, isAborted: false, usage: null } as any)
@@ -1658,6 +1663,79 @@ test('a turn killed by a disconnect is continued once the API answers again, and
   await $.turn.start({ turnId: 'b2', text: 'try again please' })
   await clock.advance(30_000)
   expect(submitted).toEqual(['keep going', 'keep going'])
+})
+
+test('PR poll on a dead network: the failure backs off machine-wide instead of retrying every 90 s', async ($, on) => {
+  // The lease file round-trips: what the module writes is what it reads back.
+  const files: Record<string, string> = {}
+  const runs: string[][] = []
+  const store: Record<string, unknown> = { 'pr-watch': { 'keyolk/cc-mods#7': { session: 'sid-1', at: Date.now() } } }
+  baseStubs(on, {
+    pane: '%42',
+    files,
+    written: files,
+    store,
+    runs,
+    run: (argv) => (argv[0] === 'gh' && argv[1] === 'api' ? { code: 1, out: '' } : argv[0] === 'gh' && argv[1] === 'auth' && argv[2] === 'token' ? { code: 0, out: 'tok\n' } : undefined),
+  })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const graphql = () => runs.filter((a) => a[0] === 'gh' && a[1] === 'api' && a[2] === 'graphql').length
+  await clock.advance(1_000)
+  expect(graphql()).toBe(1)
+  // 90 s ticks for 10 minutes ran 7 queries before. Backing off 90, 180, 360 s
+  // from the first failure, the 2nd runs at 90 s, the 3rd at 270 s, the 4th at 630 s.
+  await clock.advance(10 * 60_000)
+  expect(graphql()).toBe(3)
+  await clock.advance(30_000)
+  expect(graphql()).toBe(4)
+  // The token is read once, not on every poll.
+  expect(runs.filter((a) => a[0] === 'gh' && a[1] === 'auth' && a[2] === 'token').length).toBe(1)
+  // A failed poll does not rewrite the shared PR cache.
+  expect(store.prs).toBeUndefined()
+  const lease = JSON.parse(Object.entries(files).find(([k]) => k.endsWith('/lease/pr-poll.json'))![1])
+  expect(lease).toMatchObject({ by: 'sid-1', fails: 4 })
+})
+
+test('PR poll: while another session holds the poll, this one reads the shared cache and runs nothing', async ($, on) => {
+  const files: Record<string, string> = {
+    '/home/u/.claude/state/cc-mods/lease/pr-poll.json': JSON.stringify({ by: 'other-sid', until: Number.MAX_SAFE_INTEGER, fails: 0, failUntil: 0 }),
+  }
+  const runs: string[][] = []
+  // Cached a minute ago: stale enough that this session would poll on its own.
+  const pr = { key: 'keyolk/cc-mods#7', state: 'OPEN', at: Date.now() - 60_000 }
+  baseStubs(on, { pane: '%42', files, written: files, runs, store: { prs: { [pr.key]: pr }, 'pr-watch': { [pr.key]: { session: 'sid-1', at: Date.now() } } } })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(5 * 60_000)
+  expect(runs.some((a) => a[0] === 'gh' && a[1] === 'api')).toBe(false)
+})
+
+test('a credential file changing in every session at once refreshes the radar in one of them', async ($, on) => {
+  // Another session took the forced refresh a moment ago.
+  const files: Record<string, string> = {
+    '/home/u/.claude/state/cc-mods/lease/radar-force.json': JSON.stringify({ by: 'other-sid', until: Number.MAX_SAFE_INTEGER, fails: 0, failUntil: 0 }),
+  }
+  const runs: string[][] = []
+  let mtime = 1
+  baseStubs(on, { pane: '%42', files, written: files, runs, store: {}, mtime: (path) => (path.endsWith('hosts.yml') ? mtime : undefined) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(11_000)
+  const before = runs.filter((a) => a[0] === 'gh' && a[1] === 'auth' && a[2] === 'status').length
+  mtime = 2 // a gh login somewhere
+  await clock.advance(10_000)
+  // No forced radar here: no gh auth status beyond what the start ran.
+  const status = () => runs.filter((a) => a[0] === 'gh' && a[1] === 'auth' && a[2] === 'status').length
+  expect(status()).toBe(before)
+  // Its hold over, the next change is this session's to refresh.
+  files['/home/u/.claude/state/cc-mods/lease/radar-force.json'] = JSON.stringify({ by: 'other-sid', until: 0, fails: 0, failUntil: 0 })
+  mtime = 3
+  await clock.advance(10_000)
+  expect(status()).toBe(before + 1)
 })
 
 test('routing sends the full model id, and on a warm large context repeats the previous step instead of switching', async ($, on) => {
