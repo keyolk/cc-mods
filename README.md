@@ -393,8 +393,10 @@ else the first name of your account's full name, else your login name.
   `📤 보낸 것`, `📎 파일` (from its outputs; `[` `]` cycle and `⌥1`-`⌥4`
   open one directly). In a resource tab, `↑`/`↓` or `j`/`k` chooses an item
   and `Enter` opens it. The things to press (quick replies, the reply box,
-  stop, go, 미루기, next) sit in a foot that stays at the card's bottom however
-  long the answer is. Drag the card's title to move it and its lower-left corner
+  stop, go, 미루기, next) sit in a foot at the card's bottom; the answer takes
+  the space between and scrolls inside it, so it is never hidden under the
+  foot. A card under 420px tall folds the foot to a one-line reply box and one
+  flow of buttons (`Enter` sends), and a card is at least 340px tall. Drag the card's title to move it and its lower-left corner
   to resize it. Press `M` to maximize/restore, use `⌥`+arrows to change its
   width and height, or `⌥⇧`+arrows to move it; the browser remembers both its
   size and position.
