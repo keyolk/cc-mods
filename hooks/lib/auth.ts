@@ -74,6 +74,40 @@ export function awsReusedItem(item: AuthItem, startUrl: string, endsAt: string):
 
 export type Radar = { at: number; items: AuthItem[] }
 
+export type CoderProbe = { exitCode: number; stderr?: string; stdout?: string }
+
+// Coder stores a session per deployment URL in its own config/keyring. A
+// failed API probe is an expired login only when Coder says so explicitly;
+// timeouts, DNS and transport failures are unknown, not bad credentials.
+export function coderItem(name: string, url: string, probe: CoderProbe): AuthItem {
+  const text = (probe.stderr ?? '') + '\n' + (probe.stdout ?? '')
+  const authFailed = /(?:401|unauthenticated|authentication required|not logged in|session token[^\n]*(?:invalid|expired))/i.test(text)
+  return {
+    id: 'coder:' + name,
+    label: 'Coder ' + name,
+    state: probe.exitCode === 0 ? 'ok' : authFailed ? 'expired' : 'unknown',
+    detail: probe.exitCode === 0 ? url.replace(/^https:\/\//, '') : authFailed ? 'login required' : 'unreachable: ' + (text.trim().split('\n').pop() || 'probe failed').slice(0, 100),
+    fix: authFailed ? ['coder', 'login', url] : undefined,
+  }
+}
+
+export function coderLocalItems(currentUrl: string | undefined, hasSession: boolean, instances: Record<string, string>): AuthItem[] {
+  const norm = (s: string | undefined) => (s ?? '').trim().replace(/\/$/, '')
+  const active = norm(currentUrl)
+  return Object.entries(instances).map(([name, raw]) => {
+    const url = norm(raw)
+    const selected = url === active
+    const loggedIn = selected && hasSession
+    return {
+      id: 'coder:' + name,
+      label: 'Coder ' + name,
+      state: loggedIn ? 'ok' : selected ? 'expired' : 'unknown',
+      detail: loggedIn ? url.replace(/^https:\/\//, '') + ' · local session present' : selected ? 'no local session' : url.replace(/^https:\/\//, '') + ' · not selected',
+      fix: loggedIn ? undefined : ['coder', 'login', url],
+    }
+  })
+}
+
 export const SOON_MS = 30 * 60_000
 
 export function stateFor(expiresAt: number | undefined, now: number): AuthState {
@@ -324,6 +358,14 @@ export function credentialFor(command: string): string | undefined {
   const profile = /\baws\b[^|;&]*--profile[ =](\S+)/.exec(command)?.[1]
   if (profile && sso.some((p) => profile.startsWith(p))) return 'aws-sso'
   if (/\bkubectl\b[^|;&]*--context[ =]/.test(command)) return 'aws-sso'
+  if (/\bcoder\b/.test(command)) {
+    const instances = Object.entries(org().coderInstances ?? {})
+    const url = /(?:\bCODER_URL=|\bcoder\b[^|;&]*--url[ =])['"]?(https:\/\/[^\s'";&]+)/.exec(command)?.[1]?.replace(/\/$/, '')
+    if (url) {
+      const hit = instances.find(([, u]) => u.replace(/\/$/, '') === url)
+      if (hit) return 'coder:' + hit[0]
+    } else if (instances.length === 1) return 'coder:' + instances[0]![0]
+  }
   return undefined
 }
 

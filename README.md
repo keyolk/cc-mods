@@ -18,7 +18,7 @@ needs ≥ 2.1.290).
 | **/outputs** | PRs, artifacts, scratch files, Jira tickets, links, background tasks the session produced, with preview (Markdown, code, PNG in the terminal, log tail, an archive's listing or first lines), open (tmux-chrome), folder (`r`: Finder on it, the file selected), copy, put in context, keep/delete scratch. Files an answer hands over (a path it names, or a name under a folder it names, that exists) are starred ★ and listed first under Files, wherever they live. Scope: this session / this repo / today across sessions. Exported to `~/.claude/outputs/<date>/<sid>.json` at turn end and session end. | re-parsing transcripts (`ccx refs`, daily check-in) |
 | **/policy** | Capabilities as rows you flip, mode presets, scoped grants, 15-minute timed grants. `/policy allow merge owner/repo 15m` without opening anything. Footer shows the policy (`merge🔒`, `merge(1)`, `prod:ro`). | `/session-policy` skill turns, `session_policy.py inject` |
 | **self-grant block** | Claude's Bash running `session_policy.py allow|block|inherit|mode|clear` or a `*_unlock.py` is refused (fail-closed `.catch`). Only the person's own `/policy` (origin `composer`) or a pane press changes policy. | — (was a hole: the guard's deny text told Claude the command that lifts it) |
-| **band** | Above the prompt, only when there is something: expired/soon AWS SSO / gh / daemon (press to log in), this session's PRs (checks, approvals, unresolved threads, conflict; follow-up / review-request buttons), neighbors in the same repo, and a fork offer when a prompt looks like a separate line of work. | `tmux_neighbors.py` context injection, `flow_fork_hint.py` AskUserQuestion |
+| **band** | Above the prompt, only when there is something: expired/soon AWS SSO / gh / Coder / ArgoCD / daemon (press to log in), this session's PRs (checks, approvals, unresolved threads, conflict; follow-up / review-request buttons), neighbors in the same repo, and a fork offer when a prompt looks like a separate line of work. | `tmux_neighbors.py` context injection, `flow_fork_hint.py` AskUserQuestion |
 | **narwhal** | What the narwhal runs this session started need, in Now › Needs you: a question with its options as buttons (the recommended one ★) and a field for any other answer, the context or what its labels mean, a worker judged stuck, a run that finished or failed (press to bring its result into the conversation). Every item opens `narwhal monitor --run` beside the pane. The Work tab lists the runs this session started (state, progress, each task with its model and first line of outcome; press to open the monitor), and Outputs gets what they produced — PRs (followed by the PR poller like the session's own), files, and each run's answer. Polled every 20 s from the daemon's `/control/attention` and `/control/runs` (`?session=<id>`); a new question also raises `@cc_attention` to ask. Needs narwhal ≥ #91. | answering only in `narwhal monitor` |
 | **auth pre-check** | An `aws --profile …` / `kubectl --context …` call while SSO is expired stops before it fails: log in and continue / run anyway / cancel. | failing, then a turn to explain |
 | **gh account** | A `gh` call against a repo whose owner `org.json` maps to a login runs with that login's token (`GH_TOKEN` from `gh auth token --user`), without `gh auth switch`, so other sessions keep their account. | `gh auth switch` (170× in 30 days) |
@@ -448,6 +448,7 @@ SSO pre-check or AWS row, no default Slack target, no per-owner gh account.
   "awsSsoProfiles": ["cloud", "edge"],
   "awsSsoStartUrl": "https://d-1234567890.awsapps.com/start",
   "argocdDomains": { "tools.acme.io": "", "edge.acme.io": " (edge)" },
+  "coderInstances": { "east": "https://coder-east.example.com", "west": "https://coder-west.example.com" },
   "regionFiles": ["~/.acme/regions.yaml"]
 }
 ```
@@ -462,6 +463,7 @@ SSO pre-check or AWS row, no default Slack target, no per-owner gh account.
 | `awsSsoProfiles` | profile prefixes whose `aws` calls are checked for an expired SSO session first |
 | `awsSsoStartUrl` | the IAM Identity Center start URL whose session the Auth tab shows (no AWS row without it) |
 | `argocdDomains` | ArgoCD host suffix → label suffix in the Auth tab |
+| `coderInstances` | Coder instance label → HTTPS deployment URL; Auth reads Coder's local selected URL/session without periodic network probes and offers `coder login <url>` for a missing session |
 | `regionFiles` | region maintenance-window YAML files shown on IaC PR rows |
 
 ## Web: a TWeb pane beside (default)

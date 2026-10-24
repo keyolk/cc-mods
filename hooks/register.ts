@@ -33,7 +33,7 @@ import { PALETTE_CLOSED, filterPalette, paletteItems, type PaletteItem, type Pal
 import { cacheGate, decide, resolveModel, routeLabel, type RouteLast, routeSettings, type RouteAnswer, type RouteDecision, type RouteSettings } from './lib/route'
 import { parseJev, parseQuota, parseUsage, type JevUsage, type Quota, type Usage } from './lib/usage'
 import { USAGE_WINDOWS, renderUsage, type UsageWindow } from './views/usage'
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
+import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
 import { EMPTY, parseProfiles, suggest, type Sources } from './lib/complete'
 import { BLOCK_TTL_MS, blockOf, grantLabel, nowAllowed, resumePrompt, type Blocked } from './lib/unblock'
 import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
@@ -1081,6 +1081,8 @@ const credFiles = (h: string) => [
   h + '/.config/argocd/config',
   h + '/.config/gh/hosts.yml',
   h + '/.claude/daemon-auth-status.json',
+  h + '/Library/Application Support/coderv2/url',
+  h + '/Library/Application Support/coderv2/session',
 ]
 let credStamp: string | undefined
 
@@ -1151,6 +1153,8 @@ async function runRadar($: any, force = false): Promise<AuthItem[]> {
   const d = daemonItem(await readText($, home + '/.claude/daemon-auth-status.json'), await readText($, home + '/.claude/daemon.log'))
   if (d) items.push(d)
   items.push(...argocdItems(await readText($, home + '/.config/argocd/config'), now))
+  const coderDir = home + '/Library/Application Support/coderv2/'
+  items.push(...coderLocalItems(await readText($, coderDir + 'url'), await $.fs.exists(coderDir + 'session').catch(() => false), org().coderInstances ?? {}))
   try {
     const r = await $.process.run(['ccproxy', 'status', '--offline', '--json'], { timeoutMs: 8000 })
     // An older ccproxy rejects --json with a usage error: show nothing then.
@@ -3303,6 +3307,13 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     try {
       resultText = JSON.stringify(result) ?? ''
     } catch {}
+    // Coder state is learned from real work, not periodic network probes. A
+    // timeout stays unknown; only an explicit authentication error needs login.
+    if (cred?.startsWith('coder:') && /(?:401|unauthenticated|authentication required|not logged in|session token[^\n"]*(?:invalid|expired))/i.test(resultText)) {
+      const radar = ((await read($, authA)) as AuthItem[]).map((i) => i.id === cred ? { ...i, state: 'expired' as const, detail: 'login required' } : i)
+      await $.store.set(K.radar, { at: Date.now(), items: radar })
+      await update($, authA, () => radar)
+    }
     // Only a refusal: the guard's deny. A command that ran and merely printed
     // the words (a grep over transcripts) is not a block — it was resumed as
     // one, a read-only script "continued" after an unrelated grant.
