@@ -25,7 +25,7 @@ import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/
 import { agentFlow, flowOf, paragraphs } from '../hooks/lib/flow'
 import { CAPS, badge, godArgvs, isGod, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
 import { checkVerdict, ghAccountFor, gitopsFromComments, graphqlQuery, needLabel, needsAttention, parseGraphql, prLine, repoFromGh, repoFromRemote } from '../hooks/lib/prs'
-import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
+import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, outputKeysToDrop, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
 import { clientItems, navItems, navTarget, skipHidden } from '../hooks/lib/nav'
 import { RESUME_SPREAD_MS, classify, decide as resumeDecide, slept } from '../hooks/lib/resume'
 import { mayRun, parseLease, settled, spread, taken } from '../hooks/lib/lease'
@@ -1002,6 +1002,26 @@ test('resume: after an outage each session waits its own spread, after a backoff
   expect(resumeDecide(srv, 45_000, { ...s, reachableForMs: 999_999 }).act).toBe('wait')
   expect(resumeDecide(srv, 50_000, { ...s, reachableForMs: 999_999 }).act).toBe('resume')
   expect(spread('x', RESUME_SPREAD_MS)).toBeLessThan(RESUME_SPREAD_MS)
+})
+
+test('outputs copies: forgotten and stale sessions go, then the oldest until they fit; never this one', () => {
+  const day = 86_400_000
+  const now = 100 * day
+  const known = new Set(['me', 'fresh', 'stale', 'big-old', 'big-new'])
+  const copies = [
+    { sid: 'me', at: now - 60 * day, bytes: 500 }, // this session, however old
+    { sid: 'fresh', at: now - day, bytes: 100 },
+    { sid: 'stale', at: now - 20 * day, bytes: 100 },
+    { sid: 'gone', at: now - day, bytes: 100 }, // not in the session map
+    { sid: 'big-old', at: now - 3 * day, bytes: 400 },
+    { sid: 'big-new', at: now - 2 * day, bytes: 400 },
+  ]
+  const ageMs = 14 * day
+  expect(outputKeysToDrop(copies, known, 'me', now, ageMs, 10_000).sort()).toEqual(['gone', 'stale'])
+  // Over budget (me 500 + fresh 100 + big 800 = 1400 > 1000): the oldest other goes first.
+  expect(outputKeysToDrop(copies, known, 'me', now, ageMs, 1000).sort()).toEqual(['big-old', 'gone', 'stale'])
+  // A budget only this session fits: everyone else goes, it stays.
+  expect(outputKeysToDrop(copies, known, 'me', now, ageMs, 0)).not.toContain('me')
 })
 
 test('route: the routed family goes out as a full id, never a bare alias', () => {

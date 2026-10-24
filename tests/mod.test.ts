@@ -1738,6 +1738,27 @@ test('a credential file changing in every session at once refreshes the radar in
   expect(status()).toBe(before + 1)
 })
 
+test('session start drops other sessions outputs copies the store no longer needs', async ($, on) => {
+  const now = Date.now()
+  const store: Record<string, unknown> = {
+    sessions: { 'live-sid': { cwd: '/w', at: now - 86_400_000 }, 'old-sid': { cwd: '/w', at: now - 86_400_000 } },
+    'outputs:live-sid': [{ id: 'a', kind: 'link', title: 'a', at: now - 86_400_000 }],
+    'outputs:old-sid': [{ id: 'b', kind: 'link', title: 'b', at: now - 30 * 86_400_000 }],
+    'outputs:gone-sid': [{ id: 'c', kind: 'link', title: 'c', at: now - 3600_000 }],
+  }
+  baseStubs(on, { pane: '%42', store })
+  on('store.keys', () => ({ value: Object.keys(store) }))
+  on('store.delete', (_$: any, e: any) => {
+    delete store[e.key]
+    return { value: undefined }
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  // The start notes the session without waiting on it.
+  await clock.advance(100)
+  expect(Object.keys(store).filter((k) => k.startsWith('outputs:')).sort()).toEqual(['outputs:live-sid'])
+})
+
 test('routing sends the full model id, and on a warm large context repeats the previous step instead of switching', async ($, on) => {
   baseStubs(on, {
     policyJson: JSON.stringify({ mode: 'custom', capabilities: { auto_effort: 'allow', auto_model: 'allow' } }),

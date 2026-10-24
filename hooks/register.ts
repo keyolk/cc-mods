@@ -50,7 +50,7 @@ import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
 import { CAPS, GOD_MS, godArgvs, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
 import { parseWindows } from './lib/iac'
-import { answerFiles, dropUnsourcedTickets, isMade, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
+import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
 import { clip, hhmm } from './lib/text'
 import { isMcpTool, looksDisconnected, mcpServerKey, normalizeServer } from './lib/mcpheal'
@@ -1998,6 +1998,25 @@ async function noteSession($: any) {
   // Forget sessions older than a week so the shared map stays small.
   for (const [k, v] of Object.entries(all)) if (Date.now() - v.at > 7 * 86_400_000) delete all[k]
   await $.store.set(K.sessions, all)
+  await pruneOutputCopies($, new Set(Object.keys(all)))
+}
+
+// Other sessions' outputs copies past their use (lib/record.ts outputKeysToDrop).
+const OUTPUT_COPY_MAX_AGE_MS = 14 * 86_400_000
+const OUTPUT_COPIES_BUDGET = 1.5 * 1024 * 1024
+async function pruneOutputCopies($: any, known: Set<string>) {
+  try {
+    const keys = ((await $.store.keys()) as string[]).filter((k) => k.startsWith('outputs:'))
+    const copies = await Promise.all(
+      keys.map(async (k) => {
+        const list = ((await $.store.get(k)) ?? []) as Output[]
+        return { sid: k.slice('outputs:'.length), at: Math.max(0, ...list.map((o) => Number(o.at) || 0)), bytes: JSON.stringify(list).length }
+      }),
+    )
+    for (const s of outputKeysToDrop(copies, known, sid, Date.now(), OUTPUT_COPY_MAX_AGE_MS, OUTPUT_COPIES_BUDGET)) await $.store.delete(K.outputs(s))
+  } catch {
+    // a store that cannot be listed: try again at the next session start
+  }
 }
 
 async function scopedOutputs($: any, scope: OutScope): Promise<(Output & { session?: string; window?: string })[]> {
