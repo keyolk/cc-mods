@@ -91,7 +91,9 @@ const IDLE_MS = 30 * 60_000
 const RADAR_MS = 5 * 60_000
 const PR_POLL_MS = 90_000
 // One PR poll machine-wide per PR_POLL_MS; after failures, 90 s doubling to 15 min.
-const PR_LEASE: LeaseTimes = { runMs: 60_000, freshMs: PR_POLL_MS - 10_000, baseMs: PR_POLL_MS, capMs: 15 * 60_000 }
+// runMs covers a slow run (20 s per account, more for GitOps comments); a
+// success replaces it with freshMs.
+const PR_LEASE: LeaseTimes = { runMs: 5 * 60_000, freshMs: PR_POLL_MS - 10_000, baseMs: PR_POLL_MS, capMs: 15 * 60_000 }
 // Slack threads this session touched are re-read this often for new replies.
 const SLACK_POLL_MS = 3 * 60_000
 const SLACK_SERVER = 'claude.ai Slack'
@@ -609,7 +611,8 @@ async function pollSlack($: any) {
   if (slackPolling) return
   slackPolling = true
   try {
-    await pollSlackOnce($)
+    // A bound on the whole poll, store reads included, so the flag cannot stay set.
+    await Promise.race([pollSlackOnce($), $.clock.sleep(2 * 60_000)])
   } finally {
     slackPolling = false
   }
@@ -1063,7 +1066,9 @@ async function pollPrsOnce($: any, refs: NonNullable<ReturnType<typeof parsePrKe
     }
   }
   if (answered) await $.store.set(K.prs, cache)
-  return ok
+  // Backed off only when nothing answered: one account with a dead token (or
+  // one PR GitHub will not show) must not slow every other account's PRs.
+  return ok || answered
 }
 
 async function pollPrs($: any) {
@@ -1084,8 +1089,12 @@ async function pollPrs($: any) {
   if (refs.length && !fresh) {
     // A PR not polled yet (just opened here) goes over another session's hold;
     // a backoff after failures still stops it.
-    const unseen = keys.some((k) => !cache[k])
-    await withLease($, 'pr-poll', PR_LEASE, () => pollPrsOnce($, refs, cache, now), { overHold: unseen })
+    // Only this session's own, once per PR: the watch list is shared, and a key
+    // GitHub never answers for would otherwise let every session past the hold
+    // on every tick.
+    const unseen = keys.filter((k) => own.has(k) && !cache[k] && parsePrKey(k) && !overHeld.has(k))
+    for (const k of unseen) overHeld.add(k)
+    await withLease($, 'pr-poll', PR_LEASE, () => pollPrsOnce($, refs, cache, now), { overHold: unseen.length > 0 })
   }
   const mine = [...own].map((k) => cache[k]).filter((s): s is PrStatus => !!s)
   const before = (await read($, prsA)) as PrStatus[]
@@ -1116,6 +1125,9 @@ function workflowNode(id: string, runId: string | undefined, toolUseId: string, 
     taskId,
   }
 }
+
+// PRs this session already polled past another session's hold (pollPrs).
+const overHeld = new Set<string>()
 
 // When each GitOps PR's comments were last read (pollPrs).
 const gitopsRead = new Map<string, number>()
@@ -1406,7 +1418,11 @@ async function resumeProbe($: any) {
   const woke = resumeTick && slept(15_000, now - resumeTick)
   resumeTick = now
   const p = (await read($, resumeA)) as Pending | null
-  if (!p) return
+  if (!p) {
+    // Nothing waiting: the next outage starts its own "back since" clock.
+    reachableAt = 0
+    return
+  }
   // Just woke: give Wi-Fi and the VPN a moment before deciding.
   if (woke) return
   if (mainTurnRunning) return
@@ -1998,13 +2014,13 @@ async function noteSession($: any) {
   // Forget sessions older than a week so the shared map stays small.
   for (const [k, v] of Object.entries(all)) if (Date.now() - v.at > 7 * 86_400_000) delete all[k]
   await $.store.set(K.sessions, all)
-  await pruneOutputCopies($, new Set(Object.keys(all)))
+  await pruneOutputCopies($)
 }
 
 // Other sessions' outputs copies past their use (lib/record.ts outputKeysToDrop).
 const OUTPUT_COPY_MAX_AGE_MS = 14 * 86_400_000
 const OUTPUT_COPIES_BUDGET = 1.5 * 1024 * 1024
-async function pruneOutputCopies($: any, known: Set<string>) {
+async function pruneOutputCopies($: any) {
   try {
     const keys = ((await $.store.keys()) as string[]).filter((k) => k.startsWith('outputs:'))
     const copies = await Promise.all(
@@ -2013,7 +2029,7 @@ async function pruneOutputCopies($: any, known: Set<string>) {
         return { sid: k.slice('outputs:'.length), at: Math.max(0, ...list.map((o) => Number(o.at) || 0)), bytes: JSON.stringify(list).length }
       }),
     )
-    for (const s of outputKeysToDrop(copies, known, sid, Date.now(), OUTPUT_COPY_MAX_AGE_MS, OUTPUT_COPIES_BUDGET)) await $.store.delete(K.outputs(s))
+    for (const s of outputKeysToDrop(copies, sid, Date.now(), OUTPUT_COPY_MAX_AGE_MS, OUTPUT_COPIES_BUDGET)) await $.store.delete(K.outputs(s))
   } catch {
     // a store that cannot be listed: try again at the next session start
   }

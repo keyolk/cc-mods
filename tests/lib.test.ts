@@ -1004,24 +1004,23 @@ test('resume: after an outage each session waits its own spread, after a backoff
   expect(spread('x', RESUME_SPREAD_MS)).toBeLessThan(RESUME_SPREAD_MS)
 })
 
-test('outputs copies: forgotten and stale sessions go, then the oldest until they fit; never this one', () => {
+test('outputs copies: stale sessions go, then the oldest until they fit; never this one, never by the session map', () => {
   const day = 86_400_000
   const now = 100 * day
-  const known = new Set(['me', 'fresh', 'stale', 'big-old', 'big-new'])
   const copies = [
     { sid: 'me', at: now - 60 * day, bytes: 500 }, // this session, however old
     { sid: 'fresh', at: now - day, bytes: 100 },
     { sid: 'stale', at: now - 20 * day, bytes: 100 },
-    { sid: 'gone', at: now - day, bytes: 100 }, // not in the session map
+    { sid: 'just-started', at: now - 1000, bytes: 100 }, // maybe not in the session map yet: kept
     { sid: 'big-old', at: now - 3 * day, bytes: 400 },
     { sid: 'big-new', at: now - 2 * day, bytes: 400 },
   ]
   const ageMs = 14 * day
-  expect(outputKeysToDrop(copies, known, 'me', now, ageMs, 10_000).sort()).toEqual(['gone', 'stale'])
-  // Over budget (me 500 + fresh 100 + big 800 = 1400 > 1000): the oldest other goes first.
-  expect(outputKeysToDrop(copies, known, 'me', now, ageMs, 1000).sort()).toEqual(['big-old', 'gone', 'stale'])
+  expect(outputKeysToDrop(copies, 'me', now, ageMs, 10_000)).toEqual(['stale'])
+  // Over budget (me 500 + 100 + 100 + 800 = 1500 > 1100): the oldest others go first.
+  expect(outputKeysToDrop(copies, 'me', now, ageMs, 1100).sort()).toEqual(['big-old', 'stale'])
   // A budget only this session fits: everyone else goes, it stays.
-  expect(outputKeysToDrop(copies, known, 'me', now, ageMs, 0)).not.toContain('me')
+  expect(outputKeysToDrop(copies, 'me', now, ageMs, 0)).not.toContain('me')
 })
 
 test('route: the routed family goes out as a full id, never a bare alias', () => {

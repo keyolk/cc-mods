@@ -1698,6 +1698,49 @@ test('PR poll on a dead network: the failure backs off machine-wide instead of r
   expect(lease).toMatchObject({ by: 'sid-1', fails: 4 })
 })
 
+test('PR poll: a watched PR GitHub never answers for does not let this session past the hold', async ($, on) => {
+  // Another session holds the poll; the watch list (shared) has a PR nobody can read.
+  const files: Record<string, string> = {
+    '/home/u/.claude/state/cc-mods/lease/pr-poll.json': JSON.stringify({ by: 'other-sid', until: Number.MAX_SAFE_INTEGER, fails: 0, failUntil: 0 }),
+  }
+  const runs: string[][] = []
+  const pr = { key: 'keyolk/cc-mods#7', state: 'OPEN', at: Date.now() - 60_000 }
+  const watch = { [pr.key]: { session: 'sid-1', at: Date.now() }, 'acme/gone#9': { session: 'other-sid', at: Date.now() } }
+  baseStubs(on, { pane: '%42', files, written: files, runs, store: { prs: { [pr.key]: pr }, 'pr-watch': watch } })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(5 * 60_000)
+  expect(runs.some((a) => a[0] === 'gh' && a[1] === 'api')).toBe(false)
+})
+
+test('PR poll: one account failing does not back off the accounts that answer', async ($, on) => {
+  const files: Record<string, string> = {}
+  const runs: string[][] = []
+  const now = Date.now()
+  // keyolk answers; acme (work-login) fails every time.
+  const store: Record<string, unknown> = { 'pr-watch': { 'keyolk/cc-mods#7': { session: 'sid-1', at: now }, 'acme/infra#3': { session: 'sid-1', at: now } } }
+  const answer = JSON.stringify({ data: { p0: { pullRequest: { number: 7, state: 'OPEN', title: 't', url: 'https://github.com/keyolk/cc-mods/pull/7', headRefOid: 'a', isDraft: false, mergeable: 'MERGEABLE', reviewDecision: null, commits: { nodes: [] }, reviewThreads: { nodes: [] } } } } })
+  baseStubs(on, {
+    pane: '%42',
+    files,
+    written: files,
+    store,
+    runs,
+    run: (argv) => {
+      if (argv[0] === 'gh' && argv[1] === 'auth' && argv[2] === 'token') return { code: 0, out: argv[4] + '-tok\n' }
+      if (argv[0] === 'gh' && argv[1] === 'api' && argv[2] === 'graphql') return String(argv[4]).includes('cc-mods') ? { code: 0, out: answer } : { code: 1, out: '' }
+      return undefined
+    },
+  })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(1_000)
+  const lease = () => JSON.parse(Object.entries(files).find(([k]) => k.endsWith('/lease/pr-poll.json'))![1])
+  expect(lease()).toMatchObject({ fails: 0, failUntil: 0 })
+})
+
 test('PR poll: while another session holds the poll, this one reads the shared cache and runs nothing', async ($, on) => {
   const files: Record<string, string> = {
     '/home/u/.claude/state/cc-mods/lease/pr-poll.json': JSON.stringify({ by: 'other-sid', until: Number.MAX_SAFE_INTEGER, fails: 0, failUntil: 0 }),
@@ -1756,7 +1799,8 @@ test('session start drops other sessions outputs copies the store no longer need
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   // The start notes the session without waiting on it.
   await clock.advance(100)
-  expect(Object.keys(store).filter((k) => k.startsWith('outputs:')).sort()).toEqual(['outputs:live-sid'])
+  // gone-sid is missing from the session map but active an hour ago: kept.
+  expect(Object.keys(store).filter((k) => k.startsWith('outputs:')).sort()).toEqual(['outputs:gone-sid', 'outputs:live-sid'])
 })
 
 test('routing sends the full model id, and on a warm large context repeats the previous step instead of switching', async ($, on) => {

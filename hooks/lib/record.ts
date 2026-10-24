@@ -353,19 +353,19 @@ export function mergeOutputs(prev: readonly Output[], add: readonly Output[], ca
 // over 4 MiB, which would stop every shared cache (radar, PRs) at once. Each
 // session's copy is capped (mergeOutputs) and exported to
 // ~/.claude/outputs/<date>/<sid>.json, but nothing ever removed one: 170 copies,
-// 2 MB, on one machine. Dropped: copies of sessions the session map forgot,
-// copies untouched for `maxAgeMs`, then the oldest until the copies fit `budget`
-// bytes. The current session is never dropped.
+// 2 MB, on one machine. Dropped: copies untouched for `maxAgeMs`, then the
+// oldest until the copies fit `budget` bytes. The current session is never
+// dropped. Not by the session map: it is a shared read-modify-write that can
+// miss a session started a moment ago, and it forgets sessions alive past a week.
 export function outputKeysToDrop(
   copies: readonly { sid: string; at: number; bytes: number }[],
-  known: ReadonlySet<string>,
   current: string,
   now: number,
   maxAgeMs: number,
   budget: number,
 ): string[] {
   const drop = new Set<string>()
-  for (const c of copies) if (c.sid !== current && (!known.has(c.sid) || now - c.at > maxAgeMs)) drop.add(c.sid)
+  for (const c of copies) if (c.sid !== current && now - c.at > maxAgeMs) drop.add(c.sid)
   let total = copies.filter((c) => !drop.has(c.sid)).reduce((n, c) => n + c.bytes, 0)
   for (const c of [...copies].sort((a, b) => a.at - b.at)) {
     if (total <= budget) break
