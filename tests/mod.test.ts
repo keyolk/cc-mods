@@ -1850,6 +1850,34 @@ test('credentials have their own Auth tab, grouped by kind; the Policy tab holds
   await ui.unmount()
 })
 
+test('Coder instances appear in Auth and an expired one logs into its exact deployment', async ($, on) => {
+  const org = JSON.stringify({ ...JSON.parse(TEST_ORG), coderInstances: { east: 'https://coder-east.example.com', west: 'https://coder-west.example.com' } })
+  const runs = baseStubs(on, {
+    files: {
+      '.config/cc-mods/org.json': org,
+      'Library/Application Support/coderv2/url': 'https://coder-east.example.com\n',
+    },
+    run: (argv) => {
+      if (argv[0] === 'coder' && argv[1] === 'login') return { code: 0, out: '' }
+      return undefined
+    },
+  })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(0)
+  const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
+  await ui.press({ key: 'cockpit-auth' })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('Coder east')
+  expect(drawn).toContain('expired')
+  expect(drawn).toContain('Coder west')
+  await ui.press({ key: 'auth-row-coder:east' })
+  await clock.advance(0)
+  expect(runs.some((a) => a.join(' ') === 'coder login https://coder-east.example.com')).toBe(true)
+  await ui.unmount()
+})
+
 test('an AWS login that leaves the expiry in place says the portal session was reused, with a portal button', async ($, on) => {
   const exp = new Date(Date.now() + 25 * 60_000).toISOString()
   const files = { '7487b5b67d5fa1132cf33fa93ae51ef38cc37752.json': JSON.stringify({ startUrl: 'https://d-1234567890.awsapps.com/start', expiresAt: exp }), '.aws/config': '[profile p]\nsso_start_url = https://d-1234567890.awsapps.com/start\n' }

@@ -18,7 +18,7 @@ needs ≥ 2.1.290).
 | **/outputs** | PRs, artifacts, scratch files, Jira tickets, links, background tasks the session produced, with preview (Markdown, code, PNG in the terminal, log tail, an archive's listing or first lines), open (tmux-chrome), folder (`r`: Finder on it, the file selected), copy, put in context, keep/delete scratch. Files an answer hands over (a path it names, or a name under a folder it names, that exists) are starred ★ and listed first under Files, wherever they live. Scope: this session / this repo / today across sessions. Exported to `~/.claude/outputs/<date>/<sid>.json` at turn end and session end. | re-parsing transcripts (`ccx refs`, daily check-in) |
 | **/policy** | Capabilities as rows you flip, mode presets, scoped grants, 15-minute timed grants. `/policy allow merge owner/repo 15m` without opening anything. Footer shows the policy (`merge🔒`, `merge(1)`, `prod:ro`). | `/session-policy` skill turns, `session_policy.py inject` |
 | **self-grant block** | Claude's Bash running `session_policy.py allow|block|inherit|mode|clear` or a `*_unlock.py` is refused (fail-closed `.catch`). Only the person's own `/policy` (origin `composer`) or a pane press changes policy. | — (was a hole: the guard's deny text told Claude the command that lifts it) |
-| **band** | Above the prompt, only when there is something: expired/soon AWS SSO / gh / daemon (press to log in), this session's PRs (checks, approvals, unresolved threads, conflict; follow-up / review-request buttons), neighbors in the same repo, and a fork offer when a prompt looks like a separate line of work. | `tmux_neighbors.py` context injection, `flow_fork_hint.py` AskUserQuestion |
+| **band** | Above the prompt, only when there is something: expired/soon AWS SSO / gh / Coder / ArgoCD / daemon (press to log in), this session's PRs (checks, approvals, unresolved threads, conflict; follow-up / review-request buttons), neighbors in the same repo, and a fork offer when a prompt looks like a separate line of work. | `tmux_neighbors.py` context injection, `flow_fork_hint.py` AskUserQuestion |
 | **narwhal** | What the narwhal runs this session started need, in Now › Needs you: a question with its options as buttons (the recommended one ★) and a field for any other answer, the context or what its labels mean, a worker judged stuck, a run that finished or failed (press to bring its result into the conversation). Every item opens `narwhal monitor --run` beside the pane. The Work tab lists the runs this session started (state, progress, each task with its model and first line of outcome; press to open the monitor), and Outputs gets what they produced — PRs (followed by the PR poller like the session's own), files, and each run's answer. Polled every 20 s from the daemon's `/control/attention` and `/control/runs` (`?session=<id>`); a new question also raises `@cc_attention` to ask. Needs narwhal ≥ #91. | answering only in `narwhal monitor` |
 | **auth pre-check** | An `aws --profile …` / `kubectl --context …` call while SSO is expired stops before it fails: log in and continue / run anyway / cancel. | failing, then a turn to explain |
 | **gh account** | A `gh` call against a repo whose owner `org.json` maps to a login runs with that login's token (`GH_TOKEN` from `gh auth token --user`), without `gh auth switch`, so other sessions keep their account. | `gh auth switch` (170× in 30 days) |
@@ -187,9 +187,11 @@ else the first name of your account's full name, else your login name.
   catches up; and a session that has just finished stays at its desk for 90
   s holding its answer up (a page with a tick) before it wanders off, so a
   short job shows as it coming back and answering.
-- **Going home**: a session that ends walks out through the `EXIT` door in
-  the left wall near the front and fades out there: after a long day (8 h or
-  2000 tool calls) slumped and slow, bags under its eyes, a grey cloud and
+- **Going home**: a session whose tmux pane is gone from three consecutive
+  polls walks out through the `EXIT` door in the left wall near the front and
+  fades out there. If the pane still exists, a missing pane-session option does
+  not start the animation. A session that returns before leaving cancels it. After a long day (8 h or 2000 tool
+  calls) it leaves slumped and slow, with bags under its eyes, a grey cloud and
   `휴… 퇴근`; after a short one (under an hour) hopping with its arms up and
   `퇴근이다!`; otherwise a wave and `수고했습니다`.
 - **Idle** sessions go to the ☕ lounge, which has no seat limit; after 10
@@ -314,11 +316,11 @@ else the first name of your account's full name, else your login name.
   drawers in the card, a tab a kind: 📥 받은 것, 📤 보낸 것, 📝 스크래치, 📄
   파일, 🗂 exp, 🖼 아티팩트, each item a badge or chip one click away; `[`/`]`
   switch tabs. A click on one thing opens the drawers at its tab.
-- **Rooms say what they are for**: a compact tag sits on the back wall's top
-  over each room, the meeting room and the subagents' queue (with how many are
-  there now); hovering a room's floor lights it up and says when a session
-  comes there and who is there. The tmux sessions' names sit right against the
-  left wall, over a band in their colour along its top.
+- **Rooms say what they are for**: a plaque sits on the back wall's top over
+  each room and the subagents' queue (with how many are there, or out working);
+  the meeting room has its own sign. Hovering a room's floor lights it up and
+  says when a session comes there and who is there. The tmux sessions' names
+  sit on plaques right against the left wall, over a band in their colour.
   The library has parquet, a long reading table with green lamps and a ladder;
   the workshop a concrete floor with a hazard stripe, a tool pegboard, a bench
   whose terminal shows what the people in the room are running and a machine
@@ -332,10 +334,11 @@ else the first name of your account's full name, else your login name.
   cable with sparks, the handset at the ear in a booth; sipping coffee, stretching,
   a donut, a handheld game.
 - **Several at once, and meetings**: `V` (or the `☑ 고르기` chip in the top row)
-  turns on pick mode, where a click picks a session and a drag lassoes several
-  (a dashed ring each); `⇧click` / `⇧drag` do the same where the terminal lets
-  Shift+mouse through (many keep it for their own text selection); a bar then offers `🗣 회의`, `📣 공지`
-  and `💤 미루기` for all of them. A meeting (2 to 8, a topic typed in the bar)
+  turns on pick mode. Clicking either a person or their desk picks the same
+  session. A drag lassoes sessions whose person or desk is inside it (a dashed
+  ring on the person and a blue outline on the desk); `⇧click` / `⇧drag` do the
+  same where the terminal lets Shift+mouse through. A bar then offers `🗂 창
+  옮기기`, `🗣 회의`, `📣 공지` and `💤 미루기`. A meeting (2 to 8, a topic typed in the bar)
   walks them into the glass meeting room (the corner between the lounge and the
   crowd, as deep as the rooms) round its table; each is told,
   through its inbox, who else is there by the names `SendMessage` takes, who
@@ -347,13 +350,14 @@ else the first name of your account's full name, else your login name.
   back to their desks. The chip's topic, or the table, opens the minutes. An
   announcement goes to each picked one's inbox; messages waiting there are
   kept and the new one added after them.
-- **Move windows by dragging**: drag a desk (its whole tmux window) onto
-  another pod to merge it into that window, or onto another tmux session's
-  block to send it there. The drop asks first (`⏎` moves, `Esc` drops it),
-  then the office runs tmc's own moves, `tmc window merge|send` (the TUI's `x
-  m` / `x s`; keyolk/tmc#18). The windows are resolved from tmux by the
-  sessions they hold, never taken from the page; `OFFICE_TMC` points at
-  another tmc.
+- **Move windows while picking**: in pick mode, drag either a picked person or
+  their desk (the whole tmux window) onto another pod to merge it into that
+  window, or onto another tmux session's block to send it there. Normal desk
+  dragging no longer moves a window accidentally. The drop asks first (`⏎`
+  moves, `Esc` drops it), then the office runs tmc's own moves, `tmc window
+  merge|send` (the TUI's `x m` / `x s`; keyolk/tmc#18). The windows are
+  resolved from tmux by the sessions they hold, never taken from the page;
+  `OFFICE_TMC` points at another tmc.
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
@@ -362,12 +366,38 @@ else the first name of your account's full name, else your login name.
   framed, so links open outside, by default where that session's own links
   go: `tmux-chrome-open` with its pane, so its `@browser` picks TWeb on your
   Chrome (signed in) or the tab group.
+- **Visual skins**: `⚙` switches the scene renderer, not only CSS. A skin in
+  `office/skins.js` supplies UI CSS, title, room presentation, canvas palette,
+  and optional scene, desk, character and frame renderer hooks. `🏢 모던
+  오피스` keeps the original. `⚔ 클래식 판타지 길드홀` is an original
+  early-2000s 2D-sprite-on-3D-isometric-world treatment: parchment-and-wood
+  chrome; records archive, forge, crystal comms and tavern; oak, stone, rune
+  and woven-rug floors; timber posts, stone feet, wall torches, a guild crest,
+  lantern warmth and subtle screen grain. Its workers use a separate 32×48
+  low-resolution sprite renderer with nearest-neighbour scaling, directional
+  walk frames, stepped hair, job headgear and props, rank crowns and zipped
+  mouths. Guild furniture replaces bookshelves, forge machinery, café, sofa,
+  vending machine, radiators, chairs, decorations and the glass meeting room.
+  The phone booth becomes a carved crystal-comms alcove, with a floating orb
+  rather than a handset or phone icon. Desks replace monitors with rune
+  tablets, crystal orbs, scrying mirrors, magical devices, books, parchment and
+  messenger scrolls. The choice stays in this browser. Skins never change room
+  identity, geometry, hit boxes or routing.
 - **Where things open is yours to pick**: `⚙` (or `,`) in the top row sets
   where web links and files open outside (that session's setting, TWeb on
   your Chrome / Electron / WebKit, the Chrome tab group, the default browser
   or app, Finder) and whether a viewable file opens inside first. A chip's
   right click (or `⇧O` in the viewer) asks once and remembers the pick; kept
   in this browser.
+- **The card in tabs, its buttons always in view**: `💬 답변`, `📥 받은 것`,
+  `📤 보낸 것`, `📎 파일` (from its outputs; `[` `]` cycle and `⌥1`-`⌥4`
+  open one directly). In a resource tab, `↑`/`↓` or `j`/`k` chooses an item
+  and `Enter` opens it. The things to press (quick replies, the reply box,
+  stop, go, 미루기, next) sit in a foot that stays at the card's bottom however
+  long the answer is. Drag the card's title to move it and its lower-left corner
+  to resize it. Press `M` to maximize/restore, use `⌥`+arrows to change its
+  width and height, or `⌥⇧`+arrows to move it; the browser remembers both its
+  size and position.
 - **Answers read as Markdown**: headings, nested lists, tables, code blocks,
   quotes, rules, `code` and **bold**, with links and brand badges as before.
 - **Zoom back**: `0`, a double click or the `⤢ 전체 보기` chip in the top row
@@ -418,6 +448,7 @@ SSO pre-check or AWS row, no default Slack target, no per-owner gh account.
   "awsSsoProfiles": ["cloud", "edge"],
   "awsSsoStartUrl": "https://d-1234567890.awsapps.com/start",
   "argocdDomains": { "tools.acme.io": "", "edge.acme.io": " (edge)" },
+  "coderInstances": { "east": "https://coder-east.example.com", "west": "https://coder-west.example.com" },
   "regionFiles": ["~/.acme/regions.yaml"]
 }
 ```
@@ -432,6 +463,7 @@ SSO pre-check or AWS row, no default Slack target, no per-owner gh account.
 | `awsSsoProfiles` | profile prefixes whose `aws` calls are checked for an expired SSO session first |
 | `awsSsoStartUrl` | the IAM Identity Center start URL whose session the Auth tab shows (no AWS row without it) |
 | `argocdDomains` | ArgoCD host suffix → label suffix in the Auth tab |
+| `coderInstances` | Coder instance label → HTTPS deployment URL; Auth reads Coder's local selected URL/session without periodic network probes and offers `coder login <url>` for a missing session |
 | `regionFiles` | region maintenance-window YAML files shown on IaC PR rows |
 
 ## Web: a TWeb pane beside (default)

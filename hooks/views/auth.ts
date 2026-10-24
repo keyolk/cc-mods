@@ -23,6 +23,7 @@ export type AuthView = {
 
 const GROUPS: { title: string; test: (id: string) => boolean; note?: string }[] = [
   { title: 'Cloud and clusters', test: (id) => id === 'aws-sso' || id.startsWith('argocd:') },
+  { title: 'Coder', test: (id) => id.startsWith('coder:') },
   { title: 'GitHub', test: (id) => id.startsWith('gh:') },
   { title: 'Claude', test: (id) => id === 'daemon' || id.startsWith('ccproxy:') },
 ]
