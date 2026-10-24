@@ -34,6 +34,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resources  # noqa: E402 - office/resources.py, beside this file
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The server code it was started from, by file and whole-second mtime. /office
+# compares this with the files on disk and restarts a server left over from
+# older code: the page is read fresh on every request, so a new page against
+# an old server asks for routes the server does not have.
+SERVER_FILES = ("office.py", "resources.py")
+
+
+def code_stamp() -> str:
+    return ",".join(f"{n}:{int(os.stat(os.path.join(HERE, n)).st_mtime)}" for n in SERVER_FILES)
+
+
+STAMP = code_stamp()
 FMT = "|".join(
     [
         "#{pane_id}",
@@ -1161,6 +1173,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.send(403, b"forbidden", "text/plain")
+        if self.path == "/version":
+            return self.send(200, json.dumps({"stamp": STAMP, "pid": os.getpid()}).encode(), "application/json")
         if self.path.startswith("/next"):
             return self.send(200, json.dumps({"n": NEXT["n"]}).encode(), "application/json")
         if self.path.startswith("/file"):

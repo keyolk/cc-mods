@@ -2520,3 +2520,39 @@ test('a command that ran and printed a policy block message is not a block: a la
   await clock.advance(11_000)
   expect(submitted.filter((t) => t.includes('세션 정책이 바뀌어'))).toEqual([])
 })
+
+test('/office restarts a server left over from older code and keeps a current one', async ($, on) => {
+  // fs.stat answers mtimeMs 1 for every file, so the code on disk is
+  // office.py:0,resources.py:0. The server is "old" until it is restarted.
+  let stamp = 'office.py:-1,resources.py:-1'
+  let alive = true
+  const runs = baseStubs(on, {
+    pane: '%42',
+    run: (a) => {
+      if (a[0] === '/usr/bin/curl' && String(a.at(-1)).endsWith('/version')) return alive ? { code: 0, out: JSON.stringify({ stamp, pid: 4242 }) } : { code: 7, out: '' }
+      if (a[0] === '/usr/bin/curl') return alive ? { code: 0, out: '200' } : { code: 7, out: '000' }
+      if (a[0] === 'sh' && String(a[2]).includes('kill')) { alive = false; return { code: 0, out: '' } }
+      if (a[0] === 'sh' && String(a[2]).includes('nohup')) { alive = true; stamp = 'office.py:0,resources.py:0'; return { code: 0, out: '' } }
+      if (a[0] === 'sh') return { code: 0, out: '' }
+      return undefined
+    },
+  })
+  mock.clock(on)
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const cmd = { command: 'office', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any
+  await $.command.run(cmd)
+  const kills = () => runs.filter((a) => a[0] === 'sh' && String(a[2]).includes('kill'))
+  const starts = () => runs.filter((a) => a[0] === 'sh' && String(a[2]).includes('nohup'))
+  expect(kills().length).toBe(1)
+  expect(kills()[0]!.at(-1)).toBe('4242')
+  // Only a process running office.py is stopped.
+  expect(String(kills()[0]![2])).toContain('office/office.py')
+  expect(starts().length).toBe(1)
+  // Now current: a second /office leaves it running.
+  await $.command.run(cmd)
+  expect(kills().length).toBe(1)
+  expect(starts().length).toBe(1)
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})

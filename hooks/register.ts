@@ -3674,6 +3674,23 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   on('command.run', { command: 'office' }, async ($: any) => {
     const url = 'http://127.0.0.1:' + OFFICE_PORT + '/'
     const up = async () => (await $.process.run(['/usr/bin/curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '2', url], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout.trim() === '200'
+    // A server started from older code than is on disk is restarted: the page
+    // is read fresh on every request, so a new page against an old server
+    // asks for routes it does not have (live: resources.js 404, an empty
+    // office). The stamp is office.py's code_stamp(); an old server has no
+    // /version and answers 404, which also counts as old.
+    const want = (await Promise.all(['office.py', 'resources.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
+    const ver = (await $.process.run(['/usr/bin/curl', '-s', '-m', '2', url + 'version'], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout
+    let running: { stamp?: string; pid?: number } | undefined
+    try { running = JSON.parse(ver) } catch { running = undefined }
+    if ((await up()) && running?.stamp !== want) {
+      const pid = running?.pid
+      // Without /version the old server's pid is found by its port.
+      // Only a process running office.py is stopped, whatever holds the port.
+      const script = pid ? 'p="$0"' : 'p=$(lsof -tiTCP:"$0" -sTCP:LISTEN | head -1)'
+      await $.process.run(['sh', '-c', script + '; [ -n "$p" ] && ps -o command= -p "$p" | grep -q "office/office.py" && kill "$p"; true', String(pid ?? OFFICE_PORT)], { timeoutMs: 4000 }).catch(() => undefined)
+      await $.process.run(['sh', '-c', 'for i in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null -m 1 "$0" || exit 0; sleep 0.3; done', url], { timeoutMs: 6000 }).catch(() => undefined)
+    }
     if (!(await up())) {
       // Started detached, then given a moment (the sleep) to bind before the check.
       await $.process.run(['sh', '-c', 'mkdir -p "$(dirname "$2")"; nohup python3 "$0" --port "$1" >"$2" 2>&1 & sleep 1.5', $.plugin.root + '/office/office.py', String(OFFICE_PORT), home + '/.claude/state/office/server.log'], { timeoutMs: 6000 })

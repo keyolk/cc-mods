@@ -186,6 +186,7 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
     // The shared accounts as the guild's mana ledger: the same board and rows
     // (office/resources.js), on parchment in a timber frame.
     drawResources(ctx, board, items, t) {
+      if (typeof drawResourceBoard !== 'function') return true
       drawResourceBoard(ctx, board, items, t, { bg: '#e7d3a6', ink: '#3b2a1e', dim: '#7a6447', title: '#5a2f1c', frame: '#4a2f1e', heading: '🔮 마나 장부' })
       return true
     },
