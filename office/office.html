@@ -1789,6 +1789,18 @@ function marginLabels() {
     rrect(ax - w / 2, ay - h + 2 * k, w, h, skin.key === 'guildhall' ? 3 * k : 7 * k, fill, 'rgba(255,248,238,.72)', 1.1 / cam.s)
     g.fillStyle = '#fffaf0'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, ax, ay - h / 2 + 2 * k)
   }
+  // The subagents' queue gets the same plaque; the meeting room already has a
+  // sign on its own back wall.
+  {
+    const out = [...ents.values()].filter((e) => e.kind === 'sub').length
+    const label = '🐣 대기열' + (out ? ' · ' + out + '명 출동' : '')
+    const [px, ay] = P((POOL.x0 + POOL.x1) / 2, -0.3, WALL_H + 3)
+    g.font = 11 * k + 'px Jua, sans-serif'; const w = g.measureText(label).width + 16 * k, h = 20 * k
+    // The queue is the building's right end, so its plaque is kept on screen.
+    const ax = Math.min(px, VW - 8 - w / 2)
+    rrect(ax - w / 2, ay - h + 2 * k, w, h, skin.key === 'guildhall' ? 3 * k : 7 * k, skin.plaque || '#8a6fb5', 'rgba(255,248,238,.72)', 1.1 / cam.s)
+    g.fillStyle = '#fffaf0'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, ax, ay - h / 2 + 2 * k)
+  }
   // tmux plaques hug the left wall. No leaders cross the scene.
   for (const sc of sections) {
     const c = hsl2hex(sc.hue, 55, 62)
