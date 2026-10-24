@@ -347,3 +347,31 @@ export function mergeOutputs(prev: readonly Output[], add: readonly Output[], ca
   }
   return [...byId.values()].sort((a, b) => b.at - a.at).slice(0, cap)
 }
+
+// Which sessions' `outputs:<sid>` copies to drop from $.store. The store is one
+// JSON file for every session on the machine and refuses any set once it is
+// over 4 MiB, which would stop every shared cache (radar, PRs) at once. Each
+// session's copy is capped (mergeOutputs) and exported to
+// ~/.claude/outputs/<date>/<sid>.json, but nothing ever removed one: 170 copies,
+// 2 MB, on one machine. Dropped: copies untouched for `maxAgeMs`, then the
+// oldest until the copies fit `budget` bytes. The current session is never
+// dropped. Not by the session map: it is a shared read-modify-write that can
+// miss a session started a moment ago, and it forgets sessions alive past a week.
+export function outputKeysToDrop(
+  copies: readonly { sid: string; at: number; bytes: number }[],
+  current: string,
+  now: number,
+  maxAgeMs: number,
+  budget: number,
+): string[] {
+  const drop = new Set<string>()
+  for (const c of copies) if (c.sid !== current && now - c.at > maxAgeMs) drop.add(c.sid)
+  let total = copies.filter((c) => !drop.has(c.sid)).reduce((n, c) => n + c.bytes, 0)
+  for (const c of [...copies].sort((a, b) => a.at - b.at)) {
+    if (total <= budget) break
+    if (c.sid === current || drop.has(c.sid)) continue
+    drop.add(c.sid)
+    total -= c.bytes
+  }
+  return [...drop]
+}

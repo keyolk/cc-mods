@@ -25,9 +25,10 @@ import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/
 import { agentFlow, flowOf, paragraphs } from '../hooks/lib/flow'
 import { CAPS, badge, godArgvs, isGod, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
 import { checkVerdict, ghAccountFor, gitopsFromComments, graphqlQuery, needLabel, needsAttention, parseGraphql, prLine, repoFromGh, repoFromRemote } from '../hooks/lib/prs'
-import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
+import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, outputKeysToDrop, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
 import { clientItems, navItems, navTarget, skipHidden } from '../hooks/lib/nav'
-import { classify, decide as resumeDecide, slept } from '../hooks/lib/resume'
+import { RESUME_SPREAD_MS, classify, decide as resumeDecide, slept } from '../hooks/lib/resume'
+import { mayRun, parseLease, settled, spread, taken } from '../hooks/lib/lease'
 import { parseBrief, parseWindows as parseTmuxWindows } from '../hooks/lib/elsewhere'
 import { EMPTY_ORG, ghAccountFor as orgAccount, jiraKeyPattern, org, parseOrg, setOrg, stackOf as orgStack } from '../hooks/lib/org'
 import { answerBody, freshItems, itemKey, parseAttention, parseRuns, resultPrompt, runOutputs, runProgress, toastFor } from '../hooks/lib/narwhal'
@@ -952,6 +953,77 @@ test('resume: the API errors seen in transcripts are classified; decide waits fo
   expect(resumeDecide(p, 5000, { reachable: true, turnSince: false, enabled: false }).act).toBe('drop')
   expect(slept(15_000, 16_000)).toBe(false)
   expect(slept(15_000, 600_000)).toBe(true)
+})
+
+test('lease: one holder at a time, and after a failure everyone backs off, doubling to the cap', () => {
+  const t = { runMs: 60_000, freshMs: 80_000, baseMs: 90_000, capMs: 15 * 60_000 }
+  expect(mayRun(undefined, 'a', 0)).toBe(true)
+  const held = taken(undefined, 'a', 0, t)
+  expect(mayRun(held, 'b', 30_000)).toBe(false) // a is still running
+  expect(mayRun(held, 'a', 30_000)).toBe(true)
+  const ok = settled(held, 20_000, true, t)
+  expect(mayRun(ok, 'b', 99_000)).toBe(false) // a's result is fresh
+  expect(mayRun(ok, 'b', 100_000)).toBe(true)
+  // Failures: 90 s, 180 s, 360 s, ... for every session, the one that failed too.
+  let l = taken(ok, 'b', 100_000, t)
+  const waits: number[] = []
+  let now = 100_000
+  for (let i = 0; i < 6; i++) {
+    l = settled(l, now, false, t)
+    waits.push(l.failUntil - now)
+    expect(mayRun(l, 'b', l.failUntil - 1)).toBe(false)
+    expect(mayRun(l, 'c', l.failUntil - 1)).toBe(false)
+    now = l.failUntil
+    expect(mayRun(l, 'c', now)).toBe(true)
+    l = taken(l, 'c', now, t)
+  }
+  expect(waits).toEqual([90_000, 180_000, 360_000, 720_000, 900_000, 900_000])
+  // A success ends the streak.
+  expect(settled(l, now, true, t)).toMatchObject({ fails: 0, failUntil: 0 })
+  // What is in the file may be anything: a broken or foreign file is no lease.
+  expect(parseLease('')).toBeUndefined()
+  expect(parseLease('{"mode":"custom"}')).toBeUndefined()
+  expect(parseLease(JSON.stringify(l))).toEqual(l)
+})
+
+test('spread: each session its own fixed delay, the delays spread over the span', () => {
+  expect(spread('sid-1', 30_000)).toBe(spread('sid-1', 30_000))
+  const ds = Array.from({ length: 40 }, (_, i) => spread('6f1c2e9a-' + i + '-4b7d', 30_000))
+  expect(ds.every((d) => d >= 0 && d < 30_000)).toBe(true)
+  // 40 sessions land in at least 5 of the six 5-second slices.
+  expect(new Set(ds.map((d) => Math.floor(d / 5000))).size).toBeGreaterThanOrEqual(5)
+})
+
+test('resume: after an outage each session waits its own spread, after a backoff too', () => {
+  const p = { at: 0, cls: 'network' as const, message: '', attempts: 0, nextAt: 10_000 }
+  const s = { reachable: true, turnSince: false, enabled: true, jitterMs: 20_000 }
+  expect(resumeDecide(p, 60_000, { ...s, reachableForMs: 0 }).act).toBe('wait') // just back
+  expect(resumeDecide(p, 60_000, { ...s, reachableForMs: 19_999 }).act).toBe('wait')
+  expect(resumeDecide(p, 60_000, { ...s, reachableForMs: 20_000 }).act).toBe('resume')
+  // A server error everyone saw: reachable all along, the backoff ends for all at once.
+  const srv = { ...p, cls: 'server' as const, nextAt: 30_000 }
+  expect(resumeDecide(srv, 45_000, { ...s, reachableForMs: 999_999 }).act).toBe('wait')
+  expect(resumeDecide(srv, 50_000, { ...s, reachableForMs: 999_999 }).act).toBe('resume')
+  expect(spread('x', RESUME_SPREAD_MS)).toBeLessThan(RESUME_SPREAD_MS)
+})
+
+test('outputs copies: stale sessions go, then the oldest until they fit; never this one, never by the session map', () => {
+  const day = 86_400_000
+  const now = 100 * day
+  const copies = [
+    { sid: 'me', at: now - 60 * day, bytes: 500 }, // this session, however old
+    { sid: 'fresh', at: now - day, bytes: 100 },
+    { sid: 'stale', at: now - 20 * day, bytes: 100 },
+    { sid: 'just-started', at: now - 1000, bytes: 100 }, // maybe not in the session map yet: kept
+    { sid: 'big-old', at: now - 3 * day, bytes: 400 },
+    { sid: 'big-new', at: now - 2 * day, bytes: 400 },
+  ]
+  const ageMs = 14 * day
+  expect(outputKeysToDrop(copies, 'me', now, ageMs, 10_000)).toEqual(['stale'])
+  // Over budget (me 500 + 100 + 100 + 800 = 1500 > 1100): the oldest others go first.
+  expect(outputKeysToDrop(copies, 'me', now, ageMs, 1100).sort()).toEqual(['big-old', 'stale'])
+  // A budget only this session fits: everyone else goes, it stays.
+  expect(outputKeysToDrop(copies, 'me', now, ageMs, 0)).not.toContain('me')
 })
 
 test('route: the routed family goes out as a full id, never a bare alias', () => {
