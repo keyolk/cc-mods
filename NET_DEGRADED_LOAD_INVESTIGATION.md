@@ -26,13 +26,18 @@
 3. **F2 credential herd** (`:1093`, `:1142`): 강제 radar를 lease 하나로 묶는다. `mcpList`를 `$.store`로 옮겨 기계 전체에서 10분에 1회로 줄인다.
 4. **F3 resume jitter** (`hooks/lib/resume.ts`): 세션별 `hash(sid) % 30s` jitter를 준다. 회복 직후 "keep going"이 한꺼번에 나가지 않는다.
 
-**적용 상태 (2026-10-24 13:xx, 로컬 커밋, push 전)**
+**적용 상태 (2026-10-24, PR 열림)**
 
-| 수정 | 위치 | 커밋 | 검증 |
-|---|---|---|---|
-| F1, F2, F3, F4 | `keyolk/cc-mods` branch `fix/net-degraded-dedup` (worktree `~/src/keyolk/cc-mods-netfix`) | `d33e467` | `claude plugin test` 170/170 통과, tsc·eslint 깨끗. lease를 끄는 mutation을 넣으면 새 테스트 4개 실패 |
-| F5 | `sendbird/ccproxy` branch `fix/cursoracp-orphan-guard-child` (worktree `~/src/sendbird/ccproxy-guardfix`) | `89edba3` | 실제 프로세스로 하는 guard 테스트 3개와 `cursoracp` 패키지 전체 통과. 옛 스크립트로 되돌리면 누수 테스트 실패 |
-| F6, F7 | 미적용 | – | – |
+| 수정 | PR | 검증 |
+|---|---|---|
+| F1, F2, F3, F4, `$.store` 정리 | https://github.com/keyolk/cc-mods/pull/32 | 테스트 174개 통과. 수정을 하나씩 되돌리는 mutation 검사에서 각각 대응하는 테스트가 실패함 |
+| F5, F6 | https://github.com/sendbird/ccproxy/pull/288 (CPLAT-13036) | CI 통과(Linux), approve 2개. Docker Linux에서도 guard 테스트와 mutation 검사 확인 |
+| F7 | `~/.claude` 직접 반영(git 아님) | `test_gh_pr_followup_stop_guard.py` 3개 통과. `settings.json`에 `timeout: 25` 추가 |
+
+리뷰에서 나온 결함(모두 반영):
+- ccproxy (Codex 봇, P1): 버린 WS 소켓을 graceful `Close`로 닫으면 요청 경로가 소켓 하나당 최대 10초씩 막힌다. 그 경로를 `CloseNow`로 바꿨다.
+- ccproxy CI: guard 테스트가 Linux에서 실패했다. Linux에서는 `kill -0 -<pgid>`가 회수되지 않은 좀비에도 성공하기 때문이다. 코드가 아니라 테스트 결함이었다.
+- cc-mods (독립 리뷰): 공유 watch list에 GitHub가 답하지 않는 PR이 하나라도 있으면, 모든 세션이 tick마다 lease를 건너뛰었다. 또 한 계정이 실패하면 기계 전체가 최대 15분 동안 backoff했다. 정리 로직은 session map에 없는 살아 있는 세션의 사본을 지울 수 있었다. 세 결함 모두 회귀 테스트를 붙여 고쳤다.
 
 설계에서 바뀐 점: 세션 간 조율은 `$.store`가 아니라 `~/.claude/state/cc-mods/lease/*.json` 파일 lease로 한다(`$.fs`로 매번 읽음). `$.store.get`이 다른 세션의 쓰기를 바로 보는지 문서에 없고, 측정에서 공유 캐시가 신선한데도 8개 세션이 각자 poll했기 때문이다. guard는 리더 pid가 아니라 프로세스 그룹(`kill -0 -<pgid>`)을 본다. 그래야 `worker-server` helper가 남은 동안 계속 지킨다.
 
