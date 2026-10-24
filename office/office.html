@@ -79,6 +79,8 @@ canvas.drag { cursor: grabbing; }
 #card .rel a.view::after { content: ' 👁'; }
 #gear { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #pickchip { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
+#res { pointer-events: auto; cursor: help; }
+#res b { margin-left: 1px; }
 #pickchip.on { background: #7dd3fc; color: #2a2033; }
 body.picking #c { cursor: crosshair; }
 #settings { position: fixed; left: 14px; top: 52px; width: 340px; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 13px; }
@@ -154,7 +156,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <body>
 <header>
   <h1 id="office-title">🏢 __OFFICE_OWNER__네 사무실</h1>
-  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span>
+  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span><span class="chip" id="res" title="공용 자원 (계정·쿼터)"></span>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
   <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
@@ -196,6 +198,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 </div>
 <script src="brands.js"></script>
 <script src="skins.js"></script>
+<script src="resources.js"></script>
 <script>
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
@@ -545,6 +548,7 @@ function apply(people, panes = []) {
   document.getElementById('s2').innerHTML = '일하는 중 <b>' + stats.work + '</b>'
   document.getElementById('s3').innerHTML = '나를 기다림 <b>' + stats.wait + '</b>'
   document.getElementById('s4').innerHTML = '서브에이전트 <b>' + stats.subs + '</b>'
+  const rc = document.getElementById('res'), rh = hasResources() ? guarded('resources chip', () => resChipHtml(resourcesNow)) || '' : ''; rc.innerHTML = rh; rc.style.display = rh ? '' : 'none'
   renderQueue()
 }
 
@@ -564,6 +568,8 @@ const picked = new Set()
 // Shift+mouse for its own text selection, so ⇧click often never reaches here.
 let pickMode = false
 let meetingsNow = []
+// Shared resources (office/resources.js): accounts and quotas from the harness.
+let resourcesNow = []
 const meetingOf = (sid) => meetingsNow.find((m) => m.sids.includes(sid))
 let mutedSince = {}
 const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
@@ -1122,6 +1128,11 @@ function hitStuff(mx, my) {
 }
 function hover(e) {
   // Over the card, the queue or the help, the office behind them is not hovered.
+  if (e.target && e.target.closest && e.target.closest('#res')) {
+    tip.innerHTML = hasResources() ? guarded('resources tip', () => resTip(resourcesNow)) || '' : ''
+    tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 200) + 'px'
+    return
+  }
   const overUi = e.target && e.target.closest && e.target.closest('#card, #ask, #help, header')
   const h = drag && drag.moved || overUi ? null : hit(e.clientX, e.clientY)
   for (const x of ents.values()) x.hl = x === h
@@ -1134,6 +1145,11 @@ function hover(e) {
     const parts = st.kind === 'meeting' ? '🗣 ' + esc(st.meeting.topic) + '<br>' + st.meeting.sids.map((id) => esc(ents.get(id)?.data.name || id.slice(0, 8)) + (id === st.meeting.lead ? ' (진행)' : '')).join(', ') + '<br><span class="m">클릭하면 회의록</span>' : st.kind === 'memory' ? '📦 요약 상자 ' + st.n + '개 · 대화를 ' + st.n + '번 압축했습니다' + (owner?.compactAt ? ' (마지막 ' + ago(owner.compactAt).replace('째', ' 전') + ')' : '') : st.kind === 'desk' ? '📥 받은 것 ' + (m.in || 0) + ' · 📤 보낸 것 ' + outN + ' · 📝 ' + (m.scratch || 0) + ' · 📄 ' + (m.file || 0) + (m.exp ? ' · 🗂 ' + m.exp : '') + (m.artifact ? ' · 🖼 ' + m.artifact : '') : st.kind === 'pr' || st.kind === 'slack' || st.kind === 'ticket' ? ['pr', 'slack', 'ticket'].filter((k) => owner?.made?.[k]).map((k) => SHELF[k].icon + ' ' + SHELF[k].name + ' ' + owner.made[k]).join(' · ') : sh.icon + ' ' + sh.name + ' ' + st.n
     tip.innerHTML = '<div class="t">' + esc(owner ? owner.name : '') + '의 책상</div><div>' + parts + '</div><div class="m">' + (st.kind === 'desk' ? '클릭하면 서랍 열기' : '클릭하면 목록 열기') + '</div>'
     tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 140) + 'px'
+    return
+  }
+  if (!h && !overUi && onResourceBoard(e.clientX, e.clientY)) {
+    tip.innerHTML = hasResources() ? guarded('resources tip', () => resTip(resourcesNow)) || '' : ''
+    tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'; tip.style.top = Math.min(e.clientY + 16, innerHeight - 200) + 'px'
     return
   }
   if (!h && hoverZone) {
@@ -1819,7 +1835,9 @@ function marginLabels() {
 const WALL_H = 70
 const backQuad = (x0, x1, z0, z1) => [P(x0, -0.3, z0), P(x1, -0.3, z0), P(x1, -0.3, z1), P(x0, -0.3, z1)]
 const leftQuad = (y0, y1, z0, z1) => [P(-0.3, y0, z0), P(-0.3, y1, z0), P(-0.3, y1, z1), P(-0.3, y0, z1)]
-const leftWindows = () => { const out = []; for (let y = 4.9; y + 1.6 < D - 1.9; y += 2.7) out.push(y); return out }
+// The resources board takes the first window's place beside the status board.
+const RES_BOARD = () => ({ y0: 4.2, y1: 7.3, z0: 20, z1: 68 })
+const leftWindows = () => { const out = []; for (let y = 7.6; y + 1.6 < D - 1.9; y += 2.7) out.push(y); return out }
 // The way out: a door in the left wall near the front.
 const exitAt = () => [D - 1.45, D - 0.75]
 // Text painted on a wall: its baseline runs along the wall (dir 'x' for the
@@ -1875,6 +1893,7 @@ function walls(t) {
   hand(((now.getHours() % 12) + now.getMinutes() / 60) / 12 * Math.PI * 2, 6, 2); hand(now.getMinutes() / 60 * Math.PI * 2, 9, 1.4)
   g.strokeStyle = '#e86a5c'; hand(now.getSeconds() / 60 * Math.PI * 2, 9.5, 0.7)
   statusBoard(t)
+  resourceBoard(t)
   leftWindows().forEach((y0, k) => wallWindow(leftQuad, (a, z) => P(-0.3, a, z), y0, y0 + 1.6, 30, 62, blindDrop(k + 2), t, k + 2))
   exitDoor(t)
 }
@@ -1908,6 +1927,25 @@ function statusBoard(t) {
   L(y1 - 0.2, z0 + 8, up ? '다음 ▶ ' + up.name : '모두 순항 중 ✓', 9, up ? '#ffcf5a' : '#9ff0b5', 'left')
   poly(leftQuad(y0 + 0.1, y1 - 0.1, z0 - 2, z0 - 0.5), '#c9b28f', null)
   circle(...P(-0.3, y0 + 0.9, z0 - 1.3), 1.6 * cam.s, '#f2f2f2', null); circle(...P(-0.3, y0 + 1.05, z0 - 1.3), 1.6 * cam.s, '#5c9de8', null)
+}
+// An add-on (resources.js, a skin hook) that fails draws nothing, and the
+// office goes on: a missing script or a bad source must not blank the frame.
+// Seen live: a server older than the page answered resources.js 404, the
+// board threw, and nothing after the walls was drawn.
+function guarded(name, f) {
+  try { return f() } catch (err) { if (!guarded[name]) { guarded[name] = true; console.warn('office: ' + name + ' failed', err) } }
+}
+const hasResources = () => typeof drawResourceBoard === 'function'
+function resourceBoard(t) {
+  if (!hasResources()) return
+  const ctx = { g, P, cam, poly, circle, rrect, text, leftQuad, wallText }
+  guarded('resources', () => { if (!(skin.drawResources && skin.drawResources(ctx, RES_BOARD(), resourcesNow, t))) drawResourceBoard(ctx, RES_BOARD(), resourcesNow, t) })
+}
+// Over the resources board: its face on screen, for the tooltip.
+function onResourceBoard(mx, my) {
+  const { y0, y1, z0, z1 } = RES_BOARD(), q = leftQuad(y0, y1, z0, z1)
+  const path = new Path2D(); path.moveTo(...q[0]); for (const pt of q.slice(1)) path.lineTo(...pt); path.closePath()
+  return g.isPointInPath(path, mx * DPR, my * DPR)
 }
 // A radiator under a left-wall window: a low white box with fins.
 function radiator(y0, t) {
@@ -2787,7 +2825,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; apply(j.people, j.panes || []); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; apply(j.people, j.panes || []); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

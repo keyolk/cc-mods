@@ -183,6 +183,13 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
       // A guild crest projected over the meeting-room floor.
       add(14.7 + 3.9, () => { const [cx, cy] = P(15.15, 3.85, 1); g.save(); g.globalAlpha = .48; text('◆', cx, cy, 25, '#d6b45b'); text('⚔', cx, cy - 1 * cam.s, 11, '#5d3540'); g.restore() }, [14.8, 15.5, 3.55, 4.15])
     },
+    // The shared accounts as the guild's mana ledger: the same board and rows
+    // (office/resources.js), on parchment in a timber frame.
+    drawResources(ctx, board, items, t) {
+      if (typeof drawResourceBoard !== 'function') return true
+      drawResourceBoard(ctx, board, items, t, { bg: '#e7d3a6', ink: '#3b2a1e', dim: '#7a6447', title: '#5a2f1c', frame: '#4a2f1e', heading: '🔮 마나 장부' })
+      return true
+    },
     afterFrame({ g, width, height }, t) {
       const alpha = 0.035 + Math.sin(t * 1.7) * 0.008
       g.save()

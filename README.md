@@ -411,6 +411,14 @@ else the first name of your account's full name, else your login name.
   lift and a status board over the library (sessions, working, waiting, who
   is next, the time). The sky in the windows and how far the blinds are down
   follow the local hour.
+- **Shared resources**: the model accounts every session draws on hang on a
+  board beside the status board (`🔋 공용 자원`; the guild hall's `🔮 마나
+  장부`): a lamp per account (●ok ◐ nearly out ⏸ cooldown ✗ expired), a bar
+  per quota window (5h, 7d, a pool) going amber under 30% and red under 10%,
+  or the cooldown's time left. The header's `🔋` chip carries the lamps and
+  each account's lowest percent so it reads without zooming; hovering either
+  lists them in full. A dotted bar is the last value seen, not a live one.
+  See [Office resources](#office-resources-sources) for where they come from.
 - **No mouse needed**: when a card opens the keyboard is already in its
   reply box (TWeb passes keys to a focused text field), so: type, `Enter`
   (`⇧Enter` a new line); in an empty box `1`-`9` press a button; `Tab`/`⇧Tab`
@@ -428,6 +436,42 @@ else the first name of your account's full name, else your login name.
   zoom, `F` fit. They also work with the Korean layout on (`ㅜ` for `N`, …).
 - Every POST needs the token the server writes into its page and a local
   `Host`: another site in the browser cannot drive a session through it.
+
+### Office resources: sources
+
+The harness changes (ccproxy today, cco or plain Claude Code tomorrow), so the
+office never reads a tool's output in the page. `office/resources.py` holds
+*sources*: a command and a parser that turns its output into one shape,
+
+```json
+{"source": "ccproxy", "label": "ccproxy", "ok": true,
+ "accounts": [{"id": "claude-a", "provider": "anthropic",
+               "state": "ok|soon|cooldown|expired|off|unknown",
+               "gauges": [{"name": "5h", "left_pct": 71, "reset_at": 1792825200}],
+               "note": "spend cap", "stale": false, "until": 1793131200}]}
+```
+
+and `/state` carries the list as `resources`. The page (`office/resources.js`)
+draws only that shape, and a skin draws it its own way with
+`drawResources(ctx, board, items, t)`. A new harness is a new entry in
+`SOURCES`; nothing in the page changes.
+
+| source | command | what it gives |
+|---|---|---|
+| `ccproxy` | `ccproxy status --offline --json` | each account: state, 5h/7d or pool left, cooldown end |
+| `cco` | `cco status --once --json` | whether each provider answers (cco reports no per-account quota yet) |
+
+Sources read only local or offline state, never an upstream API: one office
+server serves every browser, at most once a minute per source, in the
+background so `/state` never waits on one, and a failed read keeps the last
+good values marked stale (see the degraded-network investigation). Which run
+comes from `~/.config/cc-mods/office.json`:
+
+```json
+{"resources": ["ccproxy", "cco"]}
+```
+
+Without it every source whose command is installed is tried.
 
 ## Organisation (`~/.config/cc-mods/org.json`)
 
