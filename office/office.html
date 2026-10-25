@@ -22,7 +22,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; 
 canvas.drag { cursor: grabbing; }
 #tip { position: fixed; pointer-events: none; z-index: 5; max-width: 320px; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 12px; padding: 8px 11px; display: none; box-shadow: 0 4px 0 var(--line); }
 #tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
-#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: 260px; max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
+#card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: min(340px, calc(100% - 20px)); max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
 #card.max { left: 10px !important; right: 10px !important; top: 10px !important; bottom: 10px !important; width: auto !important; height: auto !important; max-height: none; }
 #card .titlebar { position: sticky; top: -12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: -12px -14px 6px; padding: 10px 10px 7px 14px; background: #fffaf0; border-bottom: 2px solid rgba(59,42,53,.14); cursor: grab; user-select: none; touch-action: none; }
 #card .titlebar:active { cursor: grabbing; }
@@ -130,6 +130,24 @@ body.picking #c { cursor: crosshair; }
 #card .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
 #card .cfoot { position: sticky; bottom: -12px; margin: 8px -14px -12px; padding: 8px 14px 10px; background: #fffaf0; border-top: 2px dashed rgba(59,42,53,.18); box-shadow: 0 -6px 10px rgba(255,250,240,.9); }
 #card .cfoot .row:last-of-type { margin-bottom: 4px; }
+/* A session card is a column: title, tabs and the foot take what they need,
+   the answer pane takes the rest and scrolls inside. The card as a whole no
+   longer scrolls, so a short card cannot hide the answer under the sticky
+   foot (seen at the 300x260 minimum: a 209px foot over a 429px answer). */
+#card.panes { display: flex !important; flex-direction: column; overflow: hidden; }
+#card.panes > * { flex: 0 0 auto; }
+#card.panes > .cpane { flex: 1 1 auto; min-height: 60px; overflow: auto; }
+#card.panes > .cpane .said, #card.panes > .cpane .rel { max-height: none; }
+#card.panes .cfoot { position: static; margin: 6px -14px -12px; box-shadow: none; }
+/* Short card: the foot folds to one line of buttons and a one-line reply box. */
+#card.panes.compact .cfoot { padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+#card.panes.compact .cfoot > * { margin: 0 !important; }
+#card.panes.compact .cfoot .row { display: contents; }
+#card.panes.compact .cfoot textarea { order: -1; flex: 1 0 100%; min-height: 30px; height: 30px; resize: none; }
+#card.panes.compact .cfoot button.act { font-size: 12px; padding: 2px 7px; }
+#card.panes.compact .cfoot button.send, #card.panes.compact .cfoot .q, #card.panes.compact .scrollhint { display: none; }
+#card.panes.compact .cfoot .msg:empty { display: none; }
+#card.panes.compact > .sub { max-height: 2.9em; overflow: hidden; font-size: 11px; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .shelf .tabs button.on { background: #2a2033; color: #fff; }
@@ -659,8 +677,11 @@ function step(dir, skip) {
   openCard(next.id)
 }
 // Scroll the open card's answer without the mouse: a few lines or a page.
+// The answer scrolls in its pane when the card is a column (#card.panes), in
+// itself otherwise: move whichever of the two actually overflows.
 function scrollSaid(how) {
-  const el = card.said; if (!el) return false
+  if (!card.said) return false
+  const pane = card.said.closest('.cpane'), el = pane && pane.scrollHeight > pane.clientHeight + 1 ? pane : card.said
   const line = 40, page = el.clientHeight * 0.9
   if (how === 'up') el.scrollTop -= line; else if (how === 'down') el.scrollTop += line
   else if (how === 'pgup') el.scrollTop -= page; else if (how === 'pgdn') el.scrollTop += page
@@ -829,7 +850,7 @@ addEventListener('keydown', (e) => {
 // the person's own prompt; a dialog choice is its digit key.
 const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
-const CARD_MIN_W = 300, CARD_MIN_H = 260
+const CARD_MIN_W = 300, CARD_MIN_H = 340
 let cardResize = null, cardMove = null
 function handleCardAlt(e) {
   const k = e.key, hit = (fn) => { e.preventDefault(); fn(); return true }
@@ -867,6 +888,10 @@ function restoreCardLayout() {
   const z = cardLayout(); if (!z) return
   setCardPosition(z.x == null ? innerWidth - z.w - 10 : z.x, z.y == null ? 52 : z.y); setCardSize(z.w, z.h)
 }
+// A short card folds its foot (see #card.panes.compact) so the answer keeps
+// room; decided by the card's own height, whatever changed it.
+const CARD_COMPACT_H = 420
+new ResizeObserver(() => card.classList.toggle('compact', card.offsetHeight > 0 && card.offsetHeight < CARD_COMPACT_H)).observe(card)
 function fitCardToViewport() {
   if (card.classList.contains('max')) return
   setCardPosition(card.offsetLeft, card.offsetTop); setCardSize(card.offsetWidth, card.offsetHeight)
@@ -946,6 +971,7 @@ async function openCard(sid, kind = null) {
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
   cardRoute = d.route || 'default'
   card.innerHTML = ''
+  card.classList.add('panes')
   card.selectTab = card.openCurrent = card.moveResource = null
   card.resourceLinks = []
   // add() puts things where `into` points: the card, then its tab panes, then
@@ -1010,9 +1036,8 @@ async function openCard(sid, kind = null) {
   if (d.text) {
     const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
     // Opens at the end, where the question usually is; the keys scroll it.
-    said.style.scrollBehavior = 'auto'; said.scrollTop = 1e9; said.style.scrollBehavior = ''
     card.said = said
-    if (said.scrollHeight > said.clientHeight + 4) add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
+    add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
   }
   showTab(0)
   if (groups.length < 2) tabbar.style.display = 'none'
@@ -1077,7 +1102,7 @@ async function openCard(sid, kind = null) {
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
     }
-    const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go'; b.innerHTML = '<span class="key">⏎</span>보내기'; b.onclick = go; r2.appendChild(b)
+    const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go send'; b.innerHTML = '<span class="key">⏎</span>보내기'; b.onclick = go; r2.appendChild(b)
   }
   const nav = add('div', 'row')
   card.stop = null
@@ -1089,6 +1114,16 @@ async function openCard(sid, kind = null) {
   zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
   foot.appendChild(msg)
+  // Laid out now: open the answer at its end, where the question usually is,
+  // and keep the scroll hint only when there is something to scroll.
+  if (card.said) {
+    const pane0 = card.said.closest('.cpane'); for (const el of [card.said, pane0]) if (el) el.style.scrollBehavior = 'auto'
+    scrollSaid('bottom')
+    for (const el of [card.said, pane0]) if (el) el.style.scrollBehavior = ''
+    const pane = card.said.closest('.cpane'), hint = pane && pane.querySelector('.scrollhint')
+    const over = (el) => el && el.scrollHeight > el.clientHeight + 4
+    if (hint && !over(pane) && !over(card.said)) hint.remove()
+  }
   // A dialog has no reply box; the card itself takes the keys then.
   setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } }, 30)
 }
