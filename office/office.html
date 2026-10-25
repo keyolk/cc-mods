@@ -134,7 +134,9 @@ body.picking #c { cursor: crosshair; }
    the answer pane takes the rest and scrolls inside. The card as a whole no
    longer scrolls, so a short card cannot hide the answer under the sticky
    foot (seen at the 300x260 minimum: a 209px foot over a 429px answer). */
-#card.panes { display: flex !important; flex-direction: column; overflow: hidden; }
+/* Open or shut is the inline display (block / none) every caller sets; the
+   column applies only while open, so closing still hides the card. */
+#card.panes[style*="display: block"] { display: flex !important; flex-direction: column; overflow: hidden; }
 #card.panes > * { flex: 0 0 auto; }
 #card.panes > .cpane { flex: 1 1 auto; min-height: 60px; overflow: auto; }
 #card.panes > .cpane .said, #card.panes > .cpane .rel { max-height: none; }
