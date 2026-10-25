@@ -189,10 +189,10 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <div id="help">
   <h3>⌨️ 단축키</h3>
   <table>
-    <tr><td><kbd>N</kbd> <kbd>Tab</kbd></td><td>다음으로 답할 agent (❗ 먼저, 오래 기다린 순)</td></tr>
-    <tr><td><kbd>P</kbd> <kbd>⇧Tab</kbd></td><td>이전 agent</td></tr>
+    <tr><td><kbd>N</kbd> <kbd>Tab</kbd> (답장칸에선 <kbd>Tab</kbd> <kbd>⌥N</kbd>)</td><td>다음으로 답할 agent (❗ 먼저, 오래 기다린 순)</td></tr>
+    <tr><td><kbd>P</kbd> <kbd>⇧Tab</kbd> (답장칸에선 <kbd>⇧Tab</kbd> <kbd>⌥P</kbd>)</td><td>이전 agent</td></tr>
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
-    <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈)</td></tr>
+    <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈). 답장칸에서는 글자가 입력이 되므로 카드 단축키는 <kbd>⌥</kbd>를 붙이거나 <kbd>Esc</kbd>로 빠져나온 뒤 누릅니다</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥4</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
     <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
@@ -204,17 +204,17 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
     <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>사람이나 책상으로 세션 선택 → 🗂 사람·책상을 끌어 창 옮기기 · 🗣 회의 · 📣 공지 · 💤 미루기</td></tr>
     <tr><td>고르기에서 사람·책상 끌기</td><td>그 세션의 tmux 창을 다른 책상 묶음에 합치거나 다른 tmux 구획으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
-    <tr><td><kbd>S</kbd></td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
-    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
+    <tr><td><kbd>S</kbd> (답장칸에선 <kbd>⌥S</kbd>)</td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
+    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자나 <kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd>로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
     <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
-    <tr><td><kbd>G</kbd></td><td>그 agent의 tmux 창으로 이동</td></tr>
+    <tr><td><kbd>G</kbd> (답장칸에선 <kbd>⌥G</kbd>)</td><td>그 agent의 tmux 창으로 이동</td></tr>
     <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>답변 한 화면씩 (답장칸에서도)</td></tr>
     <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>j</kbd><kbd>k</kbd> <kbd>Space</kbd> <kbd>Home</kbd><kbd>End</kbd></td><td>답변 스크롤 (빈 답장칸에선 ↑↓)</td></tr>
-    <tr><td><kbd>Esc</kbd></td><td>카드 닫기 / 입력 빠져나오기</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>맨 위 한 겹만 닫기: 메뉴 → 입력 빠져나오기 → 카드</td></tr>
     <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>(카드가 닫혔을 때) 이동 · 확대 · 축소 · 전체 맞춤</td></tr>
     <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
   </table>
-  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 처음 한 번 <kbd>i</kbd>(insert)로 키를 페이지에 넘기세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
+  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 normal 모드가 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd>(탭 닫기) <kbd>f</kbd> <kbd>j</kbd><kbd>k</kbd> 같은 글자 키를 먼저 가져갑니다. <kbd>i</kbd>(insert)로 키를 페이지에 넘기거나, 어디서나 통하는 <kbd>⌥</kbd> 조합(<kbd>⌥G</kbd> <kbd>⌥Z</kbd> <kbd>⌥N</kbd> <kbd>⌥S</kbd>…)을 쓰세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
 </div>
 <script src="brands.js"></script>
 <script src="skins.js"></script>
@@ -658,11 +658,16 @@ function showQuiet(id, anchor) {
   // Shown first so it has a height: then it goes just above the button.
   quietMenu.style.display = 'block'
   quietMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - 260)) + 'px'; quietMenu.style.top = Math.max(8, r.top - quietMenu.offsetHeight - 6) + 'px'
-  quietMenu.id_ = id
+  quietMenu.id_ = id; quietMenu.back = document.activeElement
   quietMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => pickQuiet(b.dataset.v) })
+  // The menu holds the focus while open: TWeb then sends Esc to the page
+  // instead of spending it on leaving the reply box's insert mode.
+  quietMenu.querySelector('button')?.focus({ preventScroll: true })
 }
 function pickQuiet(v) { const ids = [].concat(quietMenu.id_); hideQuiet(); for (const id of ids) setMute(id, v === 'speak' ? 'speak' : +v); if (ids.length > 1) { picked.clear(); renderPicks() } }
-function hideQuiet() { quietMenu.style.display = 'none'; quietMenu.id_ = null }
+// Closing hands the keys back to where they were (the reply box, usually),
+// so the next Esc leaves that and only the one after closes the card.
+function hideQuiet() { quietMenu.style.display = 'none'; quietMenu.id_ = null; const b = quietMenu.back; quietMenu.back = null; if (b && b.isConnected && b !== document.body) b.focus({ preventScroll: true }) }
 addEventListener('mousedown', (e) => { if (quietMenu.id_ && !e.target.closest('#quietmenu, .snz')) hideQuiet() }, true)
 // Who N (dir 1) or P (dir -1) opens: the waiting agent after the open card,
 // or the first (last) when none is open. The one answer for the key, the
@@ -783,56 +788,86 @@ resetBtn.onclick = resetView
 function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(pane)) }
 
 // ---------- keyboard ----------
+// A key goes to the topmost thing that is open, and only to it: a popup menu
+// (미루기, 열 곳) over the card, the card over the office. So Esc closes one
+// layer at a time, and a menu's digits never press the card's buttons.
+// Letters are matched by physical key (e.code): the Korean layout, and ⌥
+// (which turns letters and digits into symbols on macOS), need no second
+// spelling.
 const help = document.getElementById('help')
+const keyName = (e) => (/^Key[A-Z]$/.test(e.code || '') ? e.code[3].toLowerCase() : e.altKey && /^Digit\d$/.test(e.code || '') ? e.code[5] : e.key)
+// A popup menu's own keys: a digit picks, ↑↓ move, Enter/Space press, Esc
+// closes it alone. Any other key closes it and goes on to the layer below.
+function menuKey(menu, k, pick, hide, hit) {
+  const bs = [...menu.querySelectorAll('button')], at = bs.indexOf(document.activeElement)
+  if (/^[1-9]$/.test(k) && bs[+k - 1]) { hit(() => pick(bs[+k - 1])); return true }
+  if (k === 'Escape') { hit(hide); return true }
+  if (k === 'ArrowDown' || k === 'ArrowUp') { const d = k === 'ArrowDown' ? 1 : -1; hit(() => bs[at < 0 ? (d > 0 ? 0 : bs.length - 1) : (at + d + bs.length) % bs.length].focus()); return true }
+  if ((k === 'Enter' || k === ' ') && at >= 0) { hit(() => pick(bs[at])); return true }
+  hide(); return false
+}
+// The card's letter keys. From the reply box they need ⌥, since there a bare
+// letter is typing.
+function cardLetter(k) {
+  if (k === 'm') return toggleCardMax
+  if ((k === 'r' || k === '/') && card.reply) return () => card.reply.focus()
+  if (k === 's' && card.stop) return () => card.stop.click()
+  if (k === 'a' && card.grant) return () => card.grant.click()
+  if (k === 'z' && card.mute) return () => card.mute.click()
+  if (k === 'g' && card.go) return () => card.go.click()
+  if (k === 'n') return () => step(1)
+  if (k === 'p') return () => step(-1)
+  return null
+}
 addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.isComposing) return
   const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
   const open = card.style.display === 'block'
-  if (e.metaKey || e.ctrlKey) return
-  if (open && e.altKey && handleCardAlt(e)) return
-  if (typing) return // the reply box handles its own keys
-  const k = e.key
+  const k = keyName(e)
   const hit = (fn) => { e.preventDefault(); fn() }
+  if (quietMenu.id_ && menuKey(quietMenu, k, (b) => pickQuiet(b.dataset.v), hideQuiet, hit)) return
+  if (placeMenu.v && menuKey(placeMenu, k, (b) => pickPlace(b.dataset.k), hidePlaces, hit)) return
+  // ⌥ works everywhere, the reply box and TWeb's normal mode included: TWeb
+  // keeps bare g, z, x, f, j, k… for itself there but passes ⌥ chords on.
+  if (e.altKey) {
+    if (open && handleCardAlt(e, k)) return
+    if (k === 'n' || k === 'p') return hit(() => step(k === 'n' ? 1 : -1))
+    if (k === 'v' && !open) return hit(() => setPickMode(!pickMode))
+    if (k === 'f') return hit(() => { cam.user = false; camGo.on = false; fit() })
+  }
+  if (typing) return // the reply box handles its own keys
   if (viewer.path && k === 'Escape') return hit(closeViewer)
-  if (k === ',' ) return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
+  if (viewer.path && k === 'o') return hit(() => (e.shiftKey ? showPlaces(viewer.path, viewer.querySelector('.place')) : openLink(viewer.path)))
+  if (k === ',') return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
   if (settings.style.display === 'block' && k === 'Escape') return hit(closeSettings)
-  if (placeMenu.v && /^[1-7]$/.test(k)) { const b = placeMenu.querySelectorAll('button')[+k - 1]; if (b) return hit(() => pickPlace(b.dataset.k)) }
-  if (placeMenu.v && k === 'Escape') return hit(hidePlaces)
-  if (viewer.path && (k === 'O' || (e.shiftKey && k === 'ㅒ'))) return hit(() => showPlaces(viewer.path, viewer.querySelector('.place')))
-  if (viewer.path && (k === 'o' || k === 'ㅐ')) return hit(() => openLink(viewer.path))
+  if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
+  if (help.style.display === 'block' && k === 'Escape') return hit(() => { help.style.display = 'none' })
   if (pendingMove && k === 'Enter') return hit(doMove)
   if (pendingMove && k === 'Escape') return hit(cancelMove)
-  if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
   if (k === 'Escape' && picked.size && pickbar.dataset.mode) return hit(() => { pickbar.dataset.mode = ''; renderPicks() })
-  if (k === 'Escape' && (picked.size || pickMode) && card.style.display !== 'block') return hit(() => setPickMode(false))
-  if ((k === 'v' || k === 'V' || k === 'ㅍ') && card.style.display !== 'block') return hit(() => setPickMode(!pickMode))
-  if (k === 'Escape') return hit(() => { if (help.style.display === 'block') help.style.display = 'none'; else closeCard() })
+  if (k === 'Escape' && open) return hit(closeCard)
+  if (k === 'Escape' && (picked.size || pickMode)) return hit(() => setPickMode(false))
+  if (k === 'v' && !open) return hit(() => setPickMode(!pickMode))
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
   if (k === '0') return hit(resetView)
-  if (open && (k === 'm' || k === 'M' || k === 'ㅡ')) return hit(toggleCardMax)
   if (open && card.openCurrent && k === 'Enter') return hit(card.openCurrent)
   if (open && card.shelfTab && k === 'Enter' && card.keys && card.keys[0]) return hit(() => card.keys[0].click())
   if (open && card.shelfTab && (k === '[' || k === ']')) return hit(() => card.shelfTab(k === ']' ? 1 : -1))
-  if (k === 'n' || k === 'N' || k === 'ㅜ') return hit(() => step(1))
-  if (k === 'p' || k === 'P' || k === 'ㅔ') return hit(() => step(-1))
   if (open && /^[1-9]$/.test(k) && card.keys && card.keys[+k]) return hit(() => card.keys[+k].click())
-  if (open && (k === 'r' || k === 'R' || k === '/' || k === 'ㄱ') && card.reply) return hit(() => card.reply.focus())
-  if (open && (k === 's' || k === 'S' || k === 'ㄴ') && card.stop) return hit(() => card.stop.click())
-  if (open && (k === 'a' || k === 'A' || k === 'ㅁ') && card.grant) return hit(() => card.grant.click())
-  if (quietMenu.id_ && /^[1-5]$/.test(k)) { const b = quietMenu.querySelectorAll('button')[+k - 1]; if (b) return hit(() => pickQuiet(b.dataset.v)) }
-  if (quietMenu.id_ && k === 'Escape') return hit(hideQuiet)
-  if (open && (k === 'z' || k === 'Z' || k === 'ㅋ') && card.mute) return hit(() => card.mute.click())
-  if (open && (k === 'g' || k === 'G' || k === 'ㅎ') && card.go) return hit(() => card.go.click())
-  if (open && card.moveResource && (k === 'ArrowUp' || k === 'k' || k === 'ㅏ')) return hit(() => card.moveResource(-1))
-  if (open && card.moveResource && (k === 'ArrowDown' || k === 'j' || k === 'ㅓ')) return hit(() => card.moveResource(1))
+  // Only an open card's buttons: a closed card keeps its last ones around.
+  const act = open ? cardLetter(k) : k === 'n' || k === 'p' ? cardLetter(k) : null
+  if (act) return hit(act)
+  if (open && card.moveResource && (k === 'ArrowUp' || k === 'k')) return hit(() => card.moveResource(-1))
+  if (open && card.moveResource && (k === 'ArrowDown' || k === 'j')) return hit(() => card.moveResource(1))
   if (open && card.said) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
     if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
-    if (k === 'ArrowUp' || k === 'k' || k === 'ㅏ') return hit(() => scrollSaid('up'))
-    if (k === 'ArrowDown' || k === 'j' || k === 'ㅓ') return hit(() => scrollSaid('down'))
+    if (k === 'ArrowUp' || k === 'k') return hit(() => scrollSaid('up'))
+    if (k === 'ArrowDown' || k === 'j') return hit(() => scrollSaid('down'))
     if (k === 'Home') return hit(() => scrollSaid('top'))
     if (k === 'End') return hit(() => scrollSaid('bottom'))
   }
-  if (k === 'f' || k === 'F' || k === 'ㄹ') return hit(() => { cam.user = false; camGo.on = false; fit() })
+  if (k === 'f') return hit(() => { cam.user = false; camGo.on = false; fit() })
   const PAN = 60
   if (k === 'ArrowLeft') return hit(() => { cam.user = true; camGo.on = false; cam.ox += PAN })
   if (k === 'ArrowRight') return hit(() => { cam.user = true; camGo.on = false; cam.ox -= PAN })
@@ -854,10 +889,9 @@ const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
 const CARD_MIN_W = 300, CARD_MIN_H = 340
 let cardResize = null, cardMove = null
-function handleCardAlt(e) {
-  const k = e.key, hit = (fn) => { e.preventDefault(); fn(); return true }
+function handleCardAlt(e, k) {
+  const hit = (fn) => { e.preventDefault(); fn(); return true }
   if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
-  if (k === 'm' || k === 'M' || e.code === 'KeyM') return hit(toggleCardMax)
   if (e.shiftKey && k === 'ArrowLeft') return hit(() => moveCardBy(-40, 0))
   if (e.shiftKey && k === 'ArrowRight') return hit(() => moveCardBy(40, 0))
   if (e.shiftKey && k === 'ArrowUp') return hit(() => moveCardBy(0, -40))
@@ -866,6 +900,8 @@ function handleCardAlt(e) {
   if (k === 'ArrowRight') return hit(() => resizeCardBy(40, 0))
   if (k === 'ArrowUp') return hit(() => resizeCardBy(0, -40))
   if (k === 'ArrowDown') return hit(() => resizeCardBy(0, 40))
+  const act = cardLetter(k)
+  if (act) return hit(act)
   return false
 }
 function cardLayout() {
@@ -1088,18 +1124,17 @@ async function openCard(sid, kind = null) {
     // The reply box takes the keyboard as soon as the card opens: type and
     // Enter. Empty, a digit presses that button and Tab moves to the next
     // agent, so the whole round needs no mouse and no mode key.
-    const ta = add('textarea'); ta.placeholder = '바로 입력 · Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · Esc 빠져나오기'; card.reply = ta
+    const ta = add('textarea'); ta.placeholder = '바로 입력 · Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · ⌥G 창으로 · ⌥Z 미루기 · Esc 빠져나오기'; card.reply = ta
     const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
     ta.onkeydown = (e) => {
       if (e.isComposing || e.keyCode === 229) return // the Korean IME is still composing this syllable
+      if (quietMenu.id_ || placeMenu.v) return // an open menu takes the keys (menuKey), not the box
       // These bubble to the card-level shortcuts, even while this field owns
       // ordinary typing and arrows.
-      if (e.altKey && (/^[1-9]$/.test(e.key) || e.key.startsWith('Arrow') || e.code === 'KeyM')) return
+      if (e.altKey) return // ⌥ keys are the card's (handleCardAlt): ⌥G, ⌥Z, ⌥1…
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
-      if (!ta.value && e.altKey && (e.key === 'a' || e.code === 'KeyA') && card.grant) { e.preventDefault(); card.grant.click(); return }
-      if (e.altKey && (e.key === 'z' || e.code === 'KeyZ') && card.mute) { e.preventDefault(); card.mute.click(); return }
       if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
@@ -1330,15 +1365,16 @@ function showPlaces(v, anchor) {
     '<button data-k="' + k + '"' + (k === cur ? ' class="on"' : '') + '><kbd>' + (i + 1) + '</kbd> ' + name + (k === 'session' ? ' <span class="m">(' + (PLACE_NAME[cardRoute] ? cardRoute : cardRoute) + ')</span>' : '') + '</button>').join('')
   const r = anchor.getBoundingClientRect()
   placeMenu.style.left = Math.max(8, Math.min(r.left, innerWidth - 260)) + 'px'; placeMenu.style.top = (r.bottom + 6) + 'px'; placeMenu.style.display = 'block'
-  placeMenu.v = v
+  placeMenu.v = v; placeMenu.back = document.activeElement
   placeMenu.querySelectorAll('button').forEach((b) => { b.onclick = () => pickPlace(b.dataset.k) })
+  ;(placeMenu.querySelector('button.on') || placeMenu.querySelector('button'))?.focus({ preventScroll: true })
 }
 function pickPlace(k) {
   const v = placeMenu.v; hidePlaces()
   try { localStorage.setItem(placeKey(v), k) } catch {}
   openLink(v, k)
 }
-function hidePlaces() { placeMenu.style.display = 'none'; placeMenu.v = null }
+function hidePlaces() { placeMenu.style.display = 'none'; placeMenu.v = null; const b = placeMenu.back; placeMenu.back = null; if (b && b.isConnected && b !== document.body) b.focus({ preventScroll: true }) }
 addEventListener('mousedown', (e) => { if (placeMenu.v && !e.target.closest('#placemenu, .place')) hidePlaces() }, true)
 
 // ---------- settings (⚙) ----------
