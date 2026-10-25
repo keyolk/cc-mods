@@ -677,8 +677,11 @@ function step(dir, skip) {
   openCard(next.id)
 }
 // Scroll the open card's answer without the mouse: a few lines or a page.
+// The answer scrolls in its pane when the card is a column (#card.panes), in
+// itself otherwise: move whichever of the two actually overflows.
 function scrollSaid(how) {
-  const el = card.said; if (!el) return false
+  if (!card.said) return false
+  const pane = card.said.closest('.cpane'), el = pane && pane.scrollHeight > pane.clientHeight + 1 ? pane : card.said
   const line = 40, page = el.clientHeight * 0.9
   if (how === 'up') el.scrollTop -= line; else if (how === 'down') el.scrollTop += line
   else if (how === 'pgup') el.scrollTop -= page; else if (how === 'pgdn') el.scrollTop += page
@@ -1033,9 +1036,8 @@ async function openCard(sid, kind = null) {
   if (d.text) {
     const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
     // Opens at the end, where the question usually is; the keys scroll it.
-    said.style.scrollBehavior = 'auto'; said.scrollTop = 1e9; said.style.scrollBehavior = ''
     card.said = said
-    if (said.scrollHeight > said.clientHeight + 4) add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
+    add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
   }
   showTab(0)
   if (groups.length < 2) tabbar.style.display = 'none'
@@ -1112,6 +1114,16 @@ async function openCard(sid, kind = null) {
   zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
   foot.appendChild(msg)
+  // Laid out now: open the answer at its end, where the question usually is,
+  // and keep the scroll hint only when there is something to scroll.
+  if (card.said) {
+    const pane0 = card.said.closest('.cpane'); for (const el of [card.said, pane0]) if (el) el.style.scrollBehavior = 'auto'
+    scrollSaid('bottom')
+    for (const el of [card.said, pane0]) if (el) el.style.scrollBehavior = ''
+    const pane = card.said.closest('.cpane'), hint = pane && pane.querySelector('.scrollhint')
+    const over = (el) => el && el.scrollHeight > el.clientHeight + 4
+    if (hint && !over(pane) && !over(card.said)) hint.remove()
+  }
   // A dialog has no reply box; the card itself takes the keys then.
   setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } }, 30)
 }
