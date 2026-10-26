@@ -141,15 +141,22 @@ body.picking #c { cursor: crosshair; }
 #card.panes > .cpane { flex: 1 1 auto; min-height: 60px; overflow: auto; }
 #card.panes > .cpane .said, #card.panes > .cpane .rel { max-height: none; }
 #card.panes .cfoot { position: static; margin: 6px -14px -12px; box-shadow: none; }
-/* Short card: the foot folds to one line of buttons and a one-line reply box. */
-#card.panes.compact .cfoot { padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-#card.panes.compact .cfoot > * { margin: 0 !important; }
-#card.panes.compact .cfoot .row { display: contents; }
-#card.panes.compact .cfoot textarea { order: -1; flex: 1 0 100%; min-height: 30px; height: 30px; resize: none; }
-#card.panes.compact .cfoot button.act { font-size: 12px; padding: 2px 7px; }
-#card.panes.compact .cfoot button.send, #card.panes.compact .cfoot .q, #card.panes.compact .scrollhint { display: none; }
-#card.panes.compact .cfoot .msg:empty { display: none; }
-#card.panes.compact > .sub { max-height: 2.9em; overflow: hidden; font-size: 11px; }
+/* The answer is what the card is for, so everything around it stays thin
+   unless the card is maximised: one row of tabs, a clamped subtitle, and a
+   foot of one reply line (it grows while typing) over one row of buttons. */
+#card.panes:not(.max) .ctabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+#card.panes:not(.max) .ctabs button { flex: 0 0 auto; }
+#card.panes:not(.max) > .sub { max-height: 2.9em; overflow: hidden; font-size: 11px; margin-bottom: 4px; }
+#card.panes:not(.max) .scrollhint { display: none; }
+#card.panes:not(.max) .cfoot { padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+#card.panes:not(.max) .cfoot > * { margin: 0 !important; }
+#card.panes:not(.max) .cfoot > .q { flex: 1 0 100%; }
+#card.panes:not(.max) .cfoot .row { display: contents; }
+#card.panes:not(.max) .cfoot textarea { order: -1; flex: 1 0 100%; min-height: 32px; height: 32px; max-height: 140px; resize: none; }
+#card.panes:not(.max) .cfoot button.act { font-size: 12px; padding: 2px 7px; }
+#card.panes:not(.max) .cfoot button.send { display: none; }
+#card.panes:not(.max) .cfoot .msg:empty { display: none; }
+#card.panes.compact .cfoot .q { display: none; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
 #card .shelf .tabs button.on { background: #2a2033; color: #fff; }
@@ -902,7 +909,8 @@ addEventListener('keypress', (e) => {
 // the person's own prompt; a dialog choice is its digit key.
 const TOKEN = '__OFFICE_TOKEN__'
 const card = document.getElementById('card')
-const CARD_MIN_W = 300, CARD_MIN_H = 340
+const CARD_MIN_W = 380, CARD_MIN_H = 440
+const CARD_DEFAULT_W = 460, CARD_DEFAULT_H = 500
 let cardResize = null, cardMove = null
 function handleCardAlt(e, k) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
@@ -923,7 +931,7 @@ function cardLayout() {
   try { return JSON.parse(localStorage.getItem('office-card-layout') || localStorage.getItem('office-card-size') || 'null') } catch (_) { return null }
 }
 function saveCardLayout() {
-  if (card.classList.contains('max')) return
+  if (card.classList.contains('max') || !card.offsetWidth) return
   try { localStorage.setItem('office-card-layout', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight, x: card.offsetLeft, y: card.offsetTop })) } catch (_) {}
 }
 function setCardPosition(x, y) {
@@ -938,8 +946,12 @@ function setCardSize(w, h) {
   card.style.maxHeight = 'none'
 }
 function restoreCardLayout() {
-  const z = cardLayout(); if (!z) return
-  setCardPosition(z.x == null ? innerWidth - z.w - 10 : z.x, z.y == null ? 52 : z.y); setCardSize(z.w, z.h)
+  // A layout at or under the old 300×340 floor (or a 0×0 one saved while the
+  // card was hidden) left the answer about 80px; start such a card at the
+  // default instead.
+  const z = cardLayout(), fresh = !z || !(z.w > 300 && z.h > 340)
+  const w = fresh ? CARD_DEFAULT_W : z.w, h = fresh ? CARD_DEFAULT_H : z.h
+  setCardPosition(fresh || z.x == null ? innerWidth - w - 10 : z.x, fresh || z.y == null ? 52 : z.y); setCardSize(w, h)
 }
 // A short card folds its foot (see #card.panes.compact) so the answer keeps
 // room; decided by the card's own height, whatever changed it.
@@ -1139,8 +1151,10 @@ async function openCard(sid, kind = null) {
     // The reply box takes the keyboard as soon as the card opens: type and
     // Enter. Empty, a digit presses that button and Tab moves to the next
     // agent, so the whole round needs no mouse and no mode key.
-    const ta = add('textarea'); ta.placeholder = '바로 입력 · Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · ⌥G 창으로 · ⌥Z 미루기 · Esc 빠져나오기'; card.reply = ta
+    const ta = add('textarea'); ta.placeholder = '답장 · Enter 보내기 · 비었을 때 1-9 · Tab 다음 · ⌥G 창 · ⌥Z 미루기 · Esc'; ta.title = 'Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · ⌥G 창으로 · ⌥Z 미루기 · Esc 빠져나오기'; card.reply = ta
     const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
+    // One line until there is more to say; the CSS max-height caps the growth.
+    ta.oninput = () => { if (card.classList.contains('max')) return; ta.style.height = ''; if (ta.value) ta.style.height = ta.scrollHeight + 4 + 'px' }
     ta.onkeydown = (e) => {
       if (e.isComposing || e.keyCode === 229) return // the Korean IME is still composing this syllable
       if (quietMenu.id_ || placeMenu.v) return // an open menu takes the keys (menuKey), not the box
