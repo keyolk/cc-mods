@@ -424,7 +424,17 @@ else the first name of your account's full name, else your login name.
 - **No mouse needed**: when a card opens the keyboard is already in its
   reply box (TWeb passes keys to a focused text field), so: type, `Enter`
   (`⇧Enter` a new line); in an empty box `1`-`9` press a button; `Tab`/`⇧Tab`
-  go to the next/previous agent. From any other window, tmux `prefix O`
+  go to the next/previous agent. Card letters (`G` to its window, `Z`
+  미루기, `S` stop, `A` grant, `N`/`P`, `M`) also work with `⌥` from
+  anywhere, the reply box included. In a TWeb pane that is the dependable
+  form: once Esc leaves the box, TWeb's normal mode takes bare `g` (`gg`),
+  `z` (`zi`/`zo`), `x` (close tab), `f`, `j`/`k` before the page sees them, but
+  passes `⌥` chords on. Keys go to the topmost layer only: an open menu
+  (미루기, where to open) takes digits, `↑`/`↓`, `Enter` and `Esc`, and holds
+  the focus so `Esc` closes just the menu; the next `Esc` closes the card.
+  Letters match the physical key; under the Korean layout TWeb sends a
+  keydown with no key or code and the jamo on the keypress after it, which
+  the office reads back through the 두벌식 map. From any other window, tmux `prefix O`
   (`bin/cc-office-next`; `prefix o` is extrakto's) brings the office pane in
   front and opens the next one waiting:
   `bind-key O run-shell -b '~/src/keyolk/cc-mods/bin/cc-office-next'`
