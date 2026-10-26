@@ -795,7 +795,10 @@ function focusPane(pane) { if (pane) fetch('/focus?pane=' + encodeURIComponent(p
 // (which turns letters and digits into symbols on macOS), need no second
 // spelling.
 const help = document.getElementById('help')
-const keyName = (e) => (/^Key[A-Z]$/.test(e.code || '') ? e.code[3].toLowerCase() : e.altKey && /^Digit\d$/.test(e.code || '') ? e.code[5] : e.key)
+// A key typed under the Korean IME can arrive with no e.code (TWeb sends the
+// jamo as text), so the 두벌식 jamo map back to the letter on that key.
+const JAMO = { 'ㅂ': 'q', 'ㅈ': 'w', 'ㄷ': 'e', 'ㄱ': 'r', 'ㅅ': 't', 'ㅛ': 'y', 'ㅕ': 'u', 'ㅑ': 'i', 'ㅐ': 'o', 'ㅔ': 'p', 'ㅁ': 'a', 'ㄴ': 's', 'ㅇ': 'd', 'ㄹ': 'f', 'ㅎ': 'g', 'ㅗ': 'h', 'ㅓ': 'j', 'ㅏ': 'k', 'ㅣ': 'l', 'ㅋ': 'z', 'ㅌ': 'x', 'ㅊ': 'c', 'ㅍ': 'v', 'ㅠ': 'b', 'ㅜ': 'n', 'ㅡ': 'm', 'ㅃ': 'q', 'ㅉ': 'w', 'ㄸ': 'e', 'ㄲ': 'r', 'ㅆ': 't', 'ㅒ': 'o', 'ㅖ': 'p' }
+const keyName = (e) => (/^Key[A-Z]$/.test(e.code || '') ? e.code[3].toLowerCase() : e.altKey && /^Digit\d$/.test(e.code || '') ? e.code[5] : JAMO[e.key] || e.key)
 // A popup menu's own keys: a digit picks, ↑↓ move, Enter/Space press, Esc
 // closes it alone. Any other key closes it and goes on to the layer below.
 function menuKey(menu, k, pick, hide, hit) {
@@ -819,7 +822,7 @@ function cardLetter(k) {
   if (k === 'p') return () => step(-1)
   return null
 }
-addEventListener('keydown', (e) => {
+function officeKey(e) {
   if (e.metaKey || e.ctrlKey || e.isComposing) return
   const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
   const open = card.style.display === 'block'
@@ -878,7 +881,19 @@ addEventListener('keydown', (e) => {
     const ns = Math.min(4, Math.max(0.25, cam.s * (k === '-' || k === '_' ? 0.85 : 1.18))), r = ns / cam.s, cx = innerWidth / 2, cy = innerHeight / 2
     cam.ox = cx - (cx - cam.ox) * r; cam.oy = cy - (cy - cam.oy) * r; cam.s = ns
   })
-})
+}
+addEventListener('keydown', officeKey)
+// Under the Korean layout TWeb's keydown carries neither key nor code; the
+// jamo arrives only on the keypress after it (charCode 'ㅎ'). Outside a text
+// field that keypress goes through the same keys, read as its jamo.
+addEventListener('keypress', (e) => {
+  if (e.key || e.metaKey || e.ctrlKey) return
+  const t = e.target
+  if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return
+  const d = String.fromCharCode(e.charCode || 0)
+  if (!JAMO[d]) return
+  officeKey({ key: d, code: '', target: t, altKey: e.altKey, shiftKey: e.shiftKey, metaKey: false, ctrlKey: false, isComposing: false, preventDefault: () => e.preventDefault() })
+}, true)
 
 // ---------- quick actions ----------
 // A click opens the session's card: what it last said, its choice dialog if

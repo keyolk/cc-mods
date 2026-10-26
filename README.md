@@ -432,8 +432,9 @@ else the first name of your account's full name, else your login name.
   passes `⌥` chords on. Keys go to the topmost layer only: an open menu
   (미루기, where to open) takes digits, `↑`/`↓`, `Enter` and `Esc`, and holds
   the focus so `Esc` closes just the menu; the next `Esc` closes the card.
-  Letters match the physical key, so the Korean layout needs no second
-  binding. From any other window, tmux `prefix O`
+  Letters match the physical key; under the Korean layout TWeb sends a
+  keydown with no key or code and the jamo on the keypress after it, which
+  the office reads back through the 두벌식 map. From any other window, tmux `prefix O`
   (`bin/cc-office-next`; `prefix o` is extrakto's) brings the office pane in
   front and opens the next one waiting:
   `bind-key O run-shell -b '~/src/keyolk/cc-mods/bin/cc-office-next'`
