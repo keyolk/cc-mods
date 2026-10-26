@@ -376,8 +376,13 @@ else the first name of your account's full name, else your login name.
   lantern warmth and subtle screen grain. Its workers use a separate 32×48
   low-resolution sprite renderer with nearest-neighbour scaling, directional
   walk frames, stepped hair, job headgear and props, rank crowns and zipped
-  mouths. Guild furniture replaces bookshelves, forge machinery, café, sofa,
-  vending machine, radiators, chairs, decorations and the glass meeting room.
+  mouths. Each session keeps one fantasy people (human, elf, dwarf, orc,
+  halfling or tiefling); subagents are hovering, winged fairies. Guild
+  furniture replaces bookshelves, forge machinery, café, sofa, vending
+  machine, radiators, chairs, decorations and the glass meeting room. Timber
+  balustrades replace cubicle partitions, an arched oak gate replaces the EXIT
+  door, and pointed leaded-glass windows with oak shutters replace office
+  windows and blinds.
   The phone booth becomes a carved crystal-comms alcove, with a floating orb
   rather than a handset or phone icon. Desks replace monitors with rune
   tablets, crystal orbs, scrying mirrors, magical devices, books, parchment and

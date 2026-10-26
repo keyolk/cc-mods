@@ -1946,6 +1946,12 @@ function sky() {
 // One window: frame, sky, a drifting cloud or stars, the blind's slats down
 // to `drop` (0-1) and a sill. quad(a, b, z0, z1) maps along-wall a..b.
 function wallWindow(quad, at, a0, a1, z0, z1, drop, t, seed) {
+  // Windows are part of a room's period as much as its furniture. A skin can
+  // replace the whole opening; the modern frame, blind and sky remain the
+  // fallback, so geometry and the wall call sites stay shared.
+  const args = { quad, at, a0, a1, z0, z1, drop, t, seed }
+  const ctx = { g, P, poly, circle, cam, LINE, sky }
+  if (skin.drawWindow && skin.drawWindow(ctx, args)) return
   const sk = sky()
   poly(quad(a0 - 0.08, a1 + 0.08, z0 - 4, z1 + 4), '#fbf8f2')
   const gl = quad(a0, a1, z0, z1), gr = g.createLinearGradient(0, gl[2][1], 0, gl[0][1]); gr.addColorStop(0, sk.top); gr.addColorStop(1, sk.bot)
