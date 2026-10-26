@@ -1426,7 +1426,7 @@ document.getElementById('gear').onclick = () => (settings.style.display === 'blo
 addEventListener('mousedown', (e) => { if (settings.style.display === 'block' && !e.target.closest('#settings, #gear')) closeSettings() }, true)
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]) }
 function furniture(kind, fallback, ...args) {
-  const ctx = { g, P, box, poly, circle, rrect, text, tile, cam, LINE, BOOKS, inRoom, decorAt, meetingsNow, MEET, MEET_SEATS, deskHits, POOL, POOL_PEOPLE, POOL_SIZE, ents, drawCharacter }
+  const ctx = { g, P, box, poly, circle, rrect, text, tile, cam, LINE, BOOKS, inRoom, decorAt, meetingsNow, MEET, MEET_SEATS, deskHits, POOL, POOL_PEOPLE, POOL_SIZE, ents, drawCharacter, leftQuad, wallText, exitAt, hsl2hex, doorOpenUntil }
   if (skin.drawFurniture && skin.drawFurniture(ctx, kind, args)) return
   fallback(...args)
 }
@@ -1983,7 +1983,7 @@ function walls(t) {
   statusBoard(t)
   resourceBoard(t)
   leftWindows().forEach((y0, k) => wallWindow(leftQuad, (a, z) => P(-0.3, a, z), y0, y0 + 1.6, 30, 62, blindDrop(k + 2), t, k + 2))
-  exitDoor(t)
+  furniture('exit', exitDoor, t)
 }
 // The way out: a door in the left wall near the front, open while someone is
 // leaving, an EXIT sign over it.
@@ -2858,7 +2858,7 @@ function frame(now) {
     })
   }
   for (const sc of sections) {
-    if (!sc.first) for (const [a, b] of partSegments(sc.y0)) add(b + sc.y0 + 0.1, () => partition(a, b, sc.y0, sc.hue), [a, b, sc.y0, sc.y0 + 0.1])
+    if (!sc.first) for (const [a, b] of partSegments(sc.y0)) add(b + sc.y0 + 0.1, () => furniture('partition', partition, a, b, sc.y0, sc.hue), [a, b, sc.y0, sc.y0 + 0.1])
   }
   for (const e of ents.values()) add(e.x + e.y, () => chibi(e, t), [e.x - 0.16, e.x + 0.16, e.y - 0.16, e.y + 0.16])
   add(1e9, () => roomTags())
