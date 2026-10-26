@@ -8,7 +8,8 @@ function guildSprite(spec) {
   const c = document.createElement('canvas'); c.width = 32; c.height = 48
   const q = c.getContext('2d'); q.imageSmoothingEnabled = false
   const r = (x, y, w, h, color) => { q.fillStyle = color; q.fillRect(x, y, w, h) }
-  const { job, hair, skin, armor, trim, back, frame, zipped, rank, sub } = spec
+  const { job, hair, skin, armor, trim, back, frame, zipped, rank, sub, race } = spec
+  if (sub) return fairySprite(c, q, r, spec)
   // Cape, feet and legs: a narrow little body beneath the large sprite head.
   if (job === 'lead' || job === 'write') { r(10, 25, 12, 14, '#3a2833'); r(9, 29, 2, 9, trim) }
   r(10 + frame, 42, 5, 3, '#2b2223'); r(18 - frame, 42, 5, 3, '#2b2223')
@@ -43,11 +44,50 @@ function guildSprite(spec) {
   else if (job === 'ops' || job === 'watch') { r(26, 25, 5, 10, '#30454f'); r(28, 23, 1, 3, '#91e8cf') }
   else if (job === 'write') { r(28, 23, 1, 14, '#e9cd72'); r(29, 22, 1, 3, '#fff2ad') }
   else { r(27, 25, 3, 11, '#644028'); r(28, 22, 1, 5, trim) }
+  // Race marks over the shared body: long ears, a beard, tusks, horns.
+  if (race === 'elf' && !back) { r(3, 12, 3, 2, skin); r(1, 10, 3, 2, skin); r(26, 12, 3, 2, skin); r(28, 10, 3, 2, skin); r(1, 10, 1, 1, '#281d20'); r(30, 10, 1, 1, '#281d20') }
+  if (race === 'elf' && back) { r(1, 10, 4, 3, skin); r(27, 10, 4, 3, skin) }
+  if (race === 'dwarf' && !back) { r(8, 17, 16, 6, hair); r(10, 23, 12, 3, hair); r(13, 26, 6, 2, hair); r(14, 19, 4, 1, '#703b42'); r(12, 24, 1, 1, trim); r(19, 24, 1, 1, trim) }
+  if (race === 'orc' && !back) { r(12, 19, 1, 2, '#f4ecd2'); r(19, 19, 1, 2, '#f4ecd2') }
+  if (race === 'tiefling') { r(7, 3, 3, 4, '#3a2630'); r(6, 1, 2, 3, '#3a2630'); r(22, 3, 3, 4, '#3a2630'); r(24, 1, 2, 3, '#3a2630') }
   if (!sub && rank >= 4) { r(11, 0, 12, 2, '#d59b2d'); r(11, 0, 3, 1, '#f1c84b'); r(16, 0, 2, 1, '#f1c84b'); r(21, 0, 2, 1, '#f1c84b') }
-  if (sub) { r(16, 1, 1, 5, '#292022'); r(15, 0, 3, 3, '#ffd35e') }
   GUILD_SPRITES.set(key, c)
   return c
 }
+// A subagent in the guild is a summoned sprite: a small glowing body, pointed
+// ears, gossamer wings and a star on a wand, not a little copy of a member.
+function fairySprite(c, q, r, spec) {
+  const { skin, trim, armor, back, frame, zipped } = spec
+  const wing = frame ? 'rgba(206,240,255,.78)' : 'rgba(226,248,255,.62)', vein = 'rgba(120,190,220,.8)'
+  // Wings first, behind the body: upper and lower pair, a flap per frame.
+  const up = frame ? 1 : 0
+  r(1, 14 - up, 9, 8, wing); r(0, 16 - up, 2, 4, wing); r(22, 14 - up, 9, 8, wing); r(30, 16 - up, 2, 4, wing)
+  r(3, 22, 7, 6, wing); r(22, 22, 7, 6, wing)
+  r(4, 16 - up, 5, 1, vein); r(23, 16 - up, 5, 1, vein); r(5, 24, 4, 1, vein); r(23, 24, 4, 1, vein)
+  // A leaf dress in the job's colour, bare legs, no boots.
+  r(12, 26, 8, 3, armor); r(11, 29, 10, 5, armor); r(10, 33, 12, 2, trim)
+  r(13, 35, 2, 6, skin); r(17, 35, 2, 6, skin); r(12 + frame, 41, 3, 2, trim); r(17 - frame, 41, 3, 2, trim)
+  r(10, 27, 2, 4, skin); r(20, 27, 2, 4, skin)
+  // Head: round, with long ears and a flower in the hair.
+  r(11, 9, 10, 2, '#281d20'); r(9, 11, 14, 11, '#281d20'); r(11, 22, 10, 3, '#281d20')
+  r(11, 10, 10, 2, skin); r(10, 12, 12, 10, skin); r(11, 22, 10, 2, skin)
+  r(6, 13, 4, 2, skin); r(5, 12, 2, 1, skin); r(22, 13, 4, 2, skin); r(25, 12, 2, 1, skin)
+  r(10, 9, 12, 3, '#f6d27a'); r(9, 11, 3, 5, '#f6d27a'); r(20, 11, 3, 5, '#f6d27a')
+  r(19, 8, 3, 3, '#ff9fc6'); r(20, 9, 1, 1, '#fff2a8')
+  if (!back) {
+    r(12, 15, 2, 3, '#2b2023'); r(18, 15, 2, 3, '#2b2023'); r(12, 15, 1, 1, '#ffffff'); r(18, 15, 1, 1, '#ffffff')
+    r(11, 19, 2, 1, '#ff9aa8'); r(19, 19, 2, 1, '#ff9aa8')
+    if (zipped) r(14, 20, 4, 1, '#5d5153'); else r(15, 20, 2, 1, '#b4505c')
+  }
+  // The wand and its star.
+  r(23, 22, 1, 9, '#c8a46a'); r(22, 19, 3, 3, '#fff2a8'); r(21, 20, 5, 1, '#fff2a8'); r(23, 18, 1, 5, '#fff2a8')
+  GUILD_SPRITES.set(JSON.stringify(spec), c)
+  return c
+}
+// The guild's members are of many peoples; a session keeps its race.
+const GUILD_RACES = ['human', 'elf', 'dwarf', 'orc', 'halfling', 'tiefling', 'human', 'elf']
+const GUILD_SKINS = { human: ['#f2c6a0', '#dca47f', '#b97c55', '#8a5a3c', '#f0b98c'], elf: ['#f3d9c0', '#e7c39d', '#c99a76'], dwarf: ['#e7b08a', '#c88d66', '#a56c4c'], orc: ['#8fae6a', '#7a9b5b', '#9cb37a'], halfling: ['#f2c6a0', '#d9a07a', '#b07a54'], tiefling: ['#c9727a', '#a9637c', '#b08ab8'] }
+const GUILD_HAIR = { human: ['#4b3023', '#7b4c28', '#332b35', '#c8a052', '#d9d6ca'], elf: ['#e9dfb0', '#c9d6e3', '#3f2f4a', '#b4552e'], dwarf: ['#8b3a1c', '#5a3624', '#b9b2a2', '#c06a2b'], orc: ['#1f1a1d', '#3b2a22', '#4a4038'], halfling: ['#6b4126', '#a0662f', '#3a2a22'], tiefling: ['#221a2a', '#4a2240', '#e8e1ec'] }
 
 window.OFFICE_SKINS = {
   office: {
@@ -124,6 +164,31 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
         const[add,t]=args,m=meetingsNow[0],[tx0,tx1,ty0,ty1]=MEET.table
         add(MEET.x0+MEET.y0,()=>{box(MEET.x0,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f');box(MEET.x1-.1,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f');box(MEET.x0,MEET.y0,MEET.x1-MEET.x0,.1,6,'#6d482a',42)},[MEET.x0,MEET.x1,MEET.y0,MEET.y0+.1])
         add(tx1+ty1,()=>{for(const[lx,ly]of[[tx0+.1,ty0+.1],[tx1-.15,ty0+.1],[tx0+.1,ty1-.15],[tx1-.15,ty1-.15]])box(lx,ly,.06,.06,17,'#49301f');box(tx0,ty0,tx1-tx0,ty1-ty0,5,'#754c2d',17);const[cx,cy]=P((tx0+tx1)/2,(ty0+ty1)/2,23);text('◆',cx,cy,19,'#d1aa55');if(m){deskHits.push({sx:cx,sy:cy,r:30*cam.s,sid:m.lead,kind:'meeting',n:m.sids.length,meeting:m});text(m.sids.length+'명',cx,cy-9*cam.s,9,'#fff1c8')}},[tx0,tx1,ty0,ty1]);return true
+      }
+      if (kind === 'partition') {
+        // A low timber balustrade with turned posts and a carved rail, the
+        // section's colour as a pennant cloth instead of cubicle fabric.
+        const [x0, x1, y, hue] = args
+        box(x0, y, x1 - x0, .1, 6, '#5a3a22')
+        for (let px = x0; px <= x1 + 1e-6; px += .45) box(Math.min(px, x1 - .08), y + .01, .08, .08, 22, '#6e4a2b', 6)
+        box(x0, y - .01, x1 - x0, .12, 4, '#8a5f36', 26)
+        for (let px = x0 + .9; px < x1 - .3; px += 1.8) { const [a1, b1] = P(px, y + .1, 26), [a2, b2] = P(px + .5, y + .1, 26); poly([[a1, b1], [a2, b2], [(a1 + a2) / 2, (b1 + b2) / 2 + 12 * cam.s]], ctx.hsl2hex(hue, 45, 48), '#2e1d12', .8) }
+        return true
+      }
+      if (kind === 'exit') {
+        // The great door: an arched oak gate in stone, a lantern for a sign.
+        const [t] = args, { leftQuad, exitAt } = ctx
+        const [d0, d1] = exitAt(), open = [...ents.values()].some((e) => e.leaving && e.kind === 'session')
+        poly(leftQuad(d0 - .1, d1 + .1, 0, 54), '#7a7268', '#3b3329', 1)
+        const arch = (y0, y1, z0, z1, fill, stroke) => { const pts = []; for (let i = 0; i <= 12; i++) { const a = Math.PI * i / 12, yy = (y0 + y1) / 2 - Math.cos(a) * (y1 - y0) / 2, zz = z1 + Math.sin(a) * 8; pts.push(P(-.3, yy, zz)) } poly([P(-.3, y0, z0), ...pts, P(-.3, y1, z0)], fill, stroke, 1) }
+        arch(d0 - .1, d1 + .1, 0, 50, '#8a8175', '#3b3329')
+        arch(d0, d1, 0, 46, open ? '#22180f' : '#6b4424', '#2e1d12')
+        if (open) { g.save(); g.globalAlpha = .35; poly(leftQuad(d0 + .1, d1 - .02, 0, 44), '#ffcf7a', null); g.restore() }
+        else { for (const yy of [d0 + .22, d0 + .45]) poly(leftQuad(yy, yy + .02, 0, 46), '#3d2615', null); for (const zz of [14, 34]) poly(leftQuad(d0 + .04, d1 - .04, zz, zz + 2.5), '#2b2b2e', null); const [kx, ky] = P(-.3, d1 - .14, 24); circle(kx, ky, 2 * cam.s, '#c99a3a', '#2e1d12', 1) }
+        const [lx, ly] = P(-.3, d1 + .02, 60), fl = Math.sin(t * 8) * cam.s
+        g.save(); g.globalAlpha = .16; circle(lx, ly, 18 * cam.s, '#ffb347', null); g.restore()
+        rrect(lx - 4 * cam.s, ly - 6 * cam.s, 8 * cam.s, 10 * cam.s, 2 * cam.s, '#3a2a1a', '#1d130b', 1); circle(lx, ly - 1 * cam.s + fl * .3, 2.6 * cam.s, '#ffd36b', null)
+        return true
       }
       if (kind === 'pool') return false
       return false
@@ -208,10 +273,16 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
       const job = p.job || 'shell'
       const armor = { shell: '#5c4b9b', read: '#6d8f46', code: '#3d6f91', write: '#985a78', watch: '#4f817d', talk: '#b06d3c', lead: '#7c596f', ops: '#a17a32' }[job] || '#6d628e'
       const trim = { shell: '#d9b95d', read: '#d9d18b', code: '#8ed0d8', write: '#e5aac2', watch: '#9fd1bd', talk: '#f0c16c', lead: '#d8b8d4', ops: '#f3c864' }[job] || '#d4c58d'
-      const hair = h % 4 === 0 ? '#d9d6ca' : ['#4b3023','#7b4c28','#332b35','#c8a052'][h % 4]
-      const skinColor = ['#f2c6a0','#dca47f','#f0b98c'][h % 3]
-      const sprite = guildSprite({ job, hair, skin: skinColor, armor, trim, back: walking && !!e.back, frame, zipped: isZipped(e.id), rank: p.rank || 0, sub, hairVariant: h % 2 })
-      const scale = cam.s * (sub ? .78 : 1.55), w = sprite.width * scale, hh = sprite.height * scale
+      const race = sub ? 'fairy' : GUILD_RACES[(h >>> 3) % GUILD_RACES.length]
+      const hairs = GUILD_HAIR[race] || GUILD_HAIR.human, skins = GUILD_SKINS[race] || GUILD_SKINS.human
+      const hair = hairs[(h >>> 6) % hairs.length], skinColor = sub ? '#ffe9d6' : skins[(h >>> 9) % skins.length]
+      // A fairy flaps its wings all the time, not only when it walks.
+      const flap = sub ? (Math.sin(t * 16 + h) > 0 ? 1 : 0) : frame
+      const sprite = guildSprite({ job, hair, skin: skinColor, armor, trim, back: walking && !!e.back, frame: flap, zipped: isZipped(e.id), rank: p.rank || 0, sub, hairVariant: h % 2, race })
+      // Halflings and dwarves stand shorter; a fairy hovers above its shadow.
+      const tall = sub ? .78 : race === 'halfling' ? 1.3 : race === 'dwarf' ? 1.4 : 1.55
+      const scale = cam.s * tall, w = sprite.width * scale, hh = sprite.height * scale
+      if (sub) { y -= (6 + Math.sin(t * 3 + h) * 2) * cam.s; g.save(); g.globalAlpha = .22 + Math.sin(t * 4 + h) * .06; g.fillStyle = '#c9f3ff'; g.beginPath(); g.arc(x, y - hh * .45, 11 * cam.s, 0, Math.PI * 2); g.fill(); g.restore() }
       g.save(); g.imageSmoothingEnabled = false
       g.fillStyle = 'rgba(25,16,12,.26)'; g.beginPath(); g.ellipse(x, y + cam.s, 9 * cam.s, 3.2 * cam.s, 0, 0, Math.PI * 2); g.fill()
       if (picked.has(e.id)) { g.strokeStyle = '#78d7ec'; g.lineWidth = 2 * cam.s; g.setLineDash([3 * cam.s, 2 * cam.s]); g.beginPath(); g.ellipse(x, y, 12 * cam.s, 4 * cam.s, 0, 0, Math.PI * 2); g.stroke(); g.setLineDash([]) }
