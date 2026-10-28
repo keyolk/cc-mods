@@ -28,6 +28,12 @@ canvas.drag { cursor: grabbing; }
 #card .titlebar:active { cursor: grabbing; }
 #card h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
+#card .sizectl { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: #7a7090; margin-right: 4px; }
+#card .sizectl button { font: inherit; font-size: 11px; line-height: 16px; min-width: 20px; padding: 0 4px; border: 2px solid rgba(59,42,53,.35); border-radius: 6px; background: #fff; color: #2a2033; cursor: pointer; }
+#card .sizectl button:hover { border-color: var(--line); }
+#card .sizectl .v { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
+#card .sizectl .v + button + button { margin-left: 6px; }
+@media (max-width: 520px) { #card .sizectl .v { display: none; } }
 #card .x, #card .maxb { flex: 0 0 auto; border: 0; background: none; font-size: 18px; cursor: pointer; padding: 0 3px; }
 #card .resize { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 18px; cursor: nesw-resize; z-index: 2; opacity: .5; }
 #card .resize::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 9px; height: 9px; border-left: 2px solid #7a7090; border-bottom: 2px solid #7a7090; }
@@ -155,8 +161,8 @@ body.picking #c { cursor: crosshair; }
    column applies only while open, so closing still hides the card. */
 #card.panes[style*="display: block"] { display: flex !important; flex-direction: column; overflow: hidden; }
 #card.panes > * { flex: 0 0 auto; }
-/* ⌥+ ⌥− ⌥0: the reading panes grow or shrink, the card's frame keeps its
-   size (zooming the whole card would push it off the screen). */
+/* ⌥⇧+ ⌥⇧−: the text zoom. Only the reading panes scale; the card's size is
+   its own (⌥+ ⌥−, scaleCard), so text never pushes it off the screen. */
 #card .cpane, #card .shelf { zoom: var(--cz, 1); }
 #card .info { font-size: 12.5px; }
 #card .info .h { font-family: Jua, sans-serif; margin: 8px 0 4px; }
@@ -238,7 +244,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈). 답장칸에서는 글자가 입력이 되므로 카드 단축키는 <kbd>⌥</kbd>를 붙이거나 <kbd>Esc</kbd>로 빠져나온 뒤 누릅니다</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
     <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥8</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📜 지난 대화 · 📥 받은 것 · 📤 보낸 것 · 📎 파일 · 🛠 작업 · 🔐 정책 · 🌐 웹, 내용이 있는 것만; 서랍에서도)</td></tr>
-    <tr><td><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd> (답장칸 밖에선 <kbd>+</kbd> <kbd>−</kbd>도)</td><td>카드 글자 확대 · 축소 · 원래대로</td></tr>
+    <tr><td><kbd>⌥+</kbd> <kbd>⌥−</kbd> (답장칸 밖에선 <kbd>+</kbd> <kbd>−</kbd>도)</td><td>대화창 크게 · 작게 (제목줄의 <kbd>−</kbd> 크기 <kbd>+</kbd>로도)</td></tr>
+    <tr><td><kbd>⌥⇧+</kbd> <kbd>⌥⇧−</kbd> · <kbd>⌥0</kbd></td><td>대화창 글자 크게 · 작게 (제목줄의 <kbd>A−</kbd> 배율 <kbd>A+</kbd>) · 크기와 글자 모두 기본으로</td></tr>
     <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
     <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 · 폭과 높이 조정 (네 변과 네 모서리 어디든 끌어서도 조정)</td></tr>
     <tr><td>제목 끌기 · <kbd>⌥⇧←↑↓→</kbd></td><td>대화창 위치 이동</td></tr>
@@ -930,7 +937,7 @@ function officeKey(e) {
   if (k === 'ArrowRight') return hit(() => { cam.user = true; camGo.on = false; cam.ox -= PAN })
   if (k === 'ArrowUp') return hit(() => { cam.user = true; camGo.on = false; cam.oy += PAN })
   if (k === 'ArrowDown') return hit(() => { cam.user = true; camGo.on = false; cam.oy -= PAN })
-  if (open && (k === '+' || k === '=' || k === '-' || k === '_')) return hit(() => zoomCard(k === '-' || k === '_' ? -1 : 1))
+  if (open && (k === '+' || k === '=' || k === '-' || k === '_')) return hit(() => scaleCard(k === '-' || k === '_' ? -1 : 1))
   if (k === '+' || k === '=' || k === '-' || k === '_') return hit(() => {
     cam.user = true; camGo.on = false
     const ns = Math.min(4, Math.max(0.25, cam.s * (k === '-' || k === '_' ? 0.85 : 1.18))), r = ns / cam.s, cx = innerWidth / 2, cy = innerHeight / 2
@@ -963,9 +970,12 @@ let cardResize = null, cardMove = null
 function handleCardAlt(e, k) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
-  if (e.code === 'Equal' || e.code === 'NumpadAdd') return hit(() => zoomCard(1))
-  if (e.code === 'Minus' || e.code === 'NumpadSubtract') return hit(() => zoomCard(-1))
-  if (k === '0') return hit(() => zoomCard(0))
+  // ⌥+ ⌥− the card itself, ⌥⇧+ ⌥⇧− its text, ⌥0 both back to the default.
+  // By physical key: ⌥ (and ⇧) turn = and - into other symbols on macOS.
+  const plus = e.code === 'Equal' || e.code === 'NumpadAdd', minus = e.code === 'Minus' || e.code === 'NumpadSubtract'
+  if ((plus || minus) && e.shiftKey) return hit(() => zoomCard(plus ? 1 : -1))
+  if (plus || minus) return hit(() => scaleCard(plus ? 1 : -1))
+  if (k === '0' || e.code === 'Digit0') return hit(resetCardSize)
   if (e.shiftKey && k === 'ArrowLeft') return hit(() => moveCardBy(-40, 0))
   if (e.shiftKey && k === 'ArrowRight') return hit(() => moveCardBy(40, 0))
   if (e.shiftKey && k === 'ArrowUp') return hit(() => moveCardBy(0, -40))
@@ -998,6 +1008,7 @@ function placeCard(x, y, w, h) {
   w = Math.min(W, Math.max(Math.min(CARD_MIN_W, W), w)); h = Math.min(H, Math.max(Math.min(CARD_MIN_H, H), h))
   card.style.width = w + 'px'; card.style.height = h + 'px'; card.style.maxHeight = 'none'
   card.style.left = Math.min(W - w, Math.max(0, x)) + 'px'; card.style.top = Math.min(H - h, Math.max(0, y)) + 'px'; card.style.right = 'auto'
+  renderCardSize()
 }
 function setCardPosition(x, y) {
   const maxX = Math.max(0, innerWidth - card.offsetWidth), maxY = Math.max(0, innerHeight - card.offsetHeight)
@@ -1009,6 +1020,7 @@ function setCardSize(w, h) {
   card.style.width = Math.min(maxW, Math.max(minW, w)) + 'px'
   card.style.height = Math.min(maxH, Math.max(minH, h)) + 'px'
   card.style.maxHeight = 'none'
+  renderCardSize()
 }
 // A drag on an edge or corner: the edges dragged move, the opposite ones stay
 // put, within the window and above the card's minimum size.
@@ -1022,6 +1034,7 @@ function dragResize(e) {
   if (r.dir.includes('n')) { const bottom = r.t + r.h; t = Math.max(0, Math.min(bottom - minH, r.t + dy)); h = bottom - t }
   card.style.left = l + 'px'; card.style.top = t + 'px'; card.style.right = 'auto'
   card.style.width = w + 'px'; card.style.height = h + 'px'; card.style.maxHeight = 'none'
+  renderCardSize()
 }
 function restoreCardLayout() {
   // A layout at or under the old 300×340 floor (or a 0×0 one saved while the
@@ -1034,7 +1047,7 @@ function restoreCardLayout() {
 // A short card folds its foot (see #card.panes.compact) so the answer keeps
 // room; decided by the card's own height, whatever changed it.
 const CARD_COMPACT_H = 420
-new ResizeObserver(() => card.classList.toggle('compact', card.offsetHeight > 0 && card.offsetHeight < CARD_COMPACT_H)).observe(card)
+new ResizeObserver(() => { card.classList.toggle('compact', card.offsetHeight > 0 && card.offsetHeight < CARD_COMPACT_H); renderCardSize() }).observe(card)
 // From the saved layout, not the card's current box: a pane that shrinks
 // for a moment (a tmux resize) would otherwise leave the card squeezed after
 // it grows back. Every move and resize saves, so nothing is lost.
@@ -1046,17 +1059,41 @@ function fitCardToViewport() {
 const CARD_ZOOM = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2]
 let cardZoom = 1
 try { cardZoom = +localStorage.getItem('office-card-zoom') || 1 } catch (_) {}
+// The whole card a step larger or smaller, about its centre, kept on the
+// screen; leaving the maximised card first, as the arrow keys do.
+const CARD_STEP = 1.15
+function scaleCard(dir) {
+  if (card.classList.contains('max')) toggleCardMax()
+  const f = dir > 0 ? CARD_STEP : 1 / CARD_STEP, w = card.offsetWidth, h = card.offsetHeight
+  const nw = Math.round(w * f), nh = Math.round(h * f)
+  placeCard(card.offsetLeft - (nw - w) / 2, card.offsetTop - (nh - h) / 2, nw, nh); saveCardLayout()
+  toast('🗖 대화창 ' + card.offsetWidth + '×' + card.offsetHeight)
+}
+function resetCardSize() {
+  if (card.classList.contains('max')) toggleCardMax()
+  try { localStorage.removeItem('office-card-layout') } catch (_) {}
+  restoreCardLayout(); saveCardLayout(); zoomCard(0)
+  toast('🗖 대화창 기본 크기 · 글자 100%')
+}
+// The size and text zoom in the title bar, current whatever changed them.
+function renderCardSize() {
+  if (!card.sizeLabel) return
+  card.sizeLabel.textContent = card.classList.contains('max') ? '최대' : card.offsetWidth + '×' + card.offsetHeight
+  card.zoomLabel.textContent = Math.round(cardZoom * 100) + '%'
+}
 function zoomCard(dir) {
   const i = CARD_ZOOM.findIndex((z) => z >= cardZoom - 1e-6)
   cardZoom = dir === 0 ? 1 : CARD_ZOOM[Math.min(CARD_ZOOM.length - 1, Math.max(0, (i < 0 ? CARD_ZOOM.length - 1 : i) + dir))]
   card.style.setProperty('--cz', cardZoom)
   try { localStorage.setItem('office-card-zoom', String(cardZoom)) } catch (_) {}
   toast('🔍 글자 ' + Math.round(cardZoom * 100) + '%')
+  renderCardSize()
 }
 card.style.setProperty('--cz', cardZoom)
 function toggleCardMax() {
   card.classList.toggle('max')
   if (!card.classList.contains('max')) restoreCardLayout()
+  renderCardSize()
   if (card.maxButton) { card.maxButton.textContent = card.classList.contains('max') ? '❐' : '□'; card.maxButton.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)' }
 }
 function resizeCardBy(dw, dh) {
@@ -1070,6 +1107,13 @@ function moveCardBy(dx, dy) {
 function cardChrome(add, titleHtml) {
   const bar = add('div', 'titlebar')
   const title = document.createElement('h2'); title.innerHTML = titleHtml; bar.appendChild(title)
+  // Size and text: a button each way, the current value between them.
+  const sz = document.createElement('span'); sz.className = 'sizectl'
+  const b = (txt, tip, fn) => { const x = document.createElement('button'); x.textContent = txt; x.title = tip; x.onclick = fn; sz.appendChild(x); return x }
+  const lab = (tip) => { const x = document.createElement('span'); x.className = 'v'; x.title = tip; sz.appendChild(x); return x }
+  b('−', '대화창 작게 (⌥−)', () => scaleCard(-1)); card.sizeLabel = lab('대화창 크기 · ⌥0 기본으로'); b('+', '대화창 크게 (⌥+)', () => scaleCard(1))
+  b('A−', '글자 작게 (⌥⇧−)', () => zoomCard(-1)); card.zoomLabel = lab('글자 배율 · ⌥0 기본으로'); b('A+', '글자 크게 (⌥⇧+)', () => zoomCard(1))
+  bar.appendChild(sz); renderCardSize()
   const max = document.createElement('button'); max.className = 'maxb'; max.textContent = card.classList.contains('max') ? '❐' : '□'; max.onclick = toggleCardMax; bar.appendChild(max); card.maxButton = max
   max.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)'
   const close = document.createElement('button'); close.className = 'x'; close.textContent = '✕'; close.title = '닫기 (Esc)'; close.onclick = closeCard; bar.appendChild(close)
