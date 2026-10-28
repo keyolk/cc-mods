@@ -157,7 +157,16 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
       if (kind === 'workbench') { const t=args[0],x=4,y=.9;for(const lx of[x+.05,x+1.6])box(lx,y+.05,.07,.32,20,'#4b3121');box(x,y,1.7,.4,5,'#745035',20);const[sx,sy]=P(x+.4,y+.3,34);poly([[sx-10*cam.s,sy],[sx+11*cam.s,sy],[sx+7*cam.s,sy-5*cam.s],[sx-6*cam.s,sy-5*cam.s]],'#535256');const[fx,fy]=P(x+1.25,y+.25,30);g.save();g.globalAlpha=.18;circle(fx,fy,(9+Math.sin(t*6))*cam.s,'#ff9b42',null);g.restore();circle(fx,fy,4*cam.s,'#f0ad48','#4f2b20',1);return true }
       if (kind === 'cafeTable') { const[x,y]=args;box(x+.27,y+.27,.07,.07,16,'#51351f');const[cx,cy]=P(x+.3,y+.3,18);g.fillStyle='#704a2c';g.beginPath();g.ellipse(cx,cy,21*cam.s,10*cam.s,0,0,Math.PI*2);g.fill();g.strokeStyle=LINE;g.stroke();for(let k=0;k<3;k++)circle(cx-8*cam.s+k*8*cam.s,cy-3*cam.s,3*cam.s,['#d5a64a','#9b493e','#d5c37d'][k],null);return true }
       if (kind === 'vending') { const[x,y]=args;box(x,y,.65,.52,21,'#674321');box(x+.04,y+.04,.57,.44,4,'#8b5d2f',21);for(let k=0;k<3;k++)box(x+.1+k*.16,y+.13,.1,.1,6,['#7ca05b','#b36b3d','#6a789c'][k],25);const[sx,sy]=P(x+.32,y+.51,35);rrect(sx-11*cam.s,sy-5*cam.s,22*cam.s,8*cam.s,2*cam.s,'#d2b26f',LINE,1);return true }
-      if (kind === 'radiator') { const[y0]=args,q=[P(-.31,y0,18),P(-.31,y0+1.1,18),P(-.31,y0+1.1,55),P(-.31,y0,55)];poly(q,'#74403d','#3b281d',1);const[a,b]=P(-.32,y0+.55,39);text('◆',a,b,14,'#d7b65e');return true }
+      if (kind === 'radiator') {
+        // A low stone ember-box under the window. The old heraldic panel rose
+        // through the glass and looked like the modern blind it replaced.
+        const [y0] = args
+        poly(ctx.leftQuad(y0 - .06, y0 + 1.16, 6, 21), '#696158', '#35291f', 1)
+        poly(ctx.leftQuad(y0, y0 + 1.1, 8, 18), '#3a3028', '#211914', 1)
+        for (let y = y0 + .12; y < y0 + 1; y += .18) poly(ctx.leftQuad(y, y + .04, 9, 17), '#1f1a16', null)
+        const [a, b] = P(-.32, y0 + .55, 13); g.save(); g.globalAlpha = .14; circle(a, b, 12 * cam.s, '#ff9f45', null); g.restore(); text('✦', a, b, 8, '#dc9c45')
+        return true
+      }
       if (kind === 'chair') { const[x,y]=args;box(x+.5,y-.43,.45,.34,10,'#6a4428');box(x+.53,y-.39,.07,.07,22,'#49301f');box(x+.85,y-.39,.07,.07,22,'#49301f');return true }
       if (kind === 'decor') { const[w,t]=args,[x,y]=decorAt(w);if(w.decor==='plant'){box(x+.28,y+.18,.6,.45,18,'#76502d');for(let k=0;k<4;k++){const[sx,sy]=P(x+.38+k*.13,y+.43,35+k%2*7);circle(sx,sy,6*cam.s,k%2?'#668c4a':'#8daa5d')}}else if(w.decor==='shelf'){box(x+.08,y+.08,1.12,.34,48,'#644326');for(let k=0;k<5;k++)box(x+.15+k*.18,y+.15,.12,.18,4,BOOKS[k%BOOKS.length],48)}else if(w.decor==='beanbag'){box(x+.22,y+.16,.85,.52,20,'#704526');for(let k=0;k<3;k++)box(x+.3+k*.22,y+.25,.16,.18,6,['#8c3f3b','#667a47','#b18a43'][k],20)}else if(w.decor==='board'){box(x+.52,y+.25,.1,.1,24,'#604020');box(x+.23,y+.18,.68,.12,28,'#786145');const[sx,sy]=P(x+.57,y+.24,36);circle(sx,sy,8*cam.s,'#8e794d','#39291e',1.5)}else if(w.decor==='cat'){box(x+.22,y+.15,.85,.48,13,'#75502e');const[sx,sy]=P(x+.64,y+.4,21);circle(sx,sy,9*cam.s,'#d6944c');poly([[sx-6*cam.s,sy-6*cam.s],[sx-5*cam.s,sy-14*cam.s],[sx,sy-8*cam.s]],'#d6944c')}else{for(let k=0;k<3;k++)box(x+.24+k*.22,y+.18,.18,.32,22+k*7,['#794229','#6b824b','#96703e'][k])}return true }
       if (kind === 'meeting') {
@@ -210,6 +219,37 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
       text(caller ? 'LINK' : '✦', lx, ly - cam.s, 7, caller ? '#2c2417' : '#c6b278')
       // Orbiting runes make an active call visible without modern hardware.
       if (caller) for (let i = 0; i < 4; i++) { const a = t * 1.8 + i * Math.PI / 2; text('·', cx + Math.cos(a) * 14 * cam.s, cy + Math.sin(a) * 7 * cam.s, 9, '#d8ffff') }
+    },
+    drawWindow(ctx, w) {
+      const { g, poly, circle, cam, sky } = ctx
+      const { quad, at, a0, a1, z0, z1, t, seed } = w
+      const am = (a0 + a1) / 2, shoulder = z1 - 9
+      const pt = (a, z) => at(a, z)
+      // A pointed stone opening with open oak shutters. The shared office
+      // blind is not drawn in this skin.
+      poly([pt(a0 - .12, z0 - 4), pt(a1 + .12, z0 - 4), pt(a1 + .12, shoulder), pt(am, z1 + 5), pt(a0 - .12, shoulder)], '#81786a', '#36281d', 1.2)
+      const sk = sky(), pane = [pt(a0, z0), pt(a1, z0), pt(a1, shoulder), pt(am, z1 + 1), pt(a0, shoulder)]
+      const gr = g.createLinearGradient(0, pane[3][1], 0, pane[0][1]); gr.addColorStop(0, sk.night ? '#28345f' : '#6195b1'); gr.addColorStop(1, sk.night ? '#56608c' : '#b9d5ce')
+      poly(pane, gr, '#342b27', 1)
+      // A little living sky remains behind the leaded glass.
+      if (sk.night) {
+        for (let k = 0; k < 4; k++) { const u = ((seed * 11 + k * 31) % 100) / 100, v = ((seed * 17 + k * 47) % 100) / 100; const [sx, sy] = pt(a0 + (a1 - a0) * (.1 + .8 * u), z0 + (shoulder - z0) * (.2 + .7 * v)); g.save(); g.globalAlpha = .55 + .35 * Math.sin(t * 2 + k); circle(sx, sy, 1.1 * cam.s, '#fff0ad', null); g.restore() }
+      } else {
+        const u = ((t * .018 + seed * .29) % 1.4) - .2
+        if (u > 0 && u < 1) { const [cx, cy] = pt(a0 + (a1 - a0) * u, z1 - 15); g.save(); g.globalAlpha = .55; circle(cx, cy, 4.5 * cam.s, '#fff5dc', null); circle(cx + 4 * cam.s, cy + cam.s, 3.5 * cam.s, '#fff5dc', null); g.restore() }
+      }
+      // Lead bars make small diamond panes, including the pointed crown.
+      const lead = '#3f3530', stroke = (a, z, b, zz, width = 1) => { const [x0, y0] = pt(a, z), [x1, y1] = pt(b, zz); g.strokeStyle = lead; g.lineWidth = width * cam.s; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke() }
+      stroke(am, z0, am, z1 + 1, 1.3)
+      for (let z = z0 + 8; z < shoulder; z += 9) stroke(a0, z, a1, z, 1)
+      for (let z = z0; z < shoulder; z += 18) { stroke(a0, z, am, Math.min(shoulder, z + 9), .7); stroke(am, Math.min(shoulder, z + 9), a1, z, .7); stroke(a0, Math.min(shoulder, z + 9), am, z, .7); stroke(am, z, a1, Math.min(shoulder, z + 9), .7) }
+      // Open shutters sit against the wall, with iron strap hinges.
+      for (const [s0, s1] of [[a0 - .34, a0 - .13], [a1 + .13, a1 + .34]]) {
+        poly(quad(s0, s1, z0 - 2, shoulder + 1), '#654020', '#2d1c12', 1)
+        for (const z of [z0 + 5, z0 + 21]) poly(quad(s0, s1, z, z + 2), '#30251e', null)
+      }
+      poly(quad(a0 - .16, a1 + .16, z0 - 6, z0 - 3), '#6d6254', '#36281d', 1)
+      return true
     },
     drawDeskGear(ctx, d) {
       const { g, P, box, poly, circle, cam, BOOKS } = ctx
