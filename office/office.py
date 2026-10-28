@@ -209,14 +209,42 @@ def tool_counts(sid: str) -> dict:
 # <pid>.json: name, sessionId, messagingSocketPath). Kept for TALK_KEEP.
 TALK_KEEP = 15 * 60
 _talks: dict[str, dict] = {}
-_registry: dict = {"at": 0.0, "by": {}}
+_registry: dict = {"at": 0.0, "by": {}, "alive": set(), "read": False}
+
+
+def pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+    except PermissionError:
+        return True  # someone else's process, but a process
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
 
 
 def registry() -> dict:
+    _read_registry()
+    return _registry["by"]
+
+
+# Sessions whose Claude Code process still runs. The registry outlives its
+# process (half the files there name a dead pid), and a pane keeps its
+# @cc_pane_session after the session in it ends: a `claude -p` run from a
+# shell pane, /clear, or an exit that skipped the hook. Only a running pid
+# says the session is there. None when the registry could not be read, so a
+# missing directory never sends everyone home.
+def alive_sessions() -> set[str] | None:
+    _read_registry()
+    return _registry["alive"] if _registry["read"] else None
+
+
+def _read_registry() -> None:
     if time.time() - _registry["at"] < 5:
-        return _registry["by"]
+        return
     by: dict[str, dict] = {}
-    for f in glob.glob(os.path.expanduser("~/.claude/sessions/*.json")):
+    alive: set[str] = set()
+    files = glob.glob(os.path.expanduser("~/.claude/sessions/*.json"))
+    for f in files:
         try:
             with open(f) as fh:
                 d = json.load(fh)
@@ -225,11 +253,12 @@ def registry() -> dict:
         sid = d.get("sessionId")
         if not sid:
             continue
+        if pid_alive(d.get("pid") or os.path.basename(f)[:-5]):
+            alive.add(sid)
         for key in (d.get("name"), d.get("messagingSocketPath"), "uds:" + str(d.get("messagingSocketPath") or ""), sid):
             if key:
                 by[str(key)] = {"sid": sid, "name": d.get("name") or sid[:8]}
-    _registry.update(at=time.time(), by=by)
-    return by
+    _registry.update(at=time.time(), by=by, alive=alive, read=bool(files))
 
 
 def note_talk(sid: str, block: dict, ts) -> None:
@@ -407,10 +436,13 @@ def snapshot() -> list[dict]:
         return []
     rows = [line.split("|") for line in out.splitlines()]
     _live_panes = {p[0] for p in rows if len(p) >= 12}
+    alive = alive_sessions()
     seen, people = set(), []
     for p in rows:
         if len(p) < 12 or not p[4] or p[4] in seen:
             continue
+        if alive is not None and p[4] not in alive:
+            continue  # the pane still names a session that has ended
         seen.add(p[4])
         pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid = p[:12]
         t = last_tool(sid)
@@ -1191,8 +1223,8 @@ class Handler(BaseHTTPRequestHandler):
             kind = kind if kind in ("desk", "in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
         if self.path.startswith("/state"):
-            people = snapshot()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot()}).encode(), "application/json")
+            people, alive = snapshot(), alive_sessions()
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
