@@ -279,7 +279,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
       <dt><kbd>⌥M</kbd></dt><dd>최대화 ↔ 원래 크기</dd>
       <dt><kbd>⌥1</kbd>…<kbd>⌥9</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
       <dt><kbd>⌥B</kbd></dt><dd>☕ btw 곁대화 열기·닫기 (일하는 중에도 바로 답함, 카드는 늘 ↪ 지시로 열림)</dd>
-      <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>답변 한 화면씩</dd>
+      <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>읽던 탭 한 화면씩 (btw 중에도)</dd>
+      <dt><kbd>⇧PgUp</kbd> <kbd>⇧PgDn</kbd></dt><dd>btw 칸 한 화면씩</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></dt><dd>목록 탭에서 고르기 · 열기</dd>
       <dt><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd></dt><dd>글자 크게 · 작게 · 원래대로</dd>
@@ -786,6 +787,14 @@ function scrollSaid(how) {
   else if (how === 'top') el.scrollTop = 0; else if (how === 'bottom') el.scrollTop = el.scrollHeight
   return true
 }
+// ⇧PgUp/⇧PgDn scroll the btw strip while it is open; plain PgUp/PgDn keep
+// scrolling what is being read above it, so talking never moves that key.
+function scrollSide(dir) {
+  const log = card.side && card.side.style.display !== 'none' && card.side.querySelector('.btw')
+  if (!log) return false
+  log.scrollTop += dir * log.clientHeight * 0.9
+  return true
+}
 function closeCard() { card.style.display = 'none'; cardSid = null; for (const e of ents.values()) e.sel = false; renderQueue() }
 let toastT
 function toast(t) { const m = document.getElementById('hint'); m.dataset.old = m.dataset.old || m.innerHTML; m.textContent = t; clearTimeout(toastT); toastT = setTimeout(() => { m.innerHTML = m.dataset.old }, 2200) }
@@ -955,6 +964,7 @@ function officeKey(e) {
   if (act) return hit(act)
   if (open && card.moveResource && (k === 'ArrowUp' || k === 'k')) return hit(() => card.moveResource(-1))
   if (open && card.moveResource && (k === 'ArrowDown' || k === 'j')) return hit(() => card.moveResource(1))
+  if (open && (k === 'PageUp' || k === 'PageDown') && e.shiftKey && scrollSide(k === 'PageUp' ? -1 : 1)) return hit(() => {})
   if (open && (card.said || card.curPane)) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
     if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
@@ -1253,7 +1263,7 @@ function sideHtml(t) {
 // the reply box is in btw mode; its own height, the newest bubble in view.
 function sideBox(sid, t) {
   const box = document.createElement('div'); box.className = 'sidebox'
-  box.innerHTML = '<div class="sh">☕ btw <span class="m">작업에 끼어들지 않는 곁대화 · 메인 기록에 안 남음 · <kbd>⌥B</kbd> 닫기</span></div>'
+  box.innerHTML = '<div class="sh">☕ btw <span class="m">작업에 끼어들지 않는 곁대화 · 메인 기록에 안 남음 · <kbd>⇧PgUp</kbd><kbd>⇧PgDn</kbd> 스크롤 · <kbd>⌥B</kbd> 닫기</span></div>'
   const log = document.createElement('div'); log.className = 'btw'; box.appendChild(log)
   let timer = null
   box.draw = (th) => {
@@ -1468,6 +1478,7 @@ async function openCard(sid, kind = null) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
+      if ((e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey && scrollSide(e.key === 'PageUp' ? -1 : 1)) { e.preventDefault(); return }
       if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
