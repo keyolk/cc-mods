@@ -162,7 +162,12 @@ canvas { filter: sepia(.24) saturate(.88) contrast(1.08) brightness(.9); image-r
       if (kind === 'decor') { const[w,t]=args,[x,y]=decorAt(w);if(w.decor==='plant'){box(x+.28,y+.18,.6,.45,18,'#76502d');for(let k=0;k<4;k++){const[sx,sy]=P(x+.38+k*.13,y+.43,35+k%2*7);circle(sx,sy,6*cam.s,k%2?'#668c4a':'#8daa5d')}}else if(w.decor==='shelf'){box(x+.08,y+.08,1.12,.34,48,'#644326');for(let k=0;k<5;k++)box(x+.15+k*.18,y+.15,.12,.18,4,BOOKS[k%BOOKS.length],48)}else if(w.decor==='beanbag'){box(x+.22,y+.16,.85,.52,20,'#704526');for(let k=0;k<3;k++)box(x+.3+k*.22,y+.25,.16,.18,6,['#8c3f3b','#667a47','#b18a43'][k],20)}else if(w.decor==='board'){box(x+.52,y+.25,.1,.1,24,'#604020');box(x+.23,y+.18,.68,.12,28,'#786145');const[sx,sy]=P(x+.57,y+.24,36);circle(sx,sy,8*cam.s,'#8e794d','#39291e',1.5)}else if(w.decor==='cat'){box(x+.22,y+.15,.85,.48,13,'#75502e');const[sx,sy]=P(x+.64,y+.4,21);circle(sx,sy,9*cam.s,'#d6944c');poly([[sx-6*cam.s,sy-6*cam.s],[sx-5*cam.s,sy-14*cam.s],[sx,sy-8*cam.s]],'#d6944c')}else{for(let k=0;k<3;k++)box(x+.24+k*.22,y+.18,.18,.32,22+k*7,['#794229','#6b824b','#96703e'][k])}return true }
       if (kind === 'meeting') {
         const[add,t]=args,m=meetingsNow[0],[tx0,tx1,ty0,ty1]=MEET.table
-        add(MEET.x0+MEET.y0,()=>{box(MEET.x0,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f');box(MEET.x1-.1,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f');box(MEET.x0,MEET.y0,MEET.x1-MEET.x0,.1,6,'#6d482a',42)},[MEET.x0,MEET.x1,MEET.y0,MEET.y0+.1])
+        // Each wall with its own floor box: one box for all three put the
+        // side walls at the back strip, so the lounge's nappers in front of
+        // that strip were drawn over the left wall they lie behind.
+        add(MEET.x0+MEET.y0,()=>box(MEET.x0,MEET.y0,MEET.x1-MEET.x0,.1,6,'#6d482a',42),[MEET.x0,MEET.x1,MEET.y0,MEET.y0+.1])
+        add(MEET.x0+.1+MEET.y1,()=>box(MEET.x0,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f'),[MEET.x0,MEET.x0+.1,MEET.y0,MEET.y1])
+        add(MEET.x1+MEET.y1,()=>box(MEET.x1-.1,MEET.y0,.1,MEET.y1-MEET.y0,42,'#51331f'),[MEET.x1-.1,MEET.x1,MEET.y0,MEET.y1])
         add(tx1+ty1,()=>{for(const[lx,ly]of[[tx0+.1,ty0+.1],[tx1-.15,ty0+.1],[tx0+.1,ty1-.15],[tx1-.15,ty1-.15]])box(lx,ly,.06,.06,17,'#49301f');box(tx0,ty0,tx1-tx0,ty1-ty0,5,'#754c2d',17);const[cx,cy]=P((tx0+tx1)/2,(ty0+ty1)/2,23);text('◆',cx,cy,19,'#d1aa55');if(m){deskHits.push({sx:cx,sy:cy,r:30*cam.s,sid:m.lead,kind:'meeting',n:m.sids.length,meeting:m});text(m.sids.length+'명',cx,cy-9*cam.s,9,'#fff1c8')}},[tx0,tx1,ty0,ty1]);return true
       }
       if (kind === 'partition') {
