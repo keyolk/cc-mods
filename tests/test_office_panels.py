@@ -82,6 +82,23 @@ class PanelsTest(unittest.TestCase):
         self.assertEqual(p["mode"], "custom")
         self.assertEqual(p["caps"], [{"cap": "gh_merge", "value": "allow", "scope": ["keyolk/cc-mods"]}, {"cap": "slack_send", "value": "inherit", "scope": []}])
 
+    def test_auth_reads_the_shared_radar_problems_first(self):
+        self.assertIsNone(office.auth())
+        store = self.claude / "plugins" / "store"
+        store.mkdir(parents=True)
+        office._radar.clear()
+        items = [
+            {"id": "aws-sso", "label": "AWS SSO", "state": "ok", "expiresAt": 1_790_000_000_000, "fix": ["sh", "-c", 'aws sso logout --profile "$0"; aws sso login --profile "$0"', "dev"]},
+            {"id": "mcp:claude.ai Canva", "label": "MCP Canva", "state": "unknown", "fix": ["/mcp"]},
+            {"id": "mcp:panther", "label": "MCP panther", "state": "expired", "fix": ["/mcp"], "mine": True},
+        ]
+        (store / "cc-mods_inline-x.json").write_text(json.dumps({"radar": {"at": 1_790_000_000_000, "items": items}, "other": {}}))
+        a = office.auth()
+        self.assertEqual(a["at"], 1_790_000_000)
+        self.assertEqual([(i["label"], i["connector"], i["mine"]) for i in a["items"]], [("MCP panther", False, True), ("MCP Canva", True, False), ("AWS SSO", False, False)])
+        self.assertEqual(a["items"][2]["fix"], "aws sso logout --profile dev; aws sso login --profile dev")
+        self.assertEqual(a["items"][2]["expiresAt"], 1_790_000_000)
+
 
 if __name__ == "__main__":
     unittest.main()

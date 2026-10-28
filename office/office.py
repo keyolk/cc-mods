@@ -928,6 +928,55 @@ def policy(sid: str) -> dict | None:
     return {"mode": d.get("mode"), "caps": caps, "updated": d.get("updated_at"), "blocks": recent_blocks(sid)[-3:]}
 
 
+# cc-mods' credential radar: one result every session shares, kept in the
+# mod's store file (plugins/store/cc-mods_<id>.json, key "radar"). The file
+# holds every key cc-mods stores (MBs), so it is parsed once per change.
+_radar: dict = {}
+AUTH_ORDER = {"expired": 0, "soon": 1, "unknown": 2, "ok": 3}
+
+
+def fix_text(argv) -> str | None:
+    if not isinstance(argv, list) or not argv:
+        return None
+    # ['sh', '-c', script, arg0]: the script with its "$0" filled in is what
+    # one would type (the AWS logout-then-login).
+    if argv[:2] == ["sh", "-c"] and len(argv) >= 3:
+        return str(argv[2]).replace('"$0"', str(argv[3]) if len(argv) > 3 else "")
+    return " ".join(str(a) for a in argv)
+
+
+def auth() -> dict | None:
+    files = glob.glob(os.path.expanduser("~/.claude/plugins/store/cc-mods_*.json"))
+    if not files:
+        return None
+    path = max(files, key=os.path.getmtime)
+    try:
+        m = os.path.getmtime(path)
+        if _radar.get("key") != (path, m):
+            with open(path) as f:
+                r = (json.load(f) or {}).get("radar") or {}
+            _radar.update(key=(path, m), value=r)
+        r = _radar["value"]
+    except (OSError, ValueError):
+        return None
+    items = [
+        {
+            "label": str(i.get("label") or i.get("id") or ""),
+            "state": i.get("state") or "unknown",
+            "detail": str(i.get("detail") or "")[:160],
+            "expiresAt": (i.get("expiresAt") or 0) / 1000 or None,
+            # The fix as the person would type it (never run from the office).
+            "fix": fix_text(i.get("fix")),
+            "connector": str(i.get("id") or "").startswith("mcp:claude.ai "),
+            "mine": bool(i.get("mine")),
+        }
+        for i in r.get("items") or []
+        if isinstance(i, dict)
+    ]
+    items.sort(key=lambda i: (AUTH_ORDER.get(i["state"], 2), i["connector"], i["label"]))
+    return {"at": (r.get("at") or 0) / 1000 or None, "items": items} if items else None
+
+
 def tweb_bin() -> str | None:
     for b in (shutil.which("tweb"), os.path.expanduser("~/.local/bin/tweb")):
         if b and os.access(b, os.X_OK):
@@ -978,7 +1027,7 @@ def panels(sid: str) -> dict:
     me = pane_of(sid)
     if not me:
         return {"error": "no such session"}
-    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me)}
+    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me), "auth": auth()}
 
 
 # Something for a session to read as the person's prompt: its inbox file,
