@@ -170,6 +170,13 @@ body.picking #c { cursor: crosshair; }
 #card .info pre { white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; margin: 3px 0; }
 #card .cap { display: inline-block; min-width: 54px; text-align: center; border: 2px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 11px; margin-right: 6px; }
 #card .cap.allow { background: #a8e6b0; } #card .cap.block { background: #ffb3b3; } #card .cap.inherit { background: #eee; }
+#card .btw { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 8px; font: 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#card .btw .me { align-self: flex-end; max-width: 82%; background: #2a2033; color: #fffaf0; border-radius: 12px 12px 3px 12px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#card .btw .it { align-self: flex-start; max-width: 88%; background: #f3ecdf; border-radius: 12px 12px 12px 3px; padding: 6px 10px; overflow-wrap: anywhere; }
+#card .btw .it p:last-child { margin-bottom: 0; }
+#card .btw .typing { color: #7a7090; font-style: italic; }
+#card .btw .err { background: #ffe1e1; }
+#card .btwin { position: sticky; bottom: 0; width: 100%; min-height: 36px; resize: none; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; background: #fff; }
 #card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
 #card .hist details.notice { opacity: .65; }
 #card .hist summary { cursor: pointer; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -254,7 +261,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     </dl></section>
     <section><h4>대화창</h4><dl>
       <dt><kbd>⌥M</kbd></dt><dd>최대화 ↔ 원래 크기</dd>
-      <dt><kbd>⌥1</kbd>…<kbd>⌥8</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
+      <dt><kbd>⌥1</kbd>…<kbd>⌥9</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
+      <dt>☕ btw 탭</dt><dd>작업에 끼어들지 않는 곁대화 (Enter 보내기)</dd>
       <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>답변 한 화면씩</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></dt><dd>목록 탭에서 고르기 · 열기</dd>
@@ -1210,6 +1218,46 @@ function webHtml(panes) {
     + (w.driving ? '<div class="m">🤖 지금 agent가 조작 중</div>' : w.lastAgent ? '<div class="m">마지막 agent 조작: ' + esc(w.lastAgent) + ' · ' + esc(clock(w.lastAt)) + '</div>' : '')
     + w.tabs.map((t) => '<div class="r">' + (t.active ? '▶ ' : '') + '<a data-open="' + esc(t.url || '') + '">' + esc(t.title || t.url || '') + '</a><div class="m">' + esc(t.url || '') + '</div></div>').join('')).join('')
 }
+// ☕ btw: a side chat with the session about its work, answered by a fork of
+// its conversation that never enters it (cc-mods' /side). What is said here is
+// never its prompt; send something there with the reply box below.
+function sideHtml(t) {
+  const bubbles = []
+  for (const i of t.items) {
+    bubbles.push('<div class="me">' + esc(i.q) + '</div>')
+    bubbles.push(i.pending ? '<div class="it typing">… 생각 중</div>' : i.error ? '<div class="it err">✕ ' + esc(i.error) + '</div>' : '<div class="it">' + md(i.a || '') + '</div>')
+  }
+  for (const w of t.waiting) bubbles.push('<div class="me">' + esc(w) + '</div><div class="it typing">… 전달 중</div>')
+  return bubbles.length ? bubbles.join('') : '<div class="m">일과 관련해 편하게 말을 걸어 보세요. 이 대화는 그 세션의 작업에 끼어들지 않고, 메인 대화 기록에도 남지 않습니다.</div>'
+}
+function sidePane(pane, sid, t) {
+  const log = document.createElement('div'); log.className = 'btw'; pane.appendChild(log)
+  const ta = document.createElement('textarea'); ta.className = 'btwin'; ta.rows = 1; ta.placeholder = 'btw… (Enter 보내기 · 작업에는 끼어들지 않음)'; pane.appendChild(ta)
+  card.sideInput = ta
+  let timer = null
+  const draw = (th) => {
+    const atEnd = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40
+    log.innerHTML = sideHtml(th); log.onclick = infoClick
+    if (atEnd) pane.scrollTop = pane.scrollHeight
+    clearTimeout(timer)
+    // Poll only while an answer is on its way, and only for this card.
+    if (th.waiting.length || th.items.some((i) => i.pending)) timer = setTimeout(async () => { if (cardSid !== sid) return; try { draw(await (await fetch('/side?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()) } catch (_) {} }, 1500)
+  }
+  draw(t)
+  ta.onkeydown = async (e) => {
+    if (e.isComposing || e.keyCode === 229 || e.altKey) return
+    if (e.key === 'Escape') { e.preventDefault(); ta.blur(); return }
+    if (e.key !== 'Enter' || e.shiftKey) return
+    e.preventDefault()
+    const text = ta.value.trim()
+    if (!text) return
+    ta.value = ''
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid, kind: 'side', value: text }) }).catch(() => null)
+    if (r && r.status === 403) return staleToken()
+    if (!r || !r.ok) { ta.value = text; toast('✕ btw를 못 보냈습니다'); return }
+    draw(await (await fetch('/side?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json())
+  }
+}
 async function openCard(sid, kind = null) {
   cardSid = sid
   card.style.display = 'block'
@@ -1229,7 +1277,7 @@ async function openCard(sid, kind = null) {
   cardRoute = d.route || 'default'
   card.innerHTML = ''
   card.classList.add('panes')
-  card.selectTab = card.openCurrent = card.moveResource = card.curPane = null
+  card.selectTab = card.openCurrent = card.moveResource = card.curPane = card.sideInput = null
   card.resourceLinks = []
   // add() puts things where `into` points: the card, then its tab panes, then
   // the foot that stays at the card's bottom (the things to press).
@@ -1275,7 +1323,7 @@ async function openCard(sid, kind = null) {
   // Then what cc-mods shows in that session's own pane: Chat (past turns),
   // Work, Policy and Web, each only when there is something in it.
   const wk = pn.work || {}, workN = (wk.subagents || []).length + (wk.bg || []).length
-  const groups = [['said', '💬 답변', null], ['hist', '📜 지난 대화', null, pn.history || [], historyHtml], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)],
+  const groups = [['said', '💬 답변', null], ['hist', '📜 지난 대화', null, pn.history || [], historyHtml], ['btw', '☕ btw', null, pn.side ? [pn.side] : [], null], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)],
     ['work', '🛠 작업', null, workN ? Array(workN) : [], () => workHtml(wk)], ['policy', '🔐 정책', null, pn.policy ? [pn.policy] : [], () => policyHtml(pn.policy)], ['web', '🌐 웹', null, pn.web || [], webHtml]]
     .map(([k, label, f, own, render]) => [k, label, f ? (d.related || []).filter(f) : own, render]).filter(([k, , items]) => k === 'said' || items.length)
   const tabbar = add('div', 'ctabs'), panes = {}
@@ -1284,17 +1332,19 @@ async function openCard(sid, kind = null) {
   const showTab = (i, focus = false) => {
     curTab = (i + groups.length) % groups.length
     tabbar.innerHTML = ''
-    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items && items.length && k !== 'policy' ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items && items.length && k !== 'policy' && k !== 'btw' ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
     groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
     card.curPane = panes[groups[curTab][0]]
     // Past turns read like a chat: the newest at the bottom, where it opens.
     if (groups[curTab][0] === 'hist') card.curPane.scrollTop = card.curPane.scrollHeight
+    if (groups[curTab][0] === 'btw' && card.sideInput) { card.curPane.scrollTop = card.curPane.scrollHeight; setTimeout(() => card.sideInput && card.sideInput.focus({ preventScroll: true }), 0) }
     const rel = panes[groups[curTab][0]].querySelector('.rel')
     if (rel) resourceKeys(rel, focus); else { card.resourceLinks = []; card.openCurrent = card.moveResource = null }
   }
   card.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
   if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir, true)
   for (const [k, , items, render] of groups) {
+    if (k === 'btw') { sidePane(panes.btw, sid, items[0]); continue }
     if (render) { const box = document.createElement('div'); box.className = k === 'hist' ? 'hist' : 'info'; box.innerHTML = render(items); box.onclick = infoClick; panes[k].appendChild(box) }
     else if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
   }

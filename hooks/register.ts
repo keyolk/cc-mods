@@ -1622,6 +1622,7 @@ async function refreshExp($: any, paths?: string[]) {
 let officeBusy = false
 async function officeInbox($: any) {
   if (officeBusy || !home) return
+  void officeSide($)
   const file = home + '/.claude/state/office/inbox/' + sid + '.json'
   if (!(await $.fs.exists(file).catch(() => false))) return
   officeBusy = true
@@ -1640,6 +1641,32 @@ async function officeInbox($: any) {
     await $.prompt.submit({ text, asUser: true }).catch(() => $.ui.toast('office: could not send the reply; type it here'))
   } finally {
     officeBusy = false
+  }
+}
+
+// btw from the office card: side messages for this session, asked in order
+// through the same side chat as /side (never the main prompt). Taken once.
+let officeSideBusy = false
+async function officeSide($: any) {
+  if (officeSideBusy || !home) return
+  const file = home + '/.claude/state/office/side/' + sid + '.ask.json'
+  if (!(await $.fs.exists(file).catch(() => false))) return
+  officeSideBusy = true
+  try {
+    const raw = await readText($, file)
+    await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
+    let asks: { text?: unknown; at?: unknown }[] = []
+    try {
+      asks = JSON.parse(raw ?? '{}').asks ?? []
+    } catch {
+      return
+    }
+    for (const a of asks) {
+      const text = typeof a.text === 'string' ? a.text.trim() : ''
+      if (text && Date.now() / 1000 - Number(a.at ?? 0) <= 600) await sideAsk($, text)
+    }
+  } finally {
+    officeSideBusy = false
   }
 }
 
@@ -2054,10 +2081,21 @@ async function scopedOutputs($: any, scope: OutScope): Promise<(Output & { sessi
   return rows.sort((a, b) => b.at - a.at)
 }
 
+// The side thread for the office's card (office.py side_thread), rewritten on
+// every change; the office never reads this mod's state directly.
+async function sideExport($: any) {
+  if (!home || !sid) return
+  const items = ((await read($, sideA)) as SideQA[]).slice(-20).map(({ q, a, error, pending, at }) => ({ q, a, error, pending, at }))
+  const dir = home + '/.claude/state/office/side'
+  await $.process.run(['mkdir', '-p', dir], { timeoutMs: 3000 }).catch(() => {})
+  await $.fs.write(dir + '/' + sid + '.json', JSON.stringify({ items })).catch(() => {})
+}
+
 async function sideAsk($: any, q: string) {
   const id = ++sideSeq
   const before = (await read($, sideA)) as SideQA[]
   await update($, sideA, (xs) => [...xs, { id, q, at: Date.now(), pending: true }])
+  void sideExport($)
   const r = await $.model.fork({ prompt: sidePrompt(before, q) })
   await update($, sideA, (xs) =>
     xs.map((x) =>
@@ -2068,6 +2106,7 @@ async function sideAsk($: any, q: string) {
           : { ...x, pending: false, error: r.reason === 'nothing-to-fork' ? 'Available after the first main turn finishes.' : 'answer failed: ' + r.reason },
     ),
   )
+  void sideExport($)
 }
 
 // Rebuild flow, turns, outputs and the work graph from the loaded transcript
@@ -4410,7 +4449,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
           void $.agent.spawn({ prompt: qa.q, description: 'side: ' + clip(qa.q, 40), subagentType: 'general-purpose' })
           $.ui.toast('handed to a subagent; see cockpit Work (3)')
         },
-        onClear: () => void update($, sideA, () => []),
+        onClear: () => void update($, sideA, () => []).then(() => sideExport($)),
         onFocusInput: () => void $.ui.focus({ requestId: COCKPIT, key: 'side-input' }).catch(() => {}),
       })
 
