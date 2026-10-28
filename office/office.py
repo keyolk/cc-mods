@@ -24,6 +24,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 import subprocess
 import sys
@@ -793,6 +794,242 @@ def detail(sid: str, kind: str | None = None) -> dict:
             "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid, "all", 60), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
+# ---- the card's other tabs: cc-mods' Chat, Work, Policy and Web -----------
+#
+# Fetched with the card (/panels), apart from /detail so a slow tweb or a long
+# transcript never holds up the answer and its buttons.
+
+HISTORY_TAIL = 4_000_000
+HISTORY_MAX = 64_000_000
+HISTORY_TURNS = 40
+# User records that are not the person talking: slash-command echoes, hook
+# and harness notices, background-task notifications.
+NOT_ASKED = re.compile(r"^\s*<(command-|local-command|system-reminder|task-notification|bash-)")
+# A plugin's message submitted as a prompt (a monitor event, a finished
+# task): a turn of its own, so its answer does not replace the person's, but
+# marked as not the person's.
+NOTICE = re.compile(r"^The [\w.-]+ plugin sent a message:")
+
+
+def _text_of(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def _turns(lines: list[str]) -> list[dict]:
+    turns: list[dict] = []
+    for line in lines:
+        # Most of a transcript is tool calls and results; skip those lines
+        # unparsed, or a long session's tail takes seconds to read.
+        if '"type":"text"' not in line and '"content":"' not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("isMeta") or d.get("isSidechain") or d.get("isCompactSummary"):
+            continue
+        m = d.get("message") or {}
+        role, c = m.get("role"), m.get("content")
+        if d.get("type") == "user" and role == "user":
+            if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in c):
+                continue
+            t = _text_of(c).strip()
+            if t and not NOT_ASKED.match(t):
+                turns.append({"ask": t[:4000], "at": d.get("timestamp"), "said": "", "notice": bool(NOTICE.match(t))})
+        elif role == "assistant" and turns:
+            t = _text_of(c).strip()
+            if t:
+                turns[-1]["said"] = t[-8000:]
+    return turns
+
+
+def history(sid: str, limit: int = HISTORY_TURNS) -> list[dict]:
+    """Past turns, oldest first: what the person asked and the session's last
+    words on it (the Chat tab's requests and conclusions, no tool calls).
+    Reads back from the end, further each time, until it has `limit` turns:
+    a session that ran big tool outputs can hold only a few in its last MBs."""
+    path = transcript(sid)
+    if not path:
+        return []
+    tail, turns = HISTORY_TAIL, []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            while True:
+                start = max(0, size - tail)
+                f.seek(start)
+                lines = f.read(size - start).decode("utf-8", "replace").splitlines()
+                turns = _turns(lines[1:] if start else lines)  # a seek cuts the first line
+                if len(turns) > limit or not start or tail >= HISTORY_MAX:
+                    break
+                tail *= 4
+    except OSError:
+        return []
+    # Answers before the first prompt in the window are skipped (turns is
+    # still empty then), so even the oldest turn here is whole.
+    return turns[-limit:]
+
+
+def _outputs(sid: str) -> list[dict]:
+    files = sorted(glob.glob(os.path.expanduser("~/.claude/outputs/*/" + sid + ".json")))
+    if not files:
+        return []
+    try:
+        with open(files[-1]) as f:
+            return (json.load(f) or {}).get("outputs") or []
+    except (OSError, ValueError):
+        return []
+
+
+def work(sid: str) -> dict:
+    """Every subagent the session started (newest first, live ones marked)
+    and the background tasks it left running: the Work tab's tree, flat."""
+    path, now, subs = transcript(sid), time.time(), []
+    for f in glob.glob(os.path.join(os.path.dirname(path), sid, "subagents", "agent-*.jsonl")) if path else []:
+        try:
+            mt = os.path.getmtime(f)
+        except OSError:
+            continue
+        meta = {}
+        try:
+            with open(f[: -len(".jsonl")] + ".meta.json") as m:
+                meta = json.load(m)
+        except (OSError, ValueError):
+            pass
+        subs.append({"desc": str(meta.get("description") or "")[:100], "type": meta.get("agentType") or "agent", "live": now - mt <= SUB_LIVE_S, "at": mt, "f": f})
+    subs.sort(key=lambda a: -a["at"])
+    subs = subs[:20]
+    for s in subs:
+        t = last_tool_in(s.pop("f"))  # only for the ones shown: each reads a file's tail
+        s.update(tool=t.get("tool"), detail=t.get("detail"))
+    # Output records carry `at` in ms; the page's clocks are seconds.
+    bg = [{"title": str(o.get("title") or "")[:80], "detail": o.get("detail"), "at": (o.get("at") or 0) / 1000 or None, "path": o.get("path")} for o in _outputs(sid) if o.get("kind") == "bg"]
+    bg.sort(key=lambda o: -(o.get("at") or 0))
+    return {"subagents": subs, "bg": bg[:20]}
+
+
+POLICY_SCOPES = {"gh_merge": "gh_merge_repos", "prod_eks_access": "prod_eks_access_ctxs", "prod_eks_write": "prod_eks_write_scopes", "slack_send": "slack_send_targets"}
+
+
+def policy(sid: str) -> dict | None:
+    """The session policy file (session_policy.py's) as the Policy tab draws
+    it, and the guards' latest refusals."""
+    try:
+        with open(os.path.expanduser(f"~/.claude/state/session_policy/{sid}.json")) as f:
+            d = json.load(f) or {}
+    except (OSError, ValueError):
+        return None
+    caps = [{"cap": k, "value": v, "scope": d.get(POLICY_SCOPES.get(k, "")) or []} for k, v in sorted((d.get("capabilities") or {}).items())]
+    return {"mode": d.get("mode"), "caps": caps, "updated": d.get("updated_at"), "blocks": recent_blocks(sid)[-3:]}
+
+
+# cc-mods' credential radar: one result every session shares, kept in the
+# mod's store file (plugins/store/cc-mods_<id>.json, key "radar"). The file
+# holds every key cc-mods stores (MBs), so it is parsed once per change.
+_radar: dict = {}
+AUTH_ORDER = {"expired": 0, "soon": 1, "unknown": 2, "ok": 3}
+
+
+def fix_text(argv) -> str | None:
+    if not isinstance(argv, list) or not argv:
+        return None
+    # ['sh', '-c', script, arg0]: the script with its "$0" filled in is what
+    # one would type (the AWS logout-then-login).
+    if argv[:2] == ["sh", "-c"] and len(argv) >= 3:
+        return str(argv[2]).replace('"$0"', str(argv[3]) if len(argv) > 3 else "")
+    return " ".join(str(a) for a in argv)
+
+
+def auth() -> dict | None:
+    files = glob.glob(os.path.expanduser("~/.claude/plugins/store/cc-mods_*.json"))
+    if not files:
+        return None
+    path = max(files, key=os.path.getmtime)
+    try:
+        m = os.path.getmtime(path)
+        if _radar.get("key") != (path, m):
+            with open(path) as f:
+                r = (json.load(f) or {}).get("radar") or {}
+            _radar.update(key=(path, m), value=r)
+        r = _radar["value"]
+    except (OSError, ValueError):
+        return None
+    items = [
+        {
+            "label": str(i.get("label") or i.get("id") or ""),
+            "state": i.get("state") or "unknown",
+            "detail": str(i.get("detail") or "")[:160],
+            "expiresAt": (i.get("expiresAt") or 0) / 1000 or None,
+            # The fix as the person would type it (never run from the office).
+            "fix": fix_text(i.get("fix")),
+            "connector": str(i.get("id") or "").startswith("mcp:claude.ai "),
+            "mine": bool(i.get("mine")),
+        }
+        for i in r.get("items") or []
+        if isinstance(i, dict)
+    ]
+    items.sort(key=lambda i: (AUTH_ORDER.get(i["state"], 2), i["connector"], i["label"]))
+    return {"at": (r.get("at") or 0) / 1000 or None, "items": items} if items else None
+
+
+def tweb_bin() -> str | None:
+    for b in (shutil.which("tweb"), os.path.expanduser("~/.local/bin/tweb")):
+        if b and os.access(b, os.X_OK):
+            return b
+    return None
+
+
+def web(me: dict) -> list[dict]:
+    """The TWeb panes this session works with: in its tmux window, or linked
+    to its pane (cc-mods' Web tab drives one of those)."""
+    b = tweb_bin()
+    if not b:
+        return []
+    try:
+        mine = set(subprocess.run(["tmux", "list-panes", "-t", me["wid"], "-F", "#{pane_id}"], capture_output=True, text=True, timeout=3).stdout.split())
+        listed = json.loads(subprocess.run([b, "panes", "--json"], capture_output=True, text=True, timeout=4).stdout or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for p in listed if isinstance(listed, list) else []:
+        st = p.get("status") or {}
+        pres = st.get("presence") or {}
+        link = pres.get("link") or {}
+        linked = str(link.get("owner") or "").endswith(" " + me["pane"])
+        if p.get("pane") not in mine and not linked:
+            continue
+        tabs = [{"title": str(t.get("title") or "")[:80], "url": t.get("url"), "active": bool(t.get("active"))} for t in (st.get("tabs") or {}).get("tabs") or []]
+        last = pres.get("lastAgent") or {}
+        out.append({"pane": p.get("pane"), "engine": st.get("browser"), "tabs": tabs, "linked": linked, "driving": pres.get("driving"), "lastAgent": last.get("method"), "lastAt": (last.get("at") or 0) / 1000 or None})
+    return out
+
+
+def pane_of(sid: str) -> dict | None:
+    """The session's pane and window, from tmux alone (snapshot() also reads
+    every session's transcript and takes seconds)."""
+    try:
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}|#{window_id}|#{@cc_pane_session}"], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for line in out.splitlines():
+        pane, wid, s = (line.split("|") + ["", ""])[:3]
+        if s == sid:
+            return {"pane": pane, "wid": wid}
+    return None
+
+
+def panels(sid: str) -> dict:
+    me = pane_of(sid)
+    if not me:
+        return {"error": "no such session"}
+    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me), "auth": auth()}
+
+
 # Something for a session to read as the person's prompt: its inbox file,
 # which cc-mods submits within ~2 s. A message already waiting there is kept
 # and this one is added after it, so two sends never lose the first.
@@ -1222,6 +1459,11 @@ class Handler(BaseHTTPRequestHandler):
             sid, kind = (q.get("sid") or [""])[0], (q.get("kind") or [""])[0]
             kind = kind if kind in ("desk", "in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
+        if self.path.startswith("/panels"):
+            from urllib.parse import parse_qs, urlparse
+
+            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
+            return self.send(200, json.dumps(panels(sid)).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
             return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot()}).encode(), "application/json")
