@@ -93,6 +93,14 @@ canvas.drag { cursor: grabbing; }
 #pickchip.on { background: #7dd3fc; color: #2a2033; }
 body.picking #c { cursor: crosshair; }
 #settings { position: fixed; left: 14px; top: 52px; width: 340px; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 13px; }
+/* The credential radar: one for the whole office, not per session. */
+#authp { position: fixed; right: 14px; top: 52px; width: min(420px, calc(100% - 28px)); max-height: calc(100% - 70px); overflow: auto; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 12.5px; }
+#authp .h { font-family: Jua, sans-serif; margin: 8px 0 4px; } #authp .h:first-child { margin-top: 0; }
+#authp .r { background: #f3ecdf; border-radius: 8px; padding: 4px 8px; margin: 3px 0; overflow-wrap: anywhere; }
+#authp .m { color: #7a7090; font-size: 11px; }
+#authp code { font: 11px ui-monospace, Menlo, monospace; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; word-break: break-all; }
+#authp details summary { cursor: pointer; margin: 6px 0; }
+#authchip { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; } #authchip.bad { background: #ffb3b3; color: #2a2033; } #authchip.soon { background: #ffe08a; color: #2a2033; }
 #settings h3 { margin: 0 0 8px; font-weight: 400; font-family: Jua, sans-serif; }
 #settings .row { margin: 8px 0; }
 #settings .row > div:first-child { margin-bottom: 4px; }
@@ -211,7 +219,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <body>
 <header>
   <h1 id="office-title">🏢 __OFFICE_OWNER__네 사무실</h1>
-  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span><span class="chip" id="res" title="공용 자원 (계정·쿼터)"></span>
+  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span><span class="chip" id="res" title="공용 자원 (계정·쿼터)"></span><button class="chip" id="authchip" title="인증 상태 (모든 세션 공통) · K"></button>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
   <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
@@ -229,7 +237,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈). 답장칸에서는 글자가 입력이 되므로 카드 단축키는 <kbd>⌥</kbd>를 붙이거나 <kbd>Esc</kbd>로 빠져나온 뒤 누릅니다</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥9</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📜 지난 대화 · 📥 받은 것 · 📤 보낸 것 · 📎 파일 · 🛠 작업 · 🔐 정책 · 🌐 웹 · 🔑 인증, 내용이 있는 것만; 서랍에서도)</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥8</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📜 지난 대화 · 📥 받은 것 · 📤 보낸 것 · 📎 파일 · 🛠 작업 · 🔐 정책 · 🌐 웹, 내용이 있는 것만; 서랍에서도)</td></tr>
     <tr><td><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd> (답장칸 밖에선 <kbd>+</kbd> <kbd>−</kbd>도)</td><td>카드 글자 확대 · 축소 · 원래대로</td></tr>
     <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
     <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 · 폭과 높이 조정 (네 변과 네 모서리 어디든 끌어서도 조정)</td></tr>
@@ -887,6 +895,8 @@ function officeKey(e) {
   if (viewer.path && k === 'o') return hit(() => (e.shiftKey ? showPlaces(viewer.path, viewer.querySelector('.place')) : openLink(viewer.path)))
   if (k === ',') return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
   if (settings.style.display === 'block' && k === 'Escape') return hit(closeSettings)
+  if (k === 'Escape' && authp.style.display === 'block') return hit(() => toggleAuth(false))
+  if (k === 'k' && !open) return hit(() => toggleAuth())
   if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
   if (help.style.display === 'block' && k === 'Escape') return hit(() => { help.style.display = 'none' })
   if (pendingMove && k === 'Enter') return hit(doMove)
@@ -1151,11 +1161,27 @@ function authHtml(a) {
   const row = (i) => '<div class="r">' + (AUTH_MARK[i.state] || '❔') + ' <b>' + esc(i.label) + '</b>' + (i.mine ? ' <span class="m">(직접 설정)</span>' : '')
     + '<div class="m">' + esc(i.detail) + (i.expiresAt ? ' · 만료 ' + esc(clock(i.expiresAt)) : '') + '</div>' + (i.fix && i.state !== 'ok' ? '<div class="m">고치려면 <code>' + esc(i.fix) + '</code></div>' : '') + '</div>'
   const bad = a.items.filter((i) => i.state !== 'ok' && !i.connector), ok = a.items.filter((i) => i.state === 'ok'), idle = a.items.filter((i) => i.state !== 'ok' && i.connector)
-  return (bad.length ? '<div class="h">⚠ 로그인이 필요한 것 ' + bad.length + '</div>' + bad.map(row).join('') : '<div class="h">✅ 로그인이 필요한 것이 없습니다</div>')
+  return '<div class="h">🔑 인증 · 모든 세션 공통 <span class="m">K · Esc</span></div>' + (bad.length ? '<div class="h">⚠ 로그인이 필요한 것 ' + bad.length + '</div>' + bad.map(row).join('') : '<div class="h">✅ 로그인이 필요한 것이 없습니다</div>')
     + (ok.length ? '<div class="h">✅ 정상 ' + ok.length + '</div>' + ok.map(row).join('') : '')
     + (idle.length ? '<details><summary class="m">claude.ai 커넥터 ' + idle.length + '개는 로그인 안 됨 (쓰지 않으면 괜찮음)</summary>' + idle.map(row).join('') + '</details>' : '')
-    + '<div class="m">모든 세션 공통 · ' + (a.at ? esc(clock(a.at)) + '에 확인 · ' : '') + '로그인은 그 세션에서 /auth</div>'
+    + '<div class="m">' + (a.at ? esc(clock(a.at)) + '에 확인 · ' : '') + '로그인은 아무 세션에서나 /auth</div>'
 }
+const authp = document.createElement('div'); authp.id = 'authp'; document.body.appendChild(authp)
+const authchip = document.getElementById('authchip')
+let authNow = null
+function renderAuthChip() {
+  const bad = authNow ? authNow.items.filter((i) => !i.connector && (i.state === 'expired' || i.state === 'unknown')).length : 0
+  const soon = authNow ? authNow.items.filter((i) => !i.connector && i.state === 'soon').length : 0
+  authchip.style.display = authNow ? '' : 'none'
+  authchip.className = 'chip' + (bad ? ' bad' : soon ? ' soon' : '')
+  authchip.textContent = '🔑 ' + (bad ? '로그인 필요 ' + bad : soon ? '곧 만료 ' + soon : '인증 정상')
+  if (authp.style.display === 'block') authp.innerHTML = authHtml(authNow)
+}
+function toggleAuth(on = authp.style.display !== 'block') {
+  if (on && authNow) { authp.innerHTML = authHtml(authNow); authp.style.display = 'block' } else authp.style.display = 'none'
+}
+authchip.onclick = () => toggleAuth()
+addEventListener('mousedown', (e) => { if (authp.style.display === 'block' && !e.target.closest('#authp, #authchip')) toggleAuth(false) }, true)
 function webHtml(panes) {
   return panes.map((w) => '<div class="h">🌐 ' + esc(w.pane) + ' · ' + esc(w.engine || '') + (w.linked ? ' · 이 세션에 연결' : ' · 같은 창') + '</div>'
     + (w.driving ? '<div class="m">🤖 지금 agent가 조작 중</div>' : w.lastAgent ? '<div class="m">마지막 agent 조작: ' + esc(w.lastAgent) + ' · ' + esc(clock(w.lastAt)) + '</div>' : '')
@@ -1227,15 +1253,15 @@ async function openCard(sid, kind = null) {
   // Work, Policy and Web, each only when there is something in it.
   const wk = pn.work || {}, workN = (wk.subagents || []).length + (wk.bg || []).length
   const groups = [['said', '💬 답변', null], ['hist', '📜 지난 대화', null, pn.history || [], historyHtml], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)],
-    ['work', '🛠 작업', null, workN ? Array(workN) : [], () => workHtml(wk)], ['policy', '🔐 정책', null, pn.policy ? [pn.policy] : [], () => policyHtml(pn.policy)], ['web', '🌐 웹', null, pn.web || [], webHtml], ['auth', '🔑 인증', null, pn.auth ? pn.auth.items.filter((i) => i.state !== 'ok' && !i.connector) : [], () => authHtml(pn.auth)]]
-    .map(([k, label, f, own, render]) => [k, label, f ? (d.related || []).filter(f) : own, render]).filter(([k, , items]) => k === 'said' || items.length || (k === 'auth' && pn.auth))
+    ['work', '🛠 작업', null, workN ? Array(workN) : [], () => workHtml(wk)], ['policy', '🔐 정책', null, pn.policy ? [pn.policy] : [], () => policyHtml(pn.policy)], ['web', '🌐 웹', null, pn.web || [], webHtml]]
+    .map(([k, label, f, own, render]) => [k, label, f ? (d.related || []).filter(f) : own, render]).filter(([k, , items]) => k === 'said' || items.length)
   const tabbar = add('div', 'ctabs'), panes = {}
   for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; card.appendChild(panes[k]) }
   let curTab = 0
   const showTab = (i, focus = false) => {
     curTab = (i + groups.length) % groups.length
     tabbar.innerHTML = ''
-    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items && items.length && k !== 'policy' ? ' ' + (k === 'auth' ? '⚠' : '') + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items && items.length && k !== 'policy' ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
     groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
     card.curPane = panes[groups[curTab][0]]
     // Past turns read like a chat: the newest at the bottom, where it opens.
@@ -1275,6 +1301,7 @@ async function openCard(sid, kind = null) {
     msg.className = 'msg'; msg.textContent = '보내는 중…'
     try {
       const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid, ...body }) })
+      if (r.status === 403) return staleToken()
       const j = await r.json()
       if (r.status === 409 && j.busy) {
         // Working, or the last reply not taken yet: one more press (or ⏎
@@ -1536,9 +1563,13 @@ async function openLink(v, via) {
   via = via || lastPlace(v)
   try {
     const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: cardSid, kind: 'open', value: v, via }) })
+    if (r.status === 403) return staleToken()
     const j = await r.json(); toast(r.ok ? '↗ ' + (j.sent || '열었습니다') : '✕ ' + (j.error || r.status))
-  } catch {}
+  } catch (e) { toast('✕ 못 열었습니다: ' + e.message) }
 }
+// The server refused this page's token: it is an older server's (before
+// the token was kept across restarts). Only a reload gets the current one.
+function staleToken() { toast('↻ office 서버가 다시 시작돼 페이지를 새로 불러옵니다'); setTimeout(() => location.reload(), 900) }
 // The menu beside a ↗ button: each place, the current default marked.
 const placeMenu = document.createElement('div'); placeMenu.id = 'placemenu'; document.body.appendChild(placeMenu)
 function showPlaces(v, anchor) {
@@ -3086,7 +3117,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; renderAuthChip(); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

@@ -492,7 +492,30 @@ def snapshot() -> list[dict]:
 # Every POST needs the token this server printed into its page, and a local
 # Host: another site in the browser cannot drive a session through it.
 
-TOKEN = secrets.token_urlsafe(24)
+def _token() -> str:
+    """The page's token for POSTs, kept across restarts in a 0600 file: a new
+    one per process left every open page sending the old one, so its links
+    and replies were refused (403) until someone reloaded it."""
+    path = os.path.expanduser("~/.claude/state/office/token")
+    try:
+        with open(path) as f:
+            t = f.read().strip()
+        if len(t) >= 24:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(24)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(t)
+    except OSError:
+        pass  # still this process's token, only not kept
+    return t
+
+
+TOKEN = _token()
 INBOX = os.path.expanduser("~/.claude/state/office/inbox")
 OPTION = re.compile(r"^\s*([❯›>]\s*)?(\d)[.)]\s+(.+?)\s*$")
 
@@ -1027,7 +1050,7 @@ def panels(sid: str) -> dict:
     me = pane_of(sid)
     if not me:
         return {"error": "no such session"}
-    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me), "auth": auth()}
+    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me)}
 
 
 # Something for a session to read as the person's prompt: its inbox file,
@@ -1466,7 +1489,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps(panels(sid)).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.

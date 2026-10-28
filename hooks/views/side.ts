@@ -35,13 +35,13 @@ export type SideView = {
 export function renderSide(els: Els, v: SideView): Node {
   const { Text, Input, Markdown, Button, Box } = els
   const total = v.items.reduce((n, x) => n + (x.tokens ? x.tokens.input + x.tokens.output : 0), 0)
-  const top = v.embedded ? undefined : header(els, 'side', v.items.length ? v.items.length + ' questions · ' + kTokens(total) + ' tok' : 'questions that stay out of the main chat', v.width)
+  const top = v.embedded ? undefined : header(els, 'side', v.items.length ? v.items.length + ' messages · ' + kTokens(total) + ' tok' : 'a chat that stays out of the main one', v.width)
   const input = field(els, Input({
     key: 'side-input',
-    label: 'ask',
-    placeholder: 'ask without touching the main chat (Enter)',
+    label: 'btw',
+    placeholder: 'talk beside the main chat; it remembers this thread (Enter)',
     value: '',
-    submitLabel: 'ask',
+    submitLabel: 'say',
     // The side pane always lands here. The Chat tab does once a question has
     // been asked, so alt+c goes straight to asking the next one (Tab leaves).
     ...(!v.embedded || v.items.length ? { autoFocus: true as const } : {}),
@@ -56,22 +56,24 @@ export function renderSide(els: Els, v: SideView): Node {
     ? [Box({ display: 'none', children: [Button({ key: 'hk-side-ask', label: 'ask', hotkey: 'i', plain: true, onPress: v.onFocusInput, children: [Text({ children: ['ask'] })] })] })]
     : []
   if (v.items.length === 0) {
-    return col(els, [...ask, ...(top ? [top] : []), input, empty(els, 'Answers with the whole main chat as context.', 'No tools, nothing written to the main transcript; send an answer to the main chat if you want it there.')])
+    return col(els, [...ask, ...(top ? [top] : []), input, empty(els, 'A chat beside the work: it knows the main chat and what you said here.', 'No tools, nothing written to the main transcript; send a reply to the main chat if you want it there.')])
   }
   const blocks: Node[] = []
-  // Embedded (the Chat tab): the field first and the newest answer under it,
-  // so asking again never needs a scroll. The side pane keeps reading order.
-  const shown = v.embedded ? v.items.slice(-3).reverse() : v.items.slice(-8)
+  // Embedded (the Chat tab): the field first and the newest exchange under it,
+  // so talking on never needs a scroll. The side pane keeps reading order.
+  const shown = v.embedded ? v.items.slice(-4).reverse() : v.items.slice(-12)
+  // The actions belong to the reply being talked about: the latest one.
+  const latest = [...v.items].reverse().find((x) => x.a)?.id
   for (const qa of shown) {
     const tone = qa.error ? C.bad : qa.pending ? C.warn : C.accent
     const body: Node[] = [
-      row(els, [Text({ color: C.muted, children: [hhmm(qa.at)] }), Text({ bold: true, color: C.accent, children: ['Q  ' + clip(qa.q, v.width * 2)] })], 2),
+      row(els, [Text({ color: C.muted, children: [hhmm(qa.at)] }), Text({ bold: true, color: C.accent, children: ['me  ' + clip(qa.q, v.width * 2)] })], 2),
     ]
-    if (qa.pending) body.push(Text({ color: C.warn, children: ['⏳ answering…'] }))
+    if (qa.pending) body.push(Text({ color: C.warn, children: ['… typing'] }))
     else if (qa.error) body.push(Text({ color: C.bad, children: ['✗ ' + qa.error] }))
     else if (qa.a) {
-      body.push(Box({ marginTop: 1, children: [Markdown({ key: 'side-a-' + qa.id, text: qa.a })] }))
-      body.push(
+      body.push(Box({ marginTop: 1, flexDirection: 'column', children: [Text({ color: C.muted, children: ['claude'] }), Markdown({ key: 'side-a-' + qa.id, text: qa.a })] }))
+      if (qa.id === latest) body.push(
         Box({
           marginTop: 1,
           children: [

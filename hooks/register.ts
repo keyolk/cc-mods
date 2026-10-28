@@ -69,6 +69,7 @@ import { mermaid, renderGraph, type GraphMode } from './views/graph'
 import { renderOutputs, type OutScope, type OutSide, type OutTab, type Preview } from './views/outputs'
 import { renderPolicy, renderRoute } from './views/policy'
 import { renderSide, type SideQA } from './views/side'
+import { sidePrompt } from './lib/side'
 import { renderSettings } from './views/settings'
 import { col, tabRow, type Els } from './views/common'
 import { FRAME_BOTTOM, FRAME_TOP, SPACER_ROWS, TABS, frame, renderHome, renderNarwhalRuns, renderWatch, tabOf, type HomeView, type View } from './views/home'
@@ -2055,13 +2056,9 @@ async function scopedOutputs($: any, scope: OutScope): Promise<(Output & { sessi
 
 async function sideAsk($: any, q: string) {
   const id = ++sideSeq
+  const before = (await read($, sideA)) as SideQA[]
   await update($, sideA, (xs) => [...xs, { id, q, at: Date.now(), pending: true }])
-  const r = await $.model.fork({
-    prompt:
-      'This is a side question from the user, asked in a separate pane. Answer it briefly from the conversation so far, in Korean. ' +
-      'You cannot use tools here; if the answer needs one, say what to check. Question:\n\n' +
-      q,
-  })
+  const r = await $.model.fork({ prompt: sidePrompt(before, q) })
   await update($, sideA, (xs) =>
     xs.map((x) =>
       x.id !== id
