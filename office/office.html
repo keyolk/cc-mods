@@ -203,10 +203,18 @@ body.picking #c { cursor: crosshair; }
 #card .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
-#help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 14px 18px; display: none; min-width: 300px; }
-#help h3 { margin: 0 0 8px; font-weight: 400; }
-#help table { border-collapse: collapse; font-size: 13px; }
-#help td { padding: 3px 10px 3px 0; }
+/* Above the card (z 4) and everything else, sized to the window: columns
+   by topic, one short line per key, the keys never wrapping. */
+#help { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 9; width: min(980px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line), 0 0 0 100vmax rgba(20,18,32,.45); padding: 14px 18px; display: none; }
+#help h3 { margin: 0 0 10px; font-weight: 400; }
+#help h3 .m { font: 12px -apple-system, sans-serif; color: #7a7090; }
+#help .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 6px 22px; }
+#help h4 { margin: 0 0 4px; font: 15px Jua, sans-serif; border-bottom: 2px solid rgba(59,42,53,.15); padding-bottom: 2px; }
+#help dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; align-items: baseline; font: 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#help dt { white-space: nowrap; text-align: right; }
+#help dd { margin: 0; color: #3b2f45; }
+#help kbd { font: 11px ui-monospace, Menlo, monospace; }
+#help .foot { margin-top: 10px; color: #7a7090; font: 11.5px -apple-system, sans-serif; }
 kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua, sans-serif; background: #fff; border: 2px solid var(--line); border-bottom-width: 3px; border-radius: 6px; padding: 0 5px; }
 #ask button.on { outline: 3px solid #fff; outline-offset: 1px; }
 #ask .zz { background: #4a4d6e; color: #cfcbe8; border: 2px dashed #8a86b0; box-shadow: none; }
@@ -231,35 +239,41 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <div id="tip"></div>
 <div id="card"></div>
 <div id="help">
-  <h3>⌨️ 단축키</h3>
-  <table>
-    <tr><td><kbd>N</kbd> <kbd>Tab</kbd> (답장칸에선 <kbd>Tab</kbd> <kbd>⌥N</kbd>)</td><td>다음으로 답할 agent (❗ 먼저, 오래 기다린 순)</td></tr>
-    <tr><td><kbd>P</kbd> <kbd>⇧Tab</kbd> (답장칸에선 <kbd>⇧Tab</kbd> <kbd>⌥P</kbd>)</td><td>이전 agent</td></tr>
-    <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
-    <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈). 답장칸에서는 글자가 입력이 되므로 카드 단축키는 <kbd>⌥</kbd>를 붙이거나 <kbd>Esc</kbd>로 빠져나온 뒤 누릅니다</td></tr>
-    <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥8</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📜 지난 대화 · 📥 받은 것 · 📤 보낸 것 · 📎 파일 · 🛠 작업 · 🔐 정책 · 🌐 웹, 내용이 있는 것만; 서랍에서도)</td></tr>
-    <tr><td><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd> (답장칸 밖에선 <kbd>+</kbd> <kbd>−</kbd>도)</td><td>카드 글자 확대 · 축소 · 원래대로</td></tr>
-    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
-    <tr><td><kbd>⌥M</kbd> (답장칸 밖에선 <kbd>M</kbd>도) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 ↔ 원래 크기 · 폭과 높이 조정 (네 변과 네 모서리 어디든 끌어서도 조정)</td></tr>
-    <tr><td>제목 끌기 · <kbd>⌥⇧←↑↓→</kbd></td><td>대화창 위치 이동</td></tr>
-    <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
-    <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
-    <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
-    <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
-    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>사람이나 책상으로 세션 선택 → 🗂 사람·책상을 끌어 창 옮기기 · 🗣 회의 · 📣 공지 · 💤 미루기</td></tr>
-    <tr><td>고르기에서 사람·책상 끌기</td><td>그 세션의 tmux 창을 다른 책상 묶음에 합치거나 다른 tmux 구획으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
-    <tr><td><kbd>S</kbd> (답장칸에선 <kbd>⌥S</kbd>)</td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
-    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자나 <kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd>로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
-    <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
-    <tr><td><kbd>G</kbd> (답장칸에선 <kbd>⌥G</kbd>)</td><td>그 agent의 tmux 창으로 이동</td></tr>
-    <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>답변 한 화면씩 (답장칸에서도)</td></tr>
-    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>j</kbd><kbd>k</kbd> <kbd>Space</kbd> <kbd>Home</kbd><kbd>End</kbd></td><td>답변 스크롤 (빈 답장칸에선 ↑↓)</td></tr>
-    <tr><td><kbd>Esc</kbd></td><td>맨 위 한 겹만 닫기: 메뉴 → 입력 빠져나오기 → 카드</td></tr>
-    <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>(카드가 닫혔을 때) 이동 · 확대 · 축소 · 전체 맞춤</td></tr>
-    <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
-  </table>
-  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 normal 모드가 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd>(탭 닫기) <kbd>f</kbd> <kbd>j</kbd><kbd>k</kbd> 같은 글자 키를 먼저 가져갑니다. <kbd>i</kbd>(insert)로 키를 페이지에 넘기거나, 어디서나 통하는 <kbd>⌥</kbd> 조합(<kbd>⌥G</kbd> <kbd>⌥Z</kbd> <kbd>⌥N</kbd> <kbd>⌥S</kbd>…)을 쓰세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
+  <h3>⌨️ 단축키 <span class="m">· 답장칸에서는 글자 키 앞에 <kbd>⌥</kbd> (어디서나 통함) · <kbd>Esc</kbd> 닫기</span></h3>
+  <div class="cols">
+    <section><h4>답하기</h4><dl>
+      <dt><kbd>Tab</kbd> <kbd>N</kbd></dt><dd>다음 agent (❗ 먼저, 오래 기다린 순)</dd>
+      <dt><kbd>⇧Tab</kbd> <kbd>P</kbd></dt><dd>이전 agent</dd>
+      <dt><kbd>Enter</kbd></dt><dd>답장 보내기 (<kbd>⇧Enter</kbd> 줄바꿈)</dd>
+      <dt><kbd>1</kbd>…<kbd>9</kbd></dt><dd>번호 버튼 (선택지·빠른 답장, 빈 답장칸에서)</dd>
+      <dt><kbd>R</kbd> <kbd>/</kbd></dt><dd>답장칸으로</dd>
+      <dt><kbd>S</kbd></dt><dd>일하는 agent 멈추기</dd>
+      <dt><kbd>Z</kbd></dt><dd>미루기 (30분 · 1시간 · 오늘 · 말 걸 때까지)</dd>
+      <dt><kbd>A</kbd></dt><dd>제안된 정책 허용 승인</dd>
+      <dt><kbd>G</kbd></dt><dd>그 agent의 tmux 창으로</dd>
+    </dl></section>
+    <section><h4>대화창</h4><dl>
+      <dt><kbd>⌥M</kbd></dt><dd>최대화 ↔ 원래 크기</dd>
+      <dt><kbd>⌥1</kbd>…<kbd>⌥8</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
+      <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>답변 한 화면씩</dd>
+      <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></dt><dd>목록 탭에서 고르기 · 열기</dd>
+      <dt><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd></dt><dd>글자 크게 · 작게 · 원래대로</dd>
+      <dt><kbd>⌥←↑↓→</kbd></dt><dd>폭 · 높이 (변·모서리를 끌어도 됨)</dd>
+      <dt><kbd>⌥⇧←↑↓→</kbd></dt><dd>위치 (제목을 끌어도 됨)</dd>
+      <dt><kbd>⇧O</kbd> · 우클릭</dt><dd>링크를 어디서 열지 고르기</dd>
+    </dl></section>
+    <section><h4>사무실</h4><dl>
+      <dt><kbd>←↑↓→</kbd></dt><dd>이동 (대화창이 닫혔을 때)</dd>
+      <dt><kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></dt><dd>확대 · 축소 · 전체 맞춤</dd>
+      <dt><kbd>0</kbd> · 더블클릭</dt><dd>전체 보기</dd>
+      <dt><kbd>V</kbd> · <kbd>⇧</kbd>클릭·드래그</dt><dd>세션 고르기 → 창 옮기기 · 회의 · 공지 · 미루기</dd>
+      <dt><kbd>K</kbd></dt><dd>🔑 인증 상태</dd>
+      <dt><kbd>,</kbd></dt><dd>⚙ 설정</dd>
+      <dt><kbd>?</kbd></dt><dd>이 도움말</dd>
+    </dl></section>
+  </div>
+  <div class="foot">답장을 보내면 다음 대기 agent로 넘어갑니다. TWeb normal 모드는 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd> <kbd>f</kbd> <kbd>j</kbd> <kbd>k</kbd> 같은 글자를 먼저 가져가니 <kbd>i</kbd>로 넘기거나 <kbd>⌥</kbd>를 붙이세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>.</div>
 </div>
 <script src="brands.js"></script>
 <script src="skins.js"></script>
