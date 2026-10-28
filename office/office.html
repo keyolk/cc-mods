@@ -138,6 +138,23 @@ body.picking #c { cursor: crosshair; }
    column applies only while open, so closing still hides the card. */
 #card.panes[style*="display: block"] { display: flex !important; flex-direction: column; overflow: hidden; }
 #card.panes > * { flex: 0 0 auto; }
+/* ⌥+ ⌥− ⌥0: the reading panes grow or shrink, the card's frame keeps its
+   size (zooming the whole card would push it off the screen). */
+#card .cpane, #card .shelf { zoom: var(--cz, 1); }
+#card .info { font-size: 12.5px; }
+#card .info .h { font-family: Jua, sans-serif; margin: 8px 0 4px; }
+#card .info .h:first-child { margin-top: 2px; }
+#card .info .r { background: #f3ecdf; border-radius: 8px; padding: 4px 8px; margin: 3px 0; overflow-wrap: anywhere; }
+#card .info .m { color: #7a7090; font-size: 11px; }
+#card .info a { color: #2f6fd6; text-decoration: underline; cursor: pointer; }
+#card .info pre { white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; margin: 3px 0; }
+#card .cap { display: inline-block; min-width: 54px; text-align: center; border: 2px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 11px; margin-right: 6px; }
+#card .cap.allow { background: #a8e6b0; } #card .cap.block { background: #ffb3b3; } #card .cap.inherit { background: #eee; }
+#card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
+#card .hist details.notice { opacity: .65; }
+#card .hist summary { cursor: pointer; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#card .hist .ask { white-space: pre-wrap; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-radius: 8px; padding: 6px 8px; margin: 4px 0; max-height: 220px; overflow: auto; }
+#card .hist .said { background: none; padding: 0 2px; margin: 0; }
 #card.panes > .cpane { flex: 1 1 auto; min-height: 60px; overflow: auto; }
 #card.panes > .cpane .said, #card.panes > .cpane .rel { max-height: none; }
 #card.panes .cfoot { position: static; margin: 6px -14px -12px; box-shadow: none; }
@@ -201,7 +218,8 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
     <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
     <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈). 답장칸에서는 글자가 입력이 되므로 카드 단축키는 <kbd>⌥</kbd>를 붙이거나 <kbd>Esc</kbd>로 빠져나온 뒤 누릅니다</td></tr>
     <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥4</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📥 받은 것 · 📤 보낸 것 · 📎 파일, 서랍에서도)</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥8</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📜 지난 대화 · 📥 받은 것 · 📤 보낸 것 · 📎 파일 · 🛠 작업 · 🔐 정책 · 🌐 웹, 내용이 있는 것만; 서랍에서도)</td></tr>
+    <tr><td><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd> (답장칸 밖에선 <kbd>+</kbd> <kbd>−</kbd>도)</td><td>카드 글자 확대 · 축소 · 원래대로</td></tr>
     <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
     <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 · 폭과 높이 조정 (좌하단을 끌어서도 조정)</td></tr>
     <tr><td>제목 끌기 · <kbd>⌥⇧←↑↓→</kbd></td><td>대화창 위치 이동</td></tr>
@@ -700,8 +718,10 @@ function step(dir, skip) {
 // The answer scrolls in its pane when the card is a column (#card.panes), in
 // itself otherwise: move whichever of the two actually overflows.
 function scrollSaid(how) {
-  if (!card.said) return false
-  const pane = card.said.closest('.cpane'), el = pane && pane.scrollHeight > pane.clientHeight + 1 ? pane : card.said
+  // Another tab (지난 대화, 작업…) scrolls its own pane.
+  const other = card.curPane && !(card.said && card.curPane.contains(card.said)) ? card.curPane : null
+  if (!other && !card.said) return false
+  const pane = other || card.said.closest('.cpane'), el = other || (pane && pane.scrollHeight > pane.clientHeight + 1 ? pane : card.said)
   const line = 40, page = el.clientHeight * 0.9
   if (how === 'up') el.scrollTop -= line; else if (how === 'down') el.scrollTop += line
   else if (how === 'pgup') el.scrollTop -= page; else if (how === 'pgdn') el.scrollTop += page
@@ -875,7 +895,7 @@ function officeKey(e) {
   if (act) return hit(act)
   if (open && card.moveResource && (k === 'ArrowUp' || k === 'k')) return hit(() => card.moveResource(-1))
   if (open && card.moveResource && (k === 'ArrowDown' || k === 'j')) return hit(() => card.moveResource(1))
-  if (open && card.said) {
+  if (open && (card.said || card.curPane)) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
     if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
     if (k === 'ArrowUp' || k === 'k') return hit(() => scrollSaid('up'))
@@ -889,6 +909,7 @@ function officeKey(e) {
   if (k === 'ArrowRight') return hit(() => { cam.user = true; camGo.on = false; cam.ox -= PAN })
   if (k === 'ArrowUp') return hit(() => { cam.user = true; camGo.on = false; cam.oy += PAN })
   if (k === 'ArrowDown') return hit(() => { cam.user = true; camGo.on = false; cam.oy -= PAN })
+  if (open && (k === '+' || k === '=' || k === '-' || k === '_')) return hit(() => zoomCard(k === '-' || k === '_' ? -1 : 1))
   if (k === '+' || k === '=' || k === '-' || k === '_') return hit(() => {
     cam.user = true; camGo.on = false
     const ns = Math.min(4, Math.max(0.25, cam.s * (k === '-' || k === '_' ? 0.85 : 1.18))), r = ns / cam.s, cx = innerWidth / 2, cy = innerHeight / 2
@@ -921,6 +942,9 @@ let cardResize = null, cardMove = null
 function handleCardAlt(e, k) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
+  if (e.code === 'Equal' || e.code === 'NumpadAdd') return hit(() => zoomCard(1))
+  if (e.code === 'Minus' || e.code === 'NumpadSubtract') return hit(() => zoomCard(-1))
+  if (k === '0') return hit(() => zoomCard(0))
   if (e.shiftKey && k === 'ArrowLeft') return hit(() => moveCardBy(-40, 0))
   if (e.shiftKey && k === 'ArrowRight') return hit(() => moveCardBy(40, 0))
   if (e.shiftKey && k === 'ArrowUp') return hit(() => moveCardBy(0, -40))
@@ -940,6 +964,16 @@ function saveCardLayout() {
   if (card.classList.contains('max') || !card.offsetWidth) return
   try { localStorage.setItem('office-card-layout', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight, x: card.offsetLeft, y: card.offsetTop })) } catch (_) {}
 }
+// The card whole on the screen: its size first (no larger than the window),
+// then its position. Placed again on every open, since the layout saved in
+// a wider window, or read while the card was hidden (0×0), can leave it
+// partly or wholly outside this one.
+function placeCard(x, y, w, h) {
+  const W = innerWidth, H = innerHeight
+  w = Math.min(W, Math.max(Math.min(CARD_MIN_W, W), w)); h = Math.min(H, Math.max(Math.min(CARD_MIN_H, H), h))
+  card.style.width = w + 'px'; card.style.height = h + 'px'; card.style.maxHeight = 'none'
+  card.style.left = Math.min(W - w, Math.max(0, x)) + 'px'; card.style.top = Math.min(H - h, Math.max(0, y)) + 'px'; card.style.right = 'auto'
+}
 function setCardPosition(x, y) {
   const maxX = Math.max(0, innerWidth - card.offsetWidth), maxY = Math.max(0, innerHeight - card.offsetHeight)
   card.style.left = Math.min(maxX, Math.max(0, x)) + 'px'; card.style.top = Math.min(maxY, Math.max(0, y)) + 'px'; card.style.right = 'auto'
@@ -957,16 +991,31 @@ function restoreCardLayout() {
   // default instead.
   const z = cardLayout(), fresh = !z || !(z.w > 300 && z.h > 340)
   const w = fresh ? CARD_DEFAULT_W : z.w, h = fresh ? CARD_DEFAULT_H : z.h
-  setCardPosition(fresh || z.x == null ? innerWidth - w - 10 : z.x, fresh || z.y == null ? 52 : z.y); setCardSize(w, h)
+  placeCard(fresh || z.x == null ? innerWidth - w - 10 : z.x, fresh || z.y == null ? 52 : z.y, w, h)
 }
 // A short card folds its foot (see #card.panes.compact) so the answer keeps
 // room; decided by the card's own height, whatever changed it.
 const CARD_COMPACT_H = 420
 new ResizeObserver(() => card.classList.toggle('compact', card.offsetHeight > 0 && card.offsetHeight < CARD_COMPACT_H)).observe(card)
+// From the saved layout, not the card's current box: a pane that shrinks
+// for a moment (a tmux resize) would otherwise leave the card squeezed after
+// it grows back. Every move and resize saves, so nothing is lost.
 function fitCardToViewport() {
   if (card.classList.contains('max')) return
-  setCardPosition(card.offsetLeft, card.offsetTop); setCardSize(card.offsetWidth, card.offsetHeight)
+  restoreCardLayout()
 }
+// The card's reading zoom, kept per browser like its layout.
+const CARD_ZOOM = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6, 1.8, 2]
+let cardZoom = 1
+try { cardZoom = +localStorage.getItem('office-card-zoom') || 1 } catch (_) {}
+function zoomCard(dir) {
+  const i = CARD_ZOOM.findIndex((z) => z >= cardZoom - 1e-6)
+  cardZoom = dir === 0 ? 1 : CARD_ZOOM[Math.min(CARD_ZOOM.length - 1, Math.max(0, (i < 0 ? CARD_ZOOM.length - 1 : i) + dir))]
+  card.style.setProperty('--cz', cardZoom)
+  try { localStorage.setItem('office-card-zoom', String(cardZoom)) } catch (_) {}
+  toast('🔍 글자 ' + Math.round(cardZoom * 100) + '%')
+}
+card.style.setProperty('--cz', cardZoom)
 function toggleCardMax() {
   card.classList.toggle('max')
   if (!card.classList.contains('max')) restoreCardLayout()
@@ -1029,21 +1078,66 @@ function renderBusy(sid) {
   card.busy.style.display = parts.length ? 'block' : 'none'
   card.classList.toggle('isbusy', p.state === 'working')
 }
+// ---- the card's cc-mods tabs (/panels) ----
+function clock(at) {
+  const t = typeof at === 'number' ? new Date(at * 1000) : new Date(at)
+  if (isNaN(t)) return ''
+  const p = (n) => String(n).padStart(2, '0'), hm = p(t.getHours()) + ':' + p(t.getMinutes())
+  return t.toDateString() === new Date().toDateString() ? hm : t.getMonth() + 1 + '/' + t.getDate() + ' ' + hm
+}
+function firstLine(s) { return String(s).split('\n').find((l) => l.trim()) || '' }
+// A link in these tabs opens like one in the answer (data-open).
+function infoClick(ev) {
+  const a = ev.target.closest('a[data-open]')
+  if (!a) return
+  ev.preventDefault()
+  const v = a.dataset.open
+  if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v)
+}
+function historyHtml(turns) {
+  if (!turns.length) return '<div class="m">지난 대화가 없습니다</div>'
+  return turns.map((t) => '<details class="' + (t.notice ? 'notice' : '') + '"><summary><span class="m">' + esc(clock(t.at)) + '</span> ' + (t.notice ? '🔔 ' : '🙋 ') + esc(firstLine(t.ask).slice(0, 120)) + '</summary>'
+    + '<div class="ask">' + esc(t.ask) + '</div>' + (t.said ? '<div class="said">' + md(t.said) + '</div>' : '<div class="m">(아직 답이 없습니다)</div>') + '</details>').join('')
+}
+function workHtml(w) {
+  const subs = w.subagents || [], bg = w.bg || []
+  let h = ''
+  if (subs.length) h += '<div class="h">🐣 서브에이전트 ' + subs.length + '</div>' + subs.map((a) => '<div class="r">' + (a.live ? '🟢 ' : '⚪ ') + '<b>' + esc(a.type) + '</b> · ' + esc(a.desc || '(설명 없음)')
+    + '<div class="m">' + esc(clock(a.at)) + (a.tool ? ' · 마지막: ' + esc(a.tool + (a.detail ? ' ' + String(a.detail).slice(0, 70) : '')) : '') + '</div></div>').join('')
+  if (bg.length) h += '<div class="h">⏳ 백그라운드 작업 ' + bg.length + '</div>' + bg.map((b) => '<div class="r">' + esc(b.title) + '<div class="m">' + esc(clock(b.at)) + (b.detail ? ' · ' + esc(b.detail) : '') + (b.path ? ' · <a data-open="' + esc(b.path) + '">출력</a>' : '') + '</div></div>').join('')
+  return h
+}
+function policyHtml(p) {
+  return '<div class="h">🔐 정책' + (p.mode ? ' · ' + esc(p.mode) : '') + '</div>'
+    + p.caps.map((c) => '<div class="r"><span class="cap ' + esc(c.value) + '">' + esc(c.value) + '</span>' + esc(c.cap) + (c.scope.length ? '<div class="m">' + c.scope.map(esc).join(', ') + '</div>' : '') + '</div>').join('')
+    + (p.blocks.length ? '<div class="h">⛔ 최근에 막힌 것</div>' + p.blocks.map((b) => '<pre>' + esc(b.slice(0, 400)) + '</pre>').join('') : '')
+    + '<div class="m">' + (p.updated ? '바뀐 때 ' + esc(clock(p.updated)) + ' · ' : '') + '바꾸려면 그 세션에서 /policy</div>'
+}
+function webHtml(panes) {
+  return panes.map((w) => '<div class="h">🌐 ' + esc(w.pane) + ' · ' + esc(w.engine || '') + (w.linked ? ' · 이 세션에 연결' : ' · 같은 창') + '</div>'
+    + (w.driving ? '<div class="m">🤖 지금 agent가 조작 중</div>' : w.lastAgent ? '<div class="m">마지막 agent 조작: ' + esc(w.lastAgent) + ' · ' + esc(clock(w.lastAt)) + '</div>' : '')
+    + w.tabs.map((t) => '<div class="r">' + (t.active ? '▶ ' : '') + '<a data-open="' + esc(t.url || '') + '">' + esc(t.title || t.url || '') + '</a><div class="m">' + esc(t.url || '') + '</div></div>').join('')).join('')
+}
 async function openCard(sid, kind = null) {
   cardSid = sid
   card.style.display = 'block'
+  if (!card.classList.contains('max')) restoreCardLayout()
   for (const e of ents.values()) e.sel = e.id === sid
   lookAt(ents.get(sid))
   renderQueue()
   card.innerHTML = '<div class="sub">불러오는 중…</div>'
-  const d = await (await fetch('/detail?sid=' + encodeURIComponent(sid) + (kind ? '&kind=' + kind : ''), { cache: 'no-store' })).json()
+  // The other tabs' data comes apart (/panels): a failure there costs only those tabs.
+  const [d, pn] = await Promise.all([
+    fetch('/detail?sid=' + encodeURIComponent(sid) + (kind ? '&kind=' + kind : ''), { cache: 'no-store' }).then((r) => r.json()),
+    kind ? {} : fetch('/panels?sid=' + encodeURIComponent(sid), { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
+  ])
   if (cardSid !== sid) return
   if (d.error) { card.innerHTML = '<div class="sub">' + esc(d.error) + '</div>'; return }
   const me = [...ents.values()].find((e) => e.id === sid)?.data || {}
   cardRoute = d.route || 'default'
   card.innerHTML = ''
   card.classList.add('panes')
-  card.selectTab = card.openCurrent = card.moveResource = null
+  card.selectTab = card.openCurrent = card.moveResource = card.curPane = null
   card.resourceLinks = []
   // add() puts things where `into` points: the card, then its tab panes, then
   // the foot that stays at the card's bottom (the things to press).
@@ -1086,22 +1180,32 @@ async function openCard(sid, kind = null) {
   } else card.shelfTab = null
   // Tabs: the answer, and what it was handed, sent and wrote (from its
   // outputs), so the answer is not pushed down by a wall of chips. [ ] switch.
-  const groups = [['said', '💬 답변', null], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)]]
-    .map(([k, label, f]) => [k, label, f ? (d.related || []).filter(f) : null]).filter(([k, , items]) => k === 'said' || items.length)
+  // Then what cc-mods shows in that session's own pane: Chat (past turns),
+  // Work, Policy and Web, each only when there is something in it.
+  const wk = pn.work || {}, workN = (wk.subagents || []).length + (wk.bg || []).length
+  const groups = [['said', '💬 답변', null], ['hist', '📜 지난 대화', null, pn.history || [], historyHtml], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)],
+    ['work', '🛠 작업', null, workN ? Array(workN) : [], () => workHtml(wk)], ['policy', '🔐 정책', null, pn.policy ? [pn.policy] : [], () => policyHtml(pn.policy)], ['web', '🌐 웹', null, pn.web || [], webHtml]]
+    .map(([k, label, f, own, render]) => [k, label, f ? (d.related || []).filter(f) : own, render]).filter(([k, , items]) => k === 'said' || items.length)
   const tabbar = add('div', 'ctabs'), panes = {}
   for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; card.appendChild(panes[k]) }
   let curTab = 0
   const showTab = (i, focus = false) => {
     curTab = (i + groups.length) % groups.length
     tabbar.innerHTML = ''
-    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items && items.length && k !== 'policy' ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
     groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
+    card.curPane = panes[groups[curTab][0]]
+    // Past turns read like a chat: the newest at the bottom, where it opens.
+    if (groups[curTab][0] === 'hist') card.curPane.scrollTop = card.curPane.scrollHeight
     const rel = panes[groups[curTab][0]].querySelector('.rel')
     if (rel) resourceKeys(rel, focus); else { card.resourceLinks = []; card.openCurrent = card.moveResource = null }
   }
   card.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
   if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir, true)
-  for (const [k, , items] of groups) if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
+  for (const [k, , items, render] of groups) {
+    if (render) { const box = document.createElement('div'); box.className = k === 'hist' ? 'hist' : 'info'; box.innerHTML = render(items); box.onclick = infoClick; panes[k].appendChild(box) }
+    else if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
+  }
   into = panes.said
   card.said = null
   if (d.text) {
