@@ -1607,3 +1607,27 @@ test('policy: god mode is every capability allowed, nothing less', () => {
   expect(isGod({ caps: all })).toBe(true)
   expect(isGod({ caps: { ...all, tmux_window_escape: 'block' } })).toBe(false)
 })
+
+import { SIDE_ANSWER_CHARS, SIDE_KEEP_TURNS, sidePrompt } from '../hooks/lib/side'
+
+test('side chat: each message carries the thread so far, answered turns only, latest last', () => {
+  const p = sidePrompt([
+    { q: 'kbtest는 몇 AZ야?', a: '지금은 1AZ입니다.' },
+    { q: '실패한 질문', error: 'answer failed' },
+    { q: '아직 답 중', pending: true },
+  ], '그럼 2AZ로 바꾸면?')
+  expect(p).toContain('User: kbtest는 몇 AZ야?\nYou: 지금은 1AZ입니다.')
+  expect(p).not.toContain('실패한 질문')
+  expect(p).not.toContain('아직 답 중')
+  expect(p.endsWith('User: 그럼 2AZ로 바꾸면?')).toBe(true)
+})
+
+test('side chat: the first message has no thread, and a long thread keeps its tail with answers cut', () => {
+  expect(sidePrompt([], 'hi')).not.toContain('The side chat so far')
+  const many = Array.from({ length: SIDE_KEEP_TURNS + 3 }, (_, i) => ({ q: 'q' + i, a: 'x'.repeat(SIDE_ANSWER_CHARS + 50) }))
+  const p = sidePrompt(many, 'next')
+  expect(p).not.toContain('User: q2\n')
+  expect(p).toContain('User: q3\n')
+  expect(p).toContain('x'.repeat(SIDE_ANSWER_CHARS) + '…')
+  expect(p).not.toContain('x'.repeat(SIDE_ANSWER_CHARS + 1))
+})
