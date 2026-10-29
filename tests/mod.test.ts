@@ -252,6 +252,38 @@ test('god mode: one press allows every capability after a confirm, and the polic
   await ui.unmount()
 })
 
+test('god mode: /god starts it without a second question, + extends it with one press, /god off ends it', async ($, on) => {
+  const box = { json: JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] }) }
+  const runs = baseStubs(on, { policyBox: box })
+  const asked: string[] = []
+  on('tool.call', (_$: any, e: any) => (e.tool === 'AskUserQuestion' ? (asked.push('q'), { result: { answers: {} } } as any) : ({ result: {} } as any)))
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const policyRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py')).map((a) => a.slice(2).join(' '))
+  // Not typed by a person: refused.
+  const refused: any = await $.command.run({ command: 'god', args: '15', origin: { kind: 'prompt' }, presentation: { columns: 100, isFullscreen: false } } as any)
+  expect(JSON.stringify(refused)).toContain('typed by a person')
+  expect(policyRuns().filter((a) => a.startsWith('allow'))).toEqual([])
+  const r: any = await $.command.run({ command: 'god', args: '15', origin: { kind: 'composer' }, presentation: { columns: 100, isFullscreen: false } } as any)
+  expect(asked).toEqual([])
+  expect(policyRuns()).toContain('allow prod_eks_write')
+  expect(JSON.stringify(r)).toContain('god mode until')
+  box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
+  const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
+  await ui.press({ key: 'cockpit-policy' })
+  await clock.advance(10 * 60_000)
+  // 5m left; +30m makes it 35m, without a question.
+  await ui.press({ key: 'god-ext-30' })
+  expect(asked).toEqual([])
+  const m = policyRuns().length
+  await clock.advance(30 * 60_000)
+  expect(policyRuns().slice(m)).toEqual([])
+  await $.command.run({ command: 'god', args: 'off', origin: { kind: 'composer' }, presentation: { columns: 100, isFullscreen: false } } as any)
+  expect(policyRuns().slice(m)).toEqual(['mode pr-merge', 'allow gh_merge --repo acme/infra'])
+  await ui.unmount()
+})
+
 test('a scope the policy guard blocked is offered on the Policy tab and granted with one press', async ($, on) => {
   const runs = baseStubs(on, { policyJson: JSON.stringify({ mode: 'custom', capabilities: { prod_eks_write: 'block' } }) })
   const deny = 'BLOCKED by session policy: prod_eks_write=block.\n(e.g. `/policy allow prod-w main-prod-apne2/kube-system 15m`).'

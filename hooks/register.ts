@@ -47,7 +47,7 @@ import { capAnswers, isHumanPrompt, parseStamps, rebuild, transcriptPath, type B
 import { agentFlow, flowOf } from './lib/flow'
 import { HELD_PREFIX, firstLine, heldNotification, holdDeadline, isWrite, parseExpiry, parseMonitor, shouldRearm, splitLines, startedTaskId, turnMattered, watchInput, weigh, type MonitorState, type WatchInput, type Weight } from './lib/monitor'
 import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
-import { CAPS, GOD_MS, godArgvs, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
+import { CAPS, GOD_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
 import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
@@ -960,14 +960,17 @@ async function applyPolicy($: any, argv: string[], ttlMs?: number, revert?: stri
 // still ends it on time.
 let god: { until: number; before: Policy; timer?: { cancel: () => void } } | undefined
 
-async function startGod($: any, minutes: number) {
+// `asked`: the person already said so (typed /god), so no second question.
+async function startGod($: any, minutes: number, asked = false) {
   const before = (await read($, policyA)) as Policy | null
   if (!before) return void $.ui.toast('policy not loaded yet')
-  let answer = 'cancel'
-  try {
-    answer = await $.ui.ask('Allow every capability (merge, prod EKS write, Slack to anyone, tmux outside this window …) for ' + minutes + ' minutes?', ['allow everything', 'cancel'])
-  } catch {
-    answer = 'cancel'
+  let answer = asked ? 'allow everything' : 'cancel'
+  if (!asked) {
+    try {
+      answer = await $.ui.ask('Allow every capability (merge, prod EKS write, Slack to anyone, tmux outside this window …) for ' + minutes + ' minutes?', ['allow everything', 'cancel'])
+    } catch {
+      answer = 'cancel'
+    }
   }
   if (answer !== 'allow everything') return
   const prior = god?.before ?? before
@@ -979,6 +982,23 @@ async function startGod($: any, minutes: number) {
   await loadPolicy($)
   await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode until ' + hhmm(until) }))
   $.ui.toast('⚡ god mode: everything allowed until ' + hhmm(until))
+}
+
+// More time on a running god mode, one press: the person already agreed to
+// it when it started. Still never more than 2 × GOD_MS ahead of now. A
+// capability someone set back meanwhile is allowed again.
+async function extendGod($: any, minutes: number) {
+  if (!god) return
+  const now = Date.now()
+  const until = godExtended(god.until, now, minutes)
+  const p = (await read($, policyA)) as Policy | null
+  if (p && !isGod(p)) for (const argv of godArgvs()) await runPolicy($, argv)
+  god.timer?.cancel()
+  god = { until, before: god.before, timer: $.clock.after(until - now, () => void endGod($, 'time is up')) }
+  await $.store.set(K.god(sid), { until, before: god.before })
+  await loadPolicy($)
+  await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode until ' + hhmm(until) }))
+  $.ui.toast('⚡ god mode extended: until ' + hhmm(until))
 }
 
 async function endGod($: any, why: string) {
@@ -3105,6 +3125,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       ['side', 'side question that stays out of the main chat', '[question]'],
       ['outputs', 'cockpit Outputs tab: PRs, artifacts, files, tickets, links, tasks, archive folders', '[pr|artifact|scratch|ticket|link|bg|exp]'],
       ['policy', 'session policy (only a person can change it)', '[allow|block|inherit <cap> [scope] [15m] | mode <m>]'],
+      ['god', 'god mode: allow every capability for a while (default 30m), then put the policy back; again adds time; off ends it', '[15|30|60 | off]'],
       ['cockpit', 'open/close the cockpit'],
       ['watch', 'Monitor events (cockpit Work tab)'],
       ['auth', 'refresh the credential radar, or log in to an MCP connector', '[connector]'],
@@ -3803,6 +3824,23 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const r = cmd.argv[0] === 'show' ? await runPolicy($, ['show']) : await applyPolicy($, resolved.argv, cmd.ttlMs, resolved.revert)
     const p = await loadPolicy($)
     return { text: (r.ok ? '' : 'failed: ') + badge(p) + (cmd.ttlMs ? ' · reverts in ' + Math.round(cmd.ttlMs / 60000) + 'm' : '') }
+  })
+
+  on('command.run', { command: 'god' }, async ($: any, e: any) => {
+    // Like /policy: only a command the person typed. Typing it is the
+    // confirmation the Policy tab's button asks for.
+    if (e.origin?.kind !== 'composer') return { text: 'God mode only through /god typed by a person.' }
+    const arg = String(e.args ?? '').trim().toLowerCase()
+    if (arg === 'off' || arg === 'end') {
+      if (!god) return { text: 'god mode is not on' }
+      await endGod($, 'ended by you')
+      return { text: 'god mode ended: policy put back' }
+    }
+    const minutes = parseGodMinutes(arg)
+    if (minutes === undefined) return { text: 'usage: /god [15|30|60 | 45m | off]' }
+    if (god) await extendGod($, minutes)
+    else await startGod($, minutes, true)
+    return { text: god ? '⚡ god mode until ' + hhmm(god.until) + ' · /god off ends it' : 'god mode not started' }
   })
 
   on('command.run', { command: 'web' }, async ($: any, e: any) => {
@@ -4808,6 +4846,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       onTimed: (cap: Cap, minutes) => void applyPolicy($, ['allow', cap], minutes * 60_000, ['inherit', cap]),
       god: god?.until,
       onGod: (minutes?: number) => void (minutes && !god ? startGod($, minutes) : endGod($, 'ended by you')),
+      onGodExtend: (minutes: number) => void extendGod($, minutes),
       hints: scopeHints(
         [
           ...(repo ? [{ cap: 'gh_merge' as Cap, scope: repo, why: 'cwd' as const }] : []),

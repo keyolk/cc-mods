@@ -272,6 +272,21 @@ export function parseUserSearch(text: string): { id: string; name: string } | un
 // press, or on the same button, the policy from before is put back.
 export const GOD_MS = 30 * 60_000
 export const GOD_MINUTES = [15, 30, 60] as const
+export const GOD_EXTEND_MINUTES = [15, 30] as const
+
+// /god's argument: minutes (bare or with m), or none for GOD_MS.
+export function parseGodMinutes(arg: string): number | undefined {
+  if (!arg.trim()) return GOD_MS / 60_000
+  const m = /^(\d{1,3})\s*m?$/i.exec(arg.trim())
+  const n = m ? Number(m[1]) : NaN
+  return n >= 1 ? n : undefined
+}
+
+// The new end of a god mode given more minutes: from its end (or now, if
+// that passed), never past 2 × GOD_MS from now, the start's own cap.
+export function godExtended(until: number, now: number, minutes: number): number {
+  return Math.min(Math.max(until, now) + minutes * 60_000, now + 2 * GOD_MS)
+}
 
 export function godArgvs(): string[][] {
   return CAPS.map((cap) => ['allow', cap])
