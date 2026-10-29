@@ -1050,12 +1050,53 @@ def panels(sid: str) -> dict:
     me = pane_of(sid)
     if not me:
         return {"error": "no such session"}
-    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me)}
+    return {"history": history(sid), "work": work(sid), "policy": policy(sid), "web": web(me), "side": side_thread(sid)}
 
 
 # Something for a session to read as the person's prompt: its inbox file,
 # which cc-mods submits within ~2 s. A message already waiting there is kept
 # and this one is added after it, so two sends never lose the first.
+# The side chat (btw) between the office and a session's cc-mods: the office
+# leaves what was said in <sid>.ask.json, cc-mods takes it within ~2 s, asks
+# its fork, and keeps the whole side thread in <sid>.json for the card.
+SIDE_DIR = os.path.expanduser("~/.claude/state/office/side")
+
+
+def side_put(sid: str, text: str) -> None:
+    os.makedirs(SIDE_DIR, exist_ok=True)
+    path = os.path.join(SIDE_DIR, sid + ".ask.json")
+    try:
+        with open(path) as f:
+            asks = list((json.load(f) or {}).get("asks") or [])
+    except (OSError, ValueError):
+        asks = []
+    asks.append({"text": text, "at": time.time()})
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"asks": asks[-5:]}, f)
+    os.replace(tmp, path)
+
+
+def side_thread(sid: str) -> dict:
+    """The side chat as cc-mods last wrote it, and what still waits for it."""
+    out: dict = {"items": [], "waiting": []}
+    try:
+        with open(os.path.join(SIDE_DIR, sid + ".json")) as f:
+            out["items"] = [
+                {"q": str(i.get("q") or ""), "a": i.get("a"), "error": i.get("error"), "pending": bool(i.get("pending")), "at": (i.get("at") or 0) / 1000 or None}
+                for i in (json.load(f) or {}).get("items") or []
+                if isinstance(i, dict)
+            ]
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(os.path.join(SIDE_DIR, sid + ".ask.json")) as f:
+            out["waiting"] = [str(a.get("text") or "") for a in (json.load(f) or {}).get("asks") or []]
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 def inbox_put(sid: str, text: str) -> None:
     os.makedirs(INBOX, exist_ok=True)
     path = os.path.join(INBOX, sid + ".json")
@@ -1230,6 +1271,14 @@ def act(body: dict) -> tuple[int, dict]:
         set_mute(sid, False)
     if kind == "grant":
         return grant(sid)
+    if kind == "side":
+        # btw: a side message, answered from the main chat by a fork that never
+        # enters it (cc-mods' side chat). Never the person's prompt.
+        text = str(value or "").strip()
+        if not text:
+            return 400, {"error": "nothing to say"}
+        side_put(sid, text[:4000])
+        return 200, {"ok": True, "sent": "btw sent"}
     if kind == "open":
         # A link from the card: http(s) where that session's own links go, a
         # local path revealed in Finder. Nothing else. The session's links go
@@ -1482,6 +1531,13 @@ class Handler(BaseHTTPRequestHandler):
             sid, kind = (q.get("sid") or [""])[0], (q.get("kind") or [""])[0]
             kind = kind if kind in ("desk", "in", "pr", "slack", "ticket", "artifact", "scratch", "file", "exp") else None
             return self.send(200, json.dumps(detail(sid, kind)).encode(), "application/json")
+        if self.path.startswith("/side"):
+            from urllib.parse import parse_qs, urlparse
+
+            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
+            if not re.fullmatch(r"[0-9a-f-]{8,64}", sid):
+                return self.send(400, b"bad sid", "text/plain")
+            return self.send(200, json.dumps(side_thread(sid)).encode(), "application/json")
         if self.path.startswith("/panels"):
             from urllib.parse import parse_qs, urlparse
 

@@ -24,11 +24,14 @@ canvas.drag { cursor: grabbing; }
 #tip .t { font-size: 15px; } #tip .m { color: #6b6280; font-size: 12px; font-family: -apple-system, sans-serif; }
 #card { position: absolute; right: 10px; top: 52px; width: min(380px, calc(100% - 20px)); min-width: min(300px, calc(100% - 20px)); min-height: min(340px, calc(100% - 20px)); max-height: calc(100% - 120px); overflow: auto; z-index: 4; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; display: none; }
 #card.max { left: 10px !important; right: 10px !important; top: 10px !important; bottom: 10px !important; width: auto !important; height: auto !important; max-height: none; }
-#card .titlebar { position: sticky; top: -12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: -12px -14px 6px; padding: 10px 10px 7px 14px; background: #fffaf0; border-bottom: 2px solid rgba(59,42,53,.14); cursor: grab; user-select: none; touch-action: none; }
+#card .titlebar { position: sticky; top: -12px; z-index: 5; display: flex; align-items: center; gap: 6px; margin: -12px -14px 4px; padding: 5px 8px 4px 14px; background: #fffaf0; border-bottom: 2px solid rgba(59,42,53,.14); cursor: grab; user-select: none; touch-action: none; }
 #card .titlebar:active { cursor: grabbing; }
-#card h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#card h2 { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
-#card .x, #card .maxb { flex: 0 0 auto; border: 0; background: none; font-size: 18px; cursor: pointer; padding: 0 3px; }
+/* The conversation is the card: everything around it one thin line. */
+#card.panes > .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-height: none !important; font-size: 11px; margin-bottom: 2px !important; }
+#card .maxb kbd { font: 10px ui-monospace, Menlo, monospace; color: #7a7090; border: 1px solid rgba(59,42,53,.3); border-radius: 4px; padding: 0 3px; margin-right: 4px; vertical-align: 3px; }
+#card .x, #card .maxb { flex: 0 0 auto; border: 0; background: none; font-size: 15px; cursor: pointer; padding: 0 3px; }
 #card .resize { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 18px; cursor: nesw-resize; z-index: 2; opacity: .5; }
 #card .resize::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 9px; height: 9px; border-left: 2px solid #7a7090; border-bottom: 2px solid #7a7090; }
 #card.max .resize, #card.max .rz { display: none; }
@@ -136,12 +139,12 @@ body.picking #c { cursor: crosshair; }
 #card .talks .h { font-family: Jua, sans-serif; margin-bottom: 3px; }
 #card .talks .t { margin: 2px 0; }
 #card .talks .m { color: #6b6280; font-size: 11px; }
-#card .busy { display: none; background: #fff1d6; border: 2px solid #e8a23a; border-radius: 10px; padding: 6px 10px; margin: 6px 0; font-size: 12.5px; }
+#card .busy { display: none; background: #fff1d6; border: 1px solid #e8a23a; border-radius: 8px; padding: 1px 8px; margin: 2px 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #card .busy hr { border: 0; border-top: 1px dashed #e8a23a; margin: 5px 0; }
 #card .busy .m { color: #8a5a1e; font-size: 11.5px; }
 #card.isbusy .act.go { opacity: .55; }
-#card .ctabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
-#card .ctabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
+#card .ctabs { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; }
+#card .ctabs button { font: inherit; font-size: 11px; line-height: 16px; border: 1px solid rgba(59,42,53,.45); border-radius: 999px; background: #fff; padding: 0 7px; cursor: pointer; }
 #card .ctabs button.on { background: #2a2033; color: #fff; }
 #card .ctabs button:focus-visible, #card .rel a:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 2px; }
 #card .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
@@ -169,6 +172,27 @@ body.picking #c { cursor: crosshair; }
 #card .info pre { white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; margin: 3px 0; }
 #card .cap { display: inline-block; min-width: 54px; text-align: center; border: 2px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 11px; margin-right: 6px; }
 #card .cap.allow { background: #a8e6b0; } #card .cap.block { background: #ffb3b3; } #card .cap.inherit { background: #eee; }
+/* btw is a column at the card's right, from under the title bar to the
+   bottom; the card is maximised while it is open (setSideMode), so the
+   conversation keeps its width on the left. */
+/* One width for all three (a % would mean the card's width in its padding
+   and the content's width in the title bar's margin). */
+#card.panes.btwmode { --sw: min(40vw, 460px); padding-right: calc(var(--sw) + 22px); }
+#card.panes.btwmode > .titlebar { margin-right: calc(-1 * var(--sw) - 36px); }
+#card.panes > .sidebox { position: absolute; top: 38px; right: 12px; bottom: 12px; width: var(--sw, 40vw); display: flex; flex-direction: column; border: 2px solid #c9b88f; border-radius: 12px; background: #fbf5e8; }
+#card .sidebox .sh { flex: 0 0 auto; padding: 4px 10px; font-family: Jua, sans-serif; font-size: 13px; border-bottom: 1px dashed #c9b88f; }
+#card .sidebox .sh .m { font: 11px -apple-system, sans-serif; color: #7a7090; }
+#card .sidebox .btw { flex: 1 1 auto; overflow: auto; padding: 8px 10px; }
+#card .replyline { display: flex; gap: 6px; align-items: flex-end; width: 100%; flex: 1 0 100%; }
+#card .replyline textarea { flex: 1; min-width: 0; }
+#card .replyline .send { flex: 0 0 auto; }
+#card .sidebox .btwin { flex: 0 0 auto; box-sizing: border-box; width: auto; align-self: stretch; margin: 6px; min-height: 30px; max-height: 120px; resize: none; font: 13px -apple-system, sans-serif; border: 2px solid #a8894a; border-radius: 10px; padding: 5px 8px; background: #fffdf5; }
+#card .btw { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 8px; font: 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#card .btw .me { align-self: flex-end; max-width: 82%; background: #2a2033; color: #fffaf0; border-radius: 12px 12px 3px 12px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#card .btw .it { align-self: flex-start; max-width: 88%; background: #f3ecdf; border-radius: 12px 12px 12px 3px; padding: 6px 10px; overflow-wrap: anywhere; }
+#card .btw .it p:last-child { margin-bottom: 0; }
+#card .btw .typing { color: #7a7090; font-style: italic; }
+#card .btw .err { background: #ffe1e1; }
 #card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
 #card .hist details.notice { opacity: .65; }
 #card .hist summary { cursor: pointer; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -180,18 +204,22 @@ body.picking #c { cursor: crosshair; }
 /* The answer is what the card is for, so everything around it stays thin
    unless the card is maximised: one row of tabs, a clamped subtitle, and a
    foot of one reply line (it grows while typing) over one row of buttons. */
-#card.panes:not(.max) .ctabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
-#card.panes:not(.max) .ctabs button { flex: 0 0 auto; }
-#card.panes:not(.max) > .sub { max-height: 2.9em; overflow: hidden; font-size: 11px; margin-bottom: 4px; }
-#card.panes:not(.max) .scrollhint { display: none; }
-#card.panes:not(.max) .cfoot { padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-#card.panes:not(.max) .cfoot > * { margin: 0 !important; }
-#card.panes:not(.max) .cfoot > .q { flex: 1 0 100%; }
-#card.panes:not(.max) .cfoot .row { display: contents; }
-#card.panes:not(.max) .cfoot textarea { order: -1; flex: 1 0 100%; min-height: 32px; height: 32px; max-height: 140px; resize: none; }
-#card.panes:not(.max) .cfoot button.act { font-size: 12px; padding: 2px 7px; }
-#card.panes:not(.max) .cfoot button.send { display: none; }
-#card.panes:not(.max) .cfoot .msg:empty { display: none; }
+#card.panes .ctabs { flex-wrap: wrap; }
+#card.panes .ctabs button { flex: 0 0 auto; }
+#card.panes > .sub { max-height: 2.9em; overflow: hidden; font-size: 11px; margin-bottom: 4px; }
+#card.panes .scrollhint { display: none; }
+#card.panes .cfoot { padding: 4px 8px 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+#card.panes .cfoot > * { margin: 0 !important; }
+#card.panes .cfoot > .q { flex: 1 0 100%; }
+#card.panes .cfoot .row { display: contents; }
+#card.panes .cfoot textarea { min-height: 30px; height: 30px; max-height: 140px; resize: none; }
+#card.panes .cfoot .replyline { order: 0; }
+#card.panes .cfoot button.act { font-size: 11px; line-height: 16px; padding: 1px 6px; border-width: 1px; border-radius: 8px; box-shadow: 0 1px 0 var(--line); }
+#card.panes .cfoot .navrow { display: flex; gap: 3px; margin-left: auto !important; order: -2; }
+#card.panes .cfoot .row:not(.navrow) > button { order: -3; }
+#card.panes .cfoot .key { font-size: 10px; min-width: 12px; padding: 0 3px; margin-right: 3px; }
+#card.panes .cfoot button.send { display: none; }
+#card.panes .cfoot .msg:empty { display: none; }
 #card.panes.compact .cfoot .q { display: none; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
@@ -202,10 +230,18 @@ body.picking #c { cursor: crosshair; }
 #card .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
-#help { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 14px 18px; display: none; min-width: 300px; }
-#help h3 { margin: 0 0 8px; font-weight: 400; }
-#help table { border-collapse: collapse; font-size: 13px; }
-#help td { padding: 3px 10px 3px 0; }
+/* Above the card (z 4) and everything else, sized to the window: columns
+   by topic, one short line per key, the keys never wrapping. */
+#help { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 9; width: min(980px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line), 0 0 0 100vmax rgba(20,18,32,.45); padding: 14px 18px; display: none; }
+#help h3 { margin: 0 0 10px; font-weight: 400; }
+#help h3 .m { font: 12px -apple-system, sans-serif; color: #7a7090; }
+#help .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 6px 22px; }
+#help h4 { margin: 0 0 4px; font: 15px Jua, sans-serif; border-bottom: 2px solid rgba(59,42,53,.15); padding-bottom: 2px; }
+#help dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; align-items: baseline; font: 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#help dt { white-space: nowrap; text-align: right; }
+#help dd { margin: 0; color: #3b2f45; }
+#help kbd { font: 11px ui-monospace, Menlo, monospace; }
+#help .foot { margin-top: 10px; color: #7a7090; font: 11.5px -apple-system, sans-serif; }
 kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua, sans-serif; background: #fff; border: 2px solid var(--line); border-bottom-width: 3px; border-radius: 6px; padding: 0 5px; }
 #ask button.on { outline: 3px solid #fff; outline-offset: 1px; }
 #ask .zz { background: #4a4d6e; color: #cfcbe8; border: 2px dashed #8a86b0; box-shadow: none; }
@@ -230,35 +266,43 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <div id="tip"></div>
 <div id="card"></div>
 <div id="help">
-  <h3>⌨️ 단축키</h3>
-  <table>
-    <tr><td><kbd>N</kbd> <kbd>Tab</kbd> (답장칸에선 <kbd>Tab</kbd> <kbd>⌥N</kbd>)</td><td>다음으로 답할 agent (❗ 먼저, 오래 기다린 순)</td></tr>
-    <tr><td><kbd>P</kbd> <kbd>⇧Tab</kbd> (답장칸에선 <kbd>⇧Tab</kbd> <kbd>⌥P</kbd>)</td><td>이전 agent</td></tr>
-    <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>카드의 그 번호 버튼 (선택지·빠른 답장)</td></tr>
-    <tr><td>(바로 입력)</td><td>카드가 열리면 답장칸에 커서: 치고 <kbd>Enter</kbd> (<kbd>⇧Enter</kbd> 줄바꿈). 답장칸에서는 글자가 입력이 되므로 카드 단축키는 <kbd>⌥</kbd>를 붙이거나 <kbd>Esc</kbd>로 빠져나온 뒤 누릅니다</td></tr>
-    <tr><td><kbd>R</kbd> <kbd>/</kbd></td><td>답장칸으로 돌아가기</td></tr>
-    <tr><td><kbd>[</kbd> <kbd>]</kbd> · <kbd>⌥1</kbd>…<kbd>⌥8</kbd></td><td>카드 탭 이동·바로 열기 (💬 답변 · 📜 지난 대화 · 📥 받은 것 · 📤 보낸 것 · 📎 파일 · 🛠 작업 · 🔐 정책 · 🌐 웹, 내용이 있는 것만; 서랍에서도)</td></tr>
-    <tr><td><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd> (답장칸 밖에선 <kbd>+</kbd> <kbd>−</kbd>도)</td><td>카드 글자 확대 · 축소 · 원래대로</td></tr>
-    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd></td><td>받은 것·보낸 것·파일 탭에서 항목 고르기·열기</td></tr>
-    <tr><td><kbd>M</kbd> (답장칸에선 <kbd>⌥M</kbd>) · <kbd>⌥←↑↓→</kbd></td><td>대화창 최대화 · 폭과 높이 조정 (네 변과 네 모서리 어디든 끌어서도 조정)</td></tr>
-    <tr><td>제목 끌기 · <kbd>⌥⇧←↑↓→</kbd></td><td>대화창 위치 이동</td></tr>
-    <tr><td><kbd>0</kbd> · 더블클릭</td><td>전체 보기 (확대·이동 되돌리기)</td></tr>
-    <tr><td>파일 칩 (👁)</td><td>세션이 만든 HTML·이미지·PDF·마크다운을 화면 안에서 보기 — <kbd>O</kbd> 밖으로, <kbd>Esc</kbd> 닫기</td></tr>
-    <tr><td><kbd>,</kbd> · ⚙</td><td>설정: 웹 링크·파일을 열 곳, 파일을 안에서 먼저 볼지</td></tr>
-    <tr><td><kbd>⇧O</kbd> · 칩 우클릭</td><td>어디서 열지 고르기: 이 세션 설정대로 · TWeb(내 Chrome·Electron·WebKit) · Chrome 탭 그룹 · 기본 브라우저 · Finder (고른 곳은 다음에도 기본)</td></tr>
-    <tr><td><kbd>V</kbd> · ☑ 고르기 (또는 <kbd>⇧</kbd>클릭·드래그)</td><td>사람이나 책상으로 세션 선택 → 🗂 사람·책상을 끌어 창 옮기기 · 🗣 회의 · 📣 공지 · 💤 미루기</td></tr>
-    <tr><td>고르기에서 사람·책상 끌기</td><td>그 세션의 tmux 창을 다른 책상 묶음에 합치거나 다른 tmux 구획으로 보내기 (놓으면 <kbd>⏎</kbd>로 확인)</td></tr>
-    <tr><td><kbd>S</kbd> (답장칸에선 <kbd>⌥S</kbd>)</td><td>일하는 agent 멈추기 (Esc 보냄)</td></tr>
-    <tr><td><kbd>Z</kbd> (답장칸에선 <kbd>⌥Z</kbd>)</td><td>미루기: 숫자나 <kbd>↑</kbd><kbd>↓</kbd> <kbd>Enter</kbd>로 30분 · 1시간 · 오늘 하루 · 🤐 내가 먼저 말 걸 때까지 (큐에서 빠짐; 말을 걸면 풀림) · 다시 부르기</td></tr>
-    <tr><td><kbd>A</kbd> (답장칸에선 <kbd>⌥A</kbd>)</td><td>Jev가 제안한 정책 허용을 승인 (시간 지나면 자동 원복)</td></tr>
-    <tr><td><kbd>G</kbd> (답장칸에선 <kbd>⌥G</kbd>)</td><td>그 agent의 tmux 창으로 이동</td></tr>
-    <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>답변 한 화면씩 (답장칸에서도)</td></tr>
-    <tr><td><kbd>↑</kbd><kbd>↓</kbd> <kbd>j</kbd><kbd>k</kbd> <kbd>Space</kbd> <kbd>Home</kbd><kbd>End</kbd></td><td>답변 스크롤 (빈 답장칸에선 ↑↓)</td></tr>
-    <tr><td><kbd>Esc</kbd></td><td>맨 위 한 겹만 닫기: 메뉴 → 입력 빠져나오기 → 카드</td></tr>
-    <tr><td><kbd>←↑↓→</kbd> <kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></td><td>(카드가 닫혔을 때) 이동 · 확대 · 축소 · 전체 맞춤</td></tr>
-    <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
-  </table>
-  <div style="margin-top:8px;color:#7a7090;font-size:12px">답장을 보내면 다음 대기 agent로 넘어갑니다.<br>TWeb pane에서는 normal 모드가 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd>(탭 닫기) <kbd>f</kbd> <kbd>j</kbd><kbd>k</kbd> 같은 글자 키를 먼저 가져갑니다. <kbd>i</kbd>(insert)로 키를 페이지에 넘기거나, 어디서나 통하는 <kbd>⌥</kbd> 조합(<kbd>⌥G</kbd> <kbd>⌥Z</kbd> <kbd>⌥N</kbd> <kbd>⌥S</kbd>…)을 쓰세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>로 바로 와서 다음 agent에 답할 수 있습니다.</div>
+  <h3>⌨️ 단축키 <span class="m">· 답장칸에서는 글자 키 앞에 <kbd>⌥</kbd> (어디서나 통함) · <kbd>Esc</kbd> 닫기</span></h3>
+  <div class="cols">
+    <section><h4>답하기</h4><dl>
+      <dt><kbd>Tab</kbd> <kbd>N</kbd></dt><dd>다음 agent (❗ 먼저, 오래 기다린 순)</dd>
+      <dt><kbd>⇧Tab</kbd> <kbd>P</kbd></dt><dd>이전 agent</dd>
+      <dt><kbd>Enter</kbd></dt><dd>답장 보내기 (<kbd>⇧Enter</kbd> 줄바꿈)</dd>
+      <dt><kbd>1</kbd>…<kbd>9</kbd></dt><dd>번호 버튼 (선택지·빠른 답장, 빈 답장칸에서)</dd>
+      <dt><kbd>R</kbd> <kbd>/</kbd></dt><dd>답장칸으로</dd>
+      <dt><kbd>S</kbd></dt><dd>일하는 agent 멈추기</dd>
+      <dt><kbd>Z</kbd></dt><dd>미루기 (30분 · 1시간 · 오늘 · 말 걸 때까지)</dd>
+      <dt><kbd>A</kbd></dt><dd>제안된 정책 허용 승인</dd>
+      <dt><kbd>G</kbd></dt><dd>그 agent의 tmux 창으로</dd>
+    </dl></section>
+    <section><h4>대화창</h4><dl>
+      <dt><kbd>⌥M</kbd></dt><dd>최대화 ↔ 원래 크기</dd>
+      <dt><kbd>⌥1</kbd>…<kbd>⌥9</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
+      <dt><kbd>⌥B</kbd></dt><dd>☕ btw 곁대화 칸 열기·닫기 (오른쪽, 일하는 중에도 바로 답함; 여는 동안 최대화)</dd>
+      <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>읽던 탭 한 화면씩 (btw 중에도)</dd>
+      <dt><kbd>⇧PgUp</kbd> <kbd>⇧PgDn</kbd></dt><dd>btw 칸 한 화면씩</dd>
+      <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></dt><dd>목록 탭에서 고르기 · 열기</dd>
+      <dt><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd></dt><dd>글자 크게 · 작게 · 원래대로</dd>
+      <dt><kbd>⌥←↑↓→</kbd></dt><dd>폭 · 높이 (변·모서리를 끌어도 됨)</dd>
+      <dt><kbd>⌥⇧←↑↓→</kbd></dt><dd>위치 (제목을 끌어도 됨)</dd>
+      <dt><kbd>⇧O</kbd> · 우클릭</dt><dd>링크를 어디서 열지 고르기</dd>
+    </dl></section>
+    <section><h4>사무실</h4><dl>
+      <dt><kbd>←↑↓→</kbd></dt><dd>이동 (대화창이 닫혔을 때)</dd>
+      <dt><kbd>+</kbd> <kbd>−</kbd> <kbd>F</kbd></dt><dd>확대 · 축소 · 전체 맞춤</dd>
+      <dt><kbd>0</kbd> · 더블클릭</dt><dd>전체 보기</dd>
+      <dt><kbd>V</kbd> · <kbd>⇧</kbd>클릭·드래그</dt><dd>세션 고르기 → 창 옮기기 · 회의 · 공지 · 미루기</dd>
+      <dt><kbd>K</kbd></dt><dd>🔑 인증 상태</dd>
+      <dt><kbd>,</kbd></dt><dd>⚙ 설정</dd>
+      <dt><kbd>?</kbd></dt><dd>이 도움말</dd>
+    </dl></section>
+  </div>
+  <div class="foot">답장을 보내면 다음 대기 agent로 넘어갑니다. TWeb normal 모드는 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd> <kbd>f</kbd> <kbd>j</kbd> <kbd>k</kbd> 같은 글자를 먼저 가져가니 <kbd>i</kbd>로 넘기거나 <kbd>⌥</kbd>를 붙이세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>.</div>
 </div>
 <script src="brands.js"></script>
 <script src="skins.js"></script>
@@ -747,7 +791,18 @@ function scrollSaid(how) {
   else if (how === 'top') el.scrollTop = 0; else if (how === 'bottom') el.scrollTop = el.scrollHeight
   return true
 }
-function closeCard() { card.style.display = 'none'; cardSid = null; for (const e of ents.values()) e.sel = false; renderQueue() }
+// ⇧PgUp/⇧PgDn scroll the btw strip while it is open; plain PgUp/PgDn keep
+// scrolling what is being read above it, so talking never moves that key.
+function scrollSide(dir) {
+  const log = card.side && card.side.style.display !== 'none' && card.side.querySelector('.btw')
+  if (!log) return false
+  log.scrollTop += dir * log.clientHeight * 0.9
+  return true
+}
+function closeCard() {
+  if (card.btwMax) { card.btwMax = false; card.classList.remove('max'); card.classList.remove('btwmode'); restoreCardLayout(); maxFace() }
+  card.style.display = 'none'; cardSid = null; for (const e of ents.values()) e.sel = false; renderQueue()
+}
 let toastT
 function toast(t) { const m = document.getElementById('hint'); m.dataset.old = m.dataset.old || m.innerHTML; m.textContent = t; clearTimeout(toastT); toastT = setTimeout(() => { m.innerHTML = m.dataset.old }, 2200) }
 // Glide the camera to a character so the one being answered is in view.
@@ -916,6 +971,7 @@ function officeKey(e) {
   if (act) return hit(act)
   if (open && card.moveResource && (k === 'ArrowUp' || k === 'k')) return hit(() => card.moveResource(-1))
   if (open && card.moveResource && (k === 'ArrowDown' || k === 'j')) return hit(() => card.moveResource(1))
+  if (open && (k === 'PageUp' || k === 'PageDown') && e.shiftKey && scrollSide(k === 'PageUp' ? -1 : 1)) return hit(() => {})
   if (open && (card.said || card.curPane)) {
     if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
     if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
@@ -963,6 +1019,7 @@ let cardResize = null, cardMove = null
 function handleCardAlt(e, k) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   if (/^[1-9]$/.test(k) && card.selectTab) return hit(() => card.selectTab(+k - 1))
+  if (k === 'b' && card.side) return hit(() => setSideMode(!sideMode))
   if (e.code === 'Equal' || e.code === 'NumpadAdd') return hit(() => zoomCard(1))
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') return hit(() => zoomCard(-1))
   if (k === '0') return hit(() => zoomCard(0))
@@ -1054,10 +1111,19 @@ function zoomCard(dir) {
   toast('🔍 글자 ' + Math.round(cardZoom * 100) + '%')
 }
 card.style.setProperty('--cz', cardZoom)
+// The max button says its key (⌥M works everywhere, the reply box and TWeb's
+// normal mode included), so the toggle needs no hunting in the help.
+function maxFace() {
+  if (!card.maxButton) return
+  const on = card.classList.contains('max')
+  card.maxButton.innerHTML = '<kbd>⌥M</kbd>' + (on ? '❐' : '□')
+  card.maxButton.title = (on ? '원래 크기로' : '최대화') + ' (⌥M, 답장칸 밖에선 M)'
+}
 function toggleCardMax() {
+  card.btwMax = false // a person's own ⌥M: closing btw leaves the size alone
   card.classList.toggle('max')
   if (!card.classList.contains('max')) restoreCardLayout()
-  if (card.maxButton) { card.maxButton.textContent = card.classList.contains('max') ? '❐' : '□'; card.maxButton.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)' }
+  maxFace()
 }
 function resizeCardBy(dw, dh) {
   if (card.classList.contains('max')) toggleCardMax()
@@ -1070,8 +1136,8 @@ function moveCardBy(dx, dy) {
 function cardChrome(add, titleHtml) {
   const bar = add('div', 'titlebar')
   const title = document.createElement('h2'); title.innerHTML = titleHtml; bar.appendChild(title)
-  const max = document.createElement('button'); max.className = 'maxb'; max.textContent = card.classList.contains('max') ? '❐' : '□'; max.onclick = toggleCardMax; bar.appendChild(max); card.maxButton = max
-  max.title = (card.classList.contains('max') ? '카드 원래 크기' : '카드 최대화') + ' (M)'
+  const max = document.createElement('button'); max.className = 'maxb'; max.onclick = toggleCardMax; bar.appendChild(max); card.maxButton = max
+  maxFace()
   const close = document.createElement('button'); close.className = 'x'; close.textContent = '✕'; close.title = '닫기 (Esc)'; close.onclick = closeCard; bar.appendChild(close)
   makeCardMovable(bar)
   for (const dir of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
@@ -1110,11 +1176,12 @@ function renderBusy(sid) {
   if (!card.busy || cardSid !== sid) return
   const p = ents.get(sid)?.data || {}
   const parts = []
-  if (p.state === 'working') parts.push('<b>🔨 지금 일하는 중</b>' + (p.tool ? ' · ' + esc(p.tool + (p.detail ? ': ' + String(p.detail).slice(0, 40) : '')) : '') + (p.since ? ' · ' + ago(p.since) : '') + '<br><span class="m">지금 보내는 답은 끝난 뒤에 이어서 처리됩니다. 멈추려면 S.</span>')
+  if (p.state === 'working') parts.push('<b>🔨 일하는 중</b>' + (p.tool ? ' · ' + esc(p.tool + (p.detail ? ': ' + String(p.detail).slice(0, 40) : '')) : '') + (p.since ? ' · ' + ago(p.since) : ''))
   const mt = meetingOf(sid)
   if (mt) parts.push('<b>🗣 회의 중</b> · ' + esc(mt.topic) + ' · ' + mt.sids.map((id) => esc(ents.get(id)?.data.name || '')).join(', '))
   if (card.inbox) parts.push('<b>📨 보낸 답장이 아직 전달 전</b> · "' + esc(card.inbox.text.slice(0, 60)) + '"')
-  card.busy.innerHTML = parts.join('<hr>')
+  card.busy.innerHTML = parts.join(' · ')
+  card.busy.title = p.state === 'working' ? '지금 보내는 지시는 끝난 뒤에 이어서 처리됩니다 (btw는 바로). 멈추려면 S.' : ''
   card.busy.style.display = parts.length ? 'block' : 'none'
   card.classList.toggle('isbusy', p.state === 'working')
 }
@@ -1187,6 +1254,74 @@ function webHtml(panes) {
     + (w.driving ? '<div class="m">🤖 지금 agent가 조작 중</div>' : w.lastAgent ? '<div class="m">마지막 agent 조작: ' + esc(w.lastAgent) + ' · ' + esc(clock(w.lastAt)) + '</div>' : '')
     + w.tabs.map((t) => '<div class="r">' + (t.active ? '▶ ' : '') + '<a data-open="' + esc(t.url || '') + '">' + esc(t.title || t.url || '') + '</a><div class="m">' + esc(t.url || '') + '</div></div>').join('')).join('')
 }
+// ☕ btw: a side chat with the session about its work, answered by a fork of
+// its conversation that never enters it (cc-mods' /side). What is said here is
+// never its prompt; send something there with the reply box below.
+function sideHtml(t) {
+  const bubbles = []
+  for (const i of t.items) {
+    bubbles.push('<div class="me">' + esc(i.q) + '</div>')
+    bubbles.push(i.pending ? '<div class="it typing">… 생각 중</div>' : i.error ? '<div class="it err">✕ ' + esc(i.error) + '</div>' : '<div class="it">' + md(i.a || '') + '</div>')
+  }
+  for (const w of t.waiting) bubbles.push('<div class="me">' + esc(w) + '</div><div class="it typing">… 전달 중</div>')
+  return bubbles.length ? bubbles.join('') : '<div class="m">일과 관련해 편하게 말을 걸어 보세요. 이 대화는 그 세션의 작업에 끼어들지 않고, 메인 대화 기록에도 남지 않습니다.</div>'
+}
+// The btw strip: between whatever tab is open (the answer, past turns…) and
+// the foot, so one reads the work and talks about it at once. Shown while
+// the reply box is in btw mode; its own height, the newest bubble in view.
+function sideBox(sid, t) {
+  const box = document.createElement('div'); box.className = 'sidebox'
+  box.innerHTML = '<div class="sh">☕ btw <span class="m">작업에 끼어들지 않는 곁대화 · 메인 기록에 안 남음 · <kbd>⇧PgUp</kbd><kbd>⇧PgDn</kbd> · <kbd>⌥B</kbd> 닫기</span></div>'
+  const log = document.createElement('div'); log.className = 'btw'; box.appendChild(log)
+  let timer = null
+  box.draw = (th) => {
+    log.innerHTML = sideHtml(th); log.onclick = infoClick
+    log.scrollTop = log.scrollHeight
+    clearTimeout(timer)
+    // Poll only while an answer is on its way, and only for this card.
+    if (th.waiting.length || th.items.some((i) => i.pending)) timer = setTimeout(async () => { if (cardSid !== sid) return; try { box.draw(await (await fetch('/side?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()) } catch (_) {} }, 1500)
+  }
+  box.draw(t || { items: [], waiting: [] })
+  // Its own box at its foot: the left one stays the session's prompt.
+  const ta = document.createElement('textarea'); ta.className = 'btwin'; ta.rows = 1; ta.placeholder = 'btw · 일하는 중에도 바로 답함 · Enter 보내기 · Esc'
+  box.appendChild(ta); box.input = ta
+  ta.onkeydown = async (e) => {
+    if (e.isComposing || e.keyCode === 229) return
+    if (e.altKey) return // ⌥B, ⌥M… are the card's
+    if ((e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey) { e.preventDefault(); scrollSide(e.key === 'PageUp' ? -1 : 1); return }
+    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
+    if (e.key === 'Escape') { e.preventDefault(); ta.blur(); return }
+    if (e.key !== 'Enter' || e.shiftKey) return
+    e.preventDefault()
+    const text = ta.value.trim()
+    if (!text) return
+    ta.value = ''
+    if (!(await box.send(text))) ta.value = text
+  }
+  box.send = async (text) => {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid, kind: 'side', value: text }) }).catch(() => null)
+    if (r && r.status === 403) { staleToken(); return false }
+    if (!r || !r.ok) { toast('✕ btw를 못 보냈습니다'); return false }
+    box.draw(await (await fetch('/side?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json())
+    return true
+  }
+  return box
+}
+// The reply box's two modes: ↪ a prompt to the session, ☕ btw a side chat.
+// Every card opens on ↪ with the btw strip closed: the answer gets the room,
+// and ⌥B opens the side chat when there is something to say on the side.
+let sideMode = false
+function setSideMode(on) {
+  sideMode = on
+  // btw needs the width: maximise while it is open, and only undo what it did.
+  if (on && card.side && !card.classList.contains('max')) { toggleCardMax(); card.btwMax = true }
+  else if (!on && card.btwMax) { toggleCardMax(); card.btwMax = false }
+  if (card.side) card.side.style.display = on ? '' : 'none'
+  card.classList.toggle('btwmode', on)
+  const to = on && card.side ? card.side.input : card.reply
+  if (to) to.focus({ preventScroll: true })
+  if (on && card.side) { const log = card.side.querySelector('.btw'); log.scrollTop = log.scrollHeight }
+}
 async function openCard(sid, kind = null) {
   cardSid = sid
   card.style.display = 'block'
@@ -1206,7 +1341,7 @@ async function openCard(sid, kind = null) {
   cardRoute = d.route || 'default'
   card.innerHTML = ''
   card.classList.add('panes')
-  card.selectTab = card.openCurrent = card.moveResource = card.curPane = null
+  card.selectTab = card.openCurrent = card.moveResource = card.curPane = card.side = null
   card.resourceLinks = []
   // add() puts things where `into` points: the card, then its tab panes, then
   // the foot that stays at the card's bottom (the things to press).
@@ -1214,7 +1349,8 @@ async function openCard(sid, kind = null) {
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
   cardChrome(add, esc(d.window + ' ' + d.name))
   card.keys = []
-  add('div', 'sub', persona(me) + '<br>' + (DOING[me.doing || d.doing] || d.state))
+  // One line: what it is doing now first, the persona after (full in the tooltip).
+  const sub = add('div', 'sub', (DOING[me.doing || d.doing] || esc(d.state)) + ' · ' + persona(me).replace(/<br>/g, ' · ')); sub.title = sub.textContent
   // Busy or a reply already on its way: said first, before anything to press.
   card.busy = add('div', 'busy')
   if (!kind) { const ts = talkSection(sid); if (ts) add('div', '', ts) }
@@ -1261,7 +1397,13 @@ async function openCard(sid, kind = null) {
   const showTab = (i, focus = false) => {
     curTab = (i + groups.length) % groups.length
     tabbar.innerHTML = ''
-    groups.forEach(([k, label, items], j) => { const b = document.createElement('button'); b.className = j === curTab ? 'on' : ''; b.textContent = '⌥' + (j + 1) + ' ' + label + (items && items.length && k !== 'policy' ? ' ' + items.length : ''); b.onclick = () => showTab(j); tabbar.appendChild(b) })
+    // Icon and count; the open tab also says its name. The full label and
+    // its key are the tooltip, so the row fits without scrolling.
+    groups.forEach(([k, label, items], j) => {
+      const b = document.createElement('button'), [icon, ...name] = label.split(' '), n = items && items.length && k !== 'policy' ? items.length : ''
+      b.className = j === curTab ? 'on' : ''; b.textContent = icon + (j === curTab ? ' ' + name.join(' ') : '') + (n ? ' ' + n : ''); b.title = label + (n ? ' ' + n : '') + ' (⌥' + (j + 1) + ')'
+      b.onclick = () => showTab(j); tabbar.appendChild(b)
+    })
     groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
     card.curPane = panes[groups[curTab][0]]
     // Past turns read like a chat: the newest at the bottom, where it opens.
@@ -1286,6 +1428,10 @@ async function openCard(sid, kind = null) {
   showTab(0)
   if (groups.length < 2) tabbar.style.display = 'none'
   // The foot: everything to press stays in view at the card's bottom.
+  card.side = sideBox(sid, pn.side)
+  card.side.style.display = 'none'; card.classList.remove('btwmode'); sideMode = false
+  if (card.btwMax) { card.btwMax = false; card.classList.remove('max'); restoreCardLayout(); maxFace() }
+  card.appendChild(card.side)
   const foot = document.createElement('div'); foot.className = 'cfoot'; card.appendChild(foot); into = foot
   // Policy: what Jev thinks this session needs before it can go on, for one press.
   if (d.grant) {
@@ -1325,14 +1471,23 @@ async function openCard(sid, kind = null) {
     add('div', 'q', '🗳 ' + esc(d.dialog.question || '선택지'))
     const row = add('div', 'row')
     for (const o of d.dialog.options) { const b = document.createElement('button'); b.className = 'act pick'; b.innerHTML = '<span class="key">' + o.n + '</span>' + esc(o.label); b.onclick = () => send({ kind: 'key', value: String(o.n) }, o.n + '번 선택'); row.appendChild(b); card.keys[o.n] = b }
-  } else {
+  }
+  if (!d.dialog) {
     const row = add('div', 'row')
     d.suggestions.forEach((t, i) => { const b = document.createElement('button'); b.className = 'act go'; b.innerHTML = '<span class="key">' + (i + 1) + '</span>' + esc(t); b.onclick = () => send({ kind: 'reply', value: t }, '"' + t + '" 보냄'); row.appendChild(b); card.keys[i + 1] = b })
     // The reply box takes the keyboard as soon as the card opens: type and
     // Enter. Empty, a digit presses that button and Tab moves to the next
     // agent, so the whole round needs no mouse and no mode key.
-    const ta = add('textarea'); ta.placeholder = '답장 · Enter 보내기 · 비었을 때 1-9 · Tab 다음 · ⌥G 창 · ⌥Z 미루기 · Esc'; ta.title = 'Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · ⌥G 창으로 · ⌥Z 미루기 · Esc 빠져나오기'; card.reply = ta
-    const go = () => { const t = ta.value.trim(); if (t) send({ kind: 'reply', value: t }, '답장 보냄') }
+    // The mode chip and the box on one line: what Enter does is always in view.
+    const line = add('div', 'replyline')
+    const ta = document.createElement('textarea'); line.appendChild(ta)
+    ta.placeholder = '지시 · Enter 보내기 · 비었을 때 1-9 · Tab 다음 · ⌥B 곁대화 · Esc'
+    ta.title = 'Enter 보내기 · ⇧Enter 줄바꿈 · 비었을 때 1-9 버튼 · Tab 다음 agent · ⌥B 지시/곁대화 · ⌥G 창으로 · ⌥Z 미루기 · Esc 빠져나오기'; card.reply = ta
+    const go = async () => {
+      const t = ta.value.trim()
+      if (!t) return
+      send({ kind: 'reply', value: t }, '답장 보냄')
+    }
     // One line until there is more to say; the CSS max-height caps the growth.
     ta.oninput = () => { if (card.classList.contains('max')) return; ta.style.height = ''; if (ta.value) ta.style.height = ta.scrollHeight + 4 + 'px' }
     ta.onkeydown = (e) => {
@@ -1344,21 +1499,23 @@ async function openCard(sid, kind = null) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); return }
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
+      if ((e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey && scrollSide(e.key === 'PageUp' ? -1 : 1)) { e.preventDefault(); return }
       if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
     }
-    const r2 = add('div', 'row'); const b = document.createElement('button'); b.className = 'act go send'; b.innerHTML = '<span class="key">⏎</span>보내기'; b.onclick = go; r2.appendChild(b)
+    const b = document.createElement('button'); b.className = 'act go send'; b.innerHTML = '<span class="key">⏎</span>'; b.title = '보내기 (Enter)'; b.onclick = go; line.appendChild(b)
   }
-  const nav = add('div', 'row')
+  // The small buttons share the quick replies' line, at its right end.
+  const nav = add('div', 'row navrow')
   card.stop = null
-  if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.innerHTML = '<span class="key">S</span>✋ 멈추기'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b); card.stop = b }
-  const j = document.createElement('button'); j.className = 'act nav'; j.innerHTML = '<span class="key">G</span>↗ 창으로 이동'; j.onclick = () => focusPane(me.pane); nav.appendChild(j); card.go = j
+  if (d.state === 'working') { const b = document.createElement('button'); b.className = 'act stop'; b.innerHTML = '<span class="key">S</span>✋'; b.title = '멈추기 (S)'; b.onclick = () => send({ kind: 'stop' }, '멈춤 보냄'); nav.appendChild(b); card.stop = b }
+  const j = document.createElement('button'); j.className = 'act nav'; j.innerHTML = '<span class="key">G</span>↗'; j.title = '그 tmux 창으로 이동 (G)'; j.onclick = () => focusPane(me.pane); nav.appendChild(j); card.go = j
   const zz = document.createElement('button'); zz.className = 'act snz'
   const q = isMuted(sid) && mutedSince[sid]
-  zz.innerHTML = '<span class="key">Z</span>' + (!q ? '💤 미루기 ▾' : q.until ? '💤 ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분 남음 ▾' : '🤐 말 걸 때까지 ▾')
+  zz.innerHTML = '<span class="key">Z</span>' + (!q ? '💤' : q.until ? '💤 ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분' : '🤐'); zz.title = !q ? '미루기 (Z)' : q.until ? '미뤄 둠 · 다시 부르기는 Z' : '말 걸 때까지 미뤄 둠 · Z'
   zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
-  const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>다음 ▶'; nx.onclick = () => step(1); nav.appendChild(nx)
+  const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>▶'; nx.title = '다음 agent (N · Tab)'; nx.onclick = () => step(1); nav.appendChild(nx)
   foot.appendChild(msg)
   // Laid out now: open the answer at its end, where the question usually is,
   // and keep the scroll hint only when there is something to scroll.
