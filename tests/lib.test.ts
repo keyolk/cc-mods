@@ -23,7 +23,7 @@ import { ROUTE_OFF, cacheGate, decide, resolveModel, routeLabel } from '../hooks
 import { WEB_ANCHOR, engineForUrl, engineOfTarget, parseEngine, parseEngineRules, urlPicks, urlsIn, keyBytes, sgrMouse, sgrWheel, toHex, urlFromInput } from '../hooks/lib/web'
 import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/backfill'
 import { agentFlow, flowOf, paragraphs } from '../hooks/lib/flow'
-import { CAPS, badge, godArgvs, isGod, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
+import { CAPS, GOD_MS, badge, godArgvs, godExtended, isGod, parseGodMinutes, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
 import { checkVerdict, ghAccountFor, gitopsFromComments, graphqlQuery, needLabel, needsAttention, parseGraphql, prLine, repoFromGh, repoFromRemote } from '../hooks/lib/prs'
 import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, outputKeysToDrop, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
 import { clientItems, navItems, navTarget, skipHidden } from '../hooks/lib/nav'
@@ -1657,4 +1657,19 @@ test('clearedByCache trusts a needs-auth cache written after the list', () => {
   expect(clearedByCache(listed, cache, 500, 1000)).toEqual(listed)
   expect(clearedByCache(listed, undefined, 2000, 1000)).toEqual(listed)
   expect(clearedByCache(listed, 'not json', 2000, 1000)).toEqual(listed)
+})
+
+test('policy: /god minutes and how far an extension reaches', () => {
+  expect(parseGodMinutes('')).toBe(GOD_MS / 60_000)
+  expect(parseGodMinutes('15')).toBe(15)
+  expect(parseGodMinutes('45m')).toBe(45)
+  expect(parseGodMinutes('0')).toBeUndefined()
+  expect(parseGodMinutes('soon')).toBeUndefined()
+  const now = 1_000_000
+  // From its end, while it runs.
+  expect(godExtended(now + 10 * 60_000, now, 15)).toBe(now + 25 * 60_000)
+  // From now, once it passed.
+  expect(godExtended(now - 60_000, now, 15)).toBe(now + 15 * 60_000)
+  // Never more than 2 × GOD_MS ahead.
+  expect(godExtended(now + 50 * 60_000, now, 30)).toBe(now + 2 * GOD_MS)
 })
