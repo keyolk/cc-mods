@@ -8,7 +8,7 @@ import { cockpitColumns } from '../hooks/lib/layout'
 // Pure library tests: no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
+import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldArgocd, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
 import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
 import { linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
@@ -1645,4 +1645,31 @@ test('policy: /god minutes and how far an extension reaches', () => {
   expect(godExtended(now - 60_000, now, 15)).toBe(now + 15 * 60_000)
   // Never more than 2 × GOD_MS ahead.
   expect(godExtended(now + 50 * 60_000, now, 30)).toBe(now + 2 * GOD_MS)
+})
+
+test('foldArgocd turns several due ArgoCD logins into one row that logs in to each', () => {
+  const argo = (n: string, state: 'expired' | 'soon' | 'ok' | 'unknown', exp?: number) => ({ id: 'argocd:' + n, label: 'ArgoCD ' + n, state, expiresAt: exp, fix: ['argocd', 'login', n, '--sso', '--grpc-web'] })
+  const aws = { id: 'aws-sso', label: 'AWS SSO', state: 'expired' as const }
+  const items = [aws, argo('a', 'expired', 5), argo('b', 'soon', 9), argo('c', 'ok', 99), argo('d', 'unknown')]
+  const out = foldArgocd(items)
+  expect(out.map((i) => i.id)).toEqual(['aws-sso', 'argocd:*', 'argocd:c', 'argocd:d'])
+  expect(out[1]).toMatchObject({ label: 'ArgoCD ×2', state: 'expired', expiresAt: 5, detail: 'a, b', fix: argo('a', 'expired').fix })
+  expect(out[1]!.batch!.map((f) => f[2])).toEqual(['a', 'b'])
+  // One due login stays its own row.
+  expect(foldArgocd([aws, argo('a', 'expired')]).map((i) => i.id)).toEqual(['aws-sso', 'argocd:a'])
+})
+
+test('clearedByCache trusts a needs-auth cache written after the list', () => {
+  const listed = [
+    { id: 'mcp:portal', state: 'expired', detail: 'needs auth', fix: ['/mcp'] },
+    { id: 'mcp:panther', state: 'expired', detail: 'needs auth', fix: ['/mcp'] },
+  ]
+  const cache = '{"panther":{"timestamp":1}}'
+  const out = clearedByCache(listed, cache, 2000, 1000)
+  expect(out[0]).toMatchObject({ state: 'ok', detail: 'logged in', fix: undefined })
+  expect(out[1]).toMatchObject({ state: 'expired' })
+  // A cache older than the list says nothing new.
+  expect(clearedByCache(listed, cache, 500, 1000)).toEqual(listed)
+  expect(clearedByCache(listed, undefined, 2000, 1000)).toEqual(listed)
+  expect(clearedByCache(listed, 'not json', 2000, 1000)).toEqual(listed)
 })

@@ -20,6 +20,8 @@ export type AuthItem = {
   detail?: string
   // The command a person runs to fix it. Shown on a button; never run by Claude.
   fix?: string[]
+  // Several logins one press runs in turn (foldArgocd): `fix` is the first.
+  batch?: string[][]
   // A second way out, drawn as its own button (AWS: the access portal, where
   // signing out ends the session a login would otherwise reuse).
   alt?: { label: string; argv: string[] }
@@ -205,6 +207,22 @@ export function mcpItems(cacheJson: string | undefined): AuthItem[] {
   }))
 }
 
+// A login through /mcp drops the server from the needs-auth cache at once,
+// while `claude mcp list` runs at most every 10 minutes (an hour after
+// failures) and its list outranks the cache: live, portal stayed in Needs you
+// after its login. A cache rewritten after the list ran and no longer naming
+// a server the list called expired is the newer word.
+export function clearedByCache<T extends { id: string; state: string; detail?: string; fix?: unknown }>(items: readonly T[], cacheJson: string | undefined, cacheAt: number | undefined, listAt: number): T[] {
+  if (cacheJson === undefined || cacheAt === undefined || cacheAt <= listAt) return [...items]
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(cacheJson)
+  } catch {
+    return [...items]
+  }
+  return items.map((i) => (i.id.startsWith('mcp:') && i.state === 'expired' && !(i.id.slice(4) in raw) ? { ...i, state: 'ok', detail: 'logged in', fix: undefined } : i))
+}
+
 // The status file is written when the daemon hits auth_required and is not
 // rewritten when auth recovers, so on its own it stays red forever (live: a
 // file from 10/12 05:36 while every later supervisor line said the token was
@@ -263,6 +281,29 @@ export function argocdItems(configYaml: string | undefined, now: number): AuthIt
     })
   }
   return items
+}
+
+// Several ArgoCD logins due at once become one row whose press logs in to
+// each in turn: the CLI listens on one callback port (8085) and rewrites the
+// whole config when the browser returns, so the logins cannot run side by
+// side, and with the Okta session open each after the first takes seconds.
+export function foldArgocd(items: readonly AuthItem[]): AuthItem[] {
+  const due = items.filter((i) => i.id.startsWith('argocd:') && (i.state === 'expired' || i.state === 'soon') && i.fix)
+  if (due.length < 2) return [...items]
+  const exp = due.map((i) => i.expiresAt).filter((x): x is number => x !== undefined)
+  const one: AuthItem = {
+    id: 'argocd:*',
+    label: 'ArgoCD ×' + due.length,
+    state: due.some((i) => i.state === 'expired') ? 'expired' : 'soon',
+    expiresAt: exp.length ? Math.min(...exp) : undefined,
+    detail: due.map((i) => i.label.replace(/^ArgoCD /, '')).join(', '),
+    fix: due[0]!.fix,
+    batch: due.map((i) => i.fix!),
+  }
+  const at = items.indexOf(due[0]!)
+  const rest = items.filter((i) => !due.includes(i))
+  rest.splice(Math.min(at, rest.length), 0, one)
+  return rest
 }
 
 function jwtExp(token: string): number | undefined {

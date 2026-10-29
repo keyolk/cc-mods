@@ -33,7 +33,7 @@ import { PALETTE_CLOSED, filterPalette, paletteItems, type PaletteItem, type Pal
 import { cacheGate, decide, resolveModel, routeLabel, type RouteLast, routeSettings, type RouteAnswer, type RouteDecision, type RouteSettings } from './lib/route'
 import { parseJev, parseQuota, parseUsage, type JevUsage, type Quota, type Usage } from './lib/usage'
 import { USAGE_WINDOWS, renderUsage, type UsageWindow } from './views/usage'
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
+import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
 import { EMPTY, parseProfiles, suggest, type Sources } from './lib/complete'
 import { BLOCK_TTL_MS, blockOf, grantLabel, nowAllowed, resumePrompt, type Blocked } from './lib/unblock'
 import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
@@ -546,6 +546,7 @@ async function runFix($: any, item: AuthItem): Promise<void> {
   const server = serverOf(item.id)
   if (server) return startMcpLogin($, server)
   if (!item.fix) return
+  if (item.batch) return runBatch($, item.batch)
   $.ui.toast(item.label + ': opening the login page…')
   const before = item.id === 'aws-sso' ? item.expiresAt : undefined
   try {
@@ -560,6 +561,20 @@ async function runFix($: any, item: AuthItem): Promise<void> {
     $.ui.toast('AWS SSO: the login reused the running portal session; it still ends ' + hhmm(after!) + '. Sign out at the portal, then log in again, for a new one.')
     await runRadar($, true)
   }
+}
+
+// The logins of a folded row (foldArgocd), one after another: they share a
+// callback port, so the next starts only when the last has returned.
+async function runBatch($: any, batch: string[][]): Promise<void> {
+  const failed: string[] = []
+  for (const [n, argv] of batch.entries()) {
+    const name = argv[2] ?? argv.join(' ')
+    $.ui.toast('ArgoCD ' + (n + 1) + '/' + batch.length + ' ' + name + ': opening the login page…')
+    const r = await $.process.run(argv, { timeoutMs: 300_000 }).catch((err: unknown) => ({ exitCode: 1, stderr: String(err) }))
+    if (r.exitCode !== 0) failed.push(name)
+  }
+  $.ui.toast(failed.length ? 'ArgoCD: ' + failed.length + ' of ' + batch.length + ' failed (' + failed.join(', ') + ')' : 'ArgoCD: logged in to all ' + batch.length)
+  await runRadar($, true)
 }
 
 // The AWS expiry a login left where it was (awsLoginReused): the radar notes
@@ -1198,6 +1213,7 @@ const credFiles = (h: string) => [
   ...(ssoCacheFile(h) ? [ssoCacheFile(h)!] : []),
   h + '/.config/argocd/config',
   h + '/.config/gh/hosts.yml',
+  h + '/.claude/mcp-needs-auth-cache.json', // a /mcp login (clearedByCache)
   h + '/.claude/daemon-auth-status.json',
   h + '/Library/Application Support/coderv2/url',
   h + '/Library/Application Support/coderv2/session',
@@ -1270,8 +1286,12 @@ async function runRadar($: any, force = false): Promise<AuthItem[]> {
   // A login finished here outranks the list for a while: the list may have
   // been read before it, and `claude mcp list` itself lags a fresh token.
   const fresh = [...loggedInAt].filter(([, at]) => now - at < LOGGED_IN_HOLD_MS).map(([s]) => s)
+  const cacheFile = home + '/.claude/mcp-needs-auth-cache.json'
+  const cache = await readText($, cacheFile)
+  const cacheAt = await $.fs.stat(cacheFile).then((st: any) => st?.mtimeMs as number | undefined).catch(() => undefined)
+  const mcp = listed ? clearedByCache(listed, cache, cacheAt, mcpList!.at) : mcpItems(cache)
   items.push(
-    ...fresh.reduce(markLoggedIn, (listed ?? mcpItems(await readText($, home + '/.claude/mcp-needs-auth-cache.json'))) as AuthItem[]).map((i) =>
+    ...fresh.reduce(markLoggedIn, mcp as AuthItem[]).map((i) =>
       authorizedAt.has(serverOf(i.id) ?? '') ? { ...i, state: 'ok' as const, detail: 'authorized · restart to use', fix: undefined } : i,
     ),
   )

@@ -8,7 +8,7 @@
 // "이웃") at different positions, and nothing told a failing PR from a fine one.
 
 import { forkAge, type ForkOffer } from '../lib/fork'
-import { ICON, type AuthItem } from '../lib/auth'
+import { foldArgocd, ICON, type AuthItem } from '../lib/auth'
 import type { MonitorState } from '../lib/monitor'
 import { needsAttention, prLine, type PrStatus } from '../lib/prs'
 import { clip, pad } from '../lib/text'
@@ -50,7 +50,7 @@ export function renderBand(els: Els, v: BandView): Node | undefined {
   const lines: Node[] = []
   const now = Date.now()
 
-  const bad = v.auth.filter((a) => a.state === 'expired' || a.state === 'soon')
+  const bad = foldArgocd(v.auth.filter((a) => a.state === 'expired' || a.state === 'soon'))
   if (bad.length) {
     const expired = bad.some((a) => a.state === 'expired')
     lines.push(
