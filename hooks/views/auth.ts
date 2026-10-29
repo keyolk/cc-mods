@@ -3,7 +3,7 @@
 // Policy tab, but a login is not a permission: policy says what Claude may do,
 // this says whether the tools it would do it with still work.
 
-import { ICON as AUTH_ICON, type AuthItem } from '../lib/auth'
+import { ICON as AUTH_ICON, foldArgocd, type AuthItem } from '../lib/auth'
 import type { McpLogin } from '../lib/mcpauth'
 import { C, field, section, type Els, type Node } from './common'
 
@@ -35,7 +35,7 @@ export function renderAuthTab(els: Els, v: AuthView): Node {
   const bad = v.auth.filter((a) => (a.state === 'expired' || a.state === 'soon') && !a.id.startsWith('mcp:'))
   if (bad.length) {
     rows.push(section(els, 'Needs you', bad.length + ''))
-    for (const a of bad) rows.push(authRow(els, a, v))
+    for (const a of foldArgocd(bad)) rows.push(authRow(els, a, v))
   }
   for (const g of GROUPS) {
     const items = v.auth.filter((a) => g.test(a.id) && !bad.includes(a))
@@ -89,11 +89,11 @@ function authRow(els: Els, a: AuthItem, v: AuthView): Node {
   const own = a.id.startsWith('ccproxy:')
   const meta = own ? (a.detail ?? '') : a.state === 'expired' ? 'expired' : left !== undefined && left > 0 ? (left >= 120 ? Math.round(left / 60) + 'h' : left + 'm') + ' left' : (a.detail ?? '')
   // A row with a second way out carries why in its detail: show it beside the time.
-  const why = a.alt && a.detail && !meta.includes(a.detail) ? ' · ' + a.detail : ''
+  const why = (a.alt || a.batch) && a.detail && !meta.includes(a.detail) ? ' · ' + a.detail : ''
   const label = a.id.startsWith('mcp:') ? a.label.replace(/^MCP /, '') : a.label
   const row = [Text({ color: tone, children: [AUTH_ICON[a.state] + ' '] }), Text({ bold: a.state !== 'ok', children: [label] }), Text({ color: C.muted, children: ['  ' + meta + why] })]
   const main = a.fix && a.state !== 'ok'
-    ? Button({ key: 'auth-row-' + a.id, label, plain: true, onPress: () => v.onFix(a), children: [...row, Text({ color: C.accent, children: ['  → log in'] })] })
+    ? Button({ key: 'auth-row-' + a.id, label, plain: true, onPress: () => v.onFix(a), children: [...row, Text({ color: C.accent, children: [a.batch ? '  → log in to each' : '  → log in'] })] })
     : Box({ key: 'auth-row-' + a.id, flexDirection: 'row', children: row })
   if (!a.alt || !v.onAlt) return main
   const alt = a.alt
