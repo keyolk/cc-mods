@@ -7,7 +7,7 @@
 // decide) — followed by three buttons. The first version showed a Select
 // reading `inherit ▾ → block`, which mixed the setting with its effect.
 
-import { CAPS, GOD_MINUTES, MODES, SCOPED, slackDefaultTargets, resolveCap, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from '../lib/policy'
+import { CAPS, GOD_EXTEND_MINUTES, GOD_MINUTES, MODES, SCOPED, slackDefaultTargets, resolveCap, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from '../lib/policy'
 import { routeLabel, type RouteDecision, type RouteSettings } from '../lib/route'
 import { C, col, field, header, keys, row, section, type Els, type Node } from './common'
 
@@ -27,6 +27,7 @@ export type PolicyView = {
   // a press with minutes turns it on, without (or while on) turns it off.
   god?: number
   onGod?: (minutes?: number) => void
+  onGodExtend?: (minutes: number) => void // more time on a running one, no question
   hints?: readonly ScopeHint[] // scopes this session used or was blocked on
   onHint?: (h: ScopeHint) => void
   onUnscope?: (cap: Cap, scope: string) => void // a ✕ on an allowed target
@@ -138,10 +139,11 @@ export function renderPolicy(els: Els, v: PolicyView): Node {
                 flexWrap: 'wrap',
                 children: [
                   Text({ bold: true, color: C.bad, children: ['⚡ GOD MODE · everything allowed · ' + Math.ceil((v.god! - v.now) / 60_000) + 'm left'] }),
+                  ...(v.onGodExtend ? GOD_EXTEND_MINUTES.map((m) => Button({ key: 'god-ext-' + m, label: 'god +' + m + 'm', onPress: () => v.onGodExtend!(m), children: [Text({ bold: true, children: [' +' + m + 'm '] })] })) : []),
                   Button({ key: 'god-off', label: 'end god mode', onPress: () => v.onGod!(), variant: 'primary', children: [Text({ children: ['✕ end now'] })] }),
                 ],
               }),
-              Text({ color: C.muted, children: ['the policy from before comes back when it ends'] }),
+              Text({ color: C.muted, children: ['+ adds time without asking (at most 60m ahead) · the policy from before comes back when it ends · /god off'] }),
             ]
           : [
               Box({
@@ -153,7 +155,7 @@ export function renderPolicy(els: Els, v: PolicyView): Node {
                   ...GOD_MINUTES.map((m) => Button({ key: 'god-' + m, label: 'god ' + m + 'm', onPress: () => v.onGod!(m), children: [Text({ bold: true, children: [' ' + m + 'm '] })] })),
                 ],
               }),
-              Text({ color: C.muted, children: ['allow every capability for a while; asks first, then puts the policy back'] }),
+              Text({ color: C.muted, children: ['allow every capability for a while; asks first, then puts the policy back · or /god [minutes]'] }),
             ],
       })
     : undefined
