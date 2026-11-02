@@ -100,5 +100,23 @@ class PanelsTest(unittest.TestCase):
         self.assertEqual(a["items"][2]["expiresAt"], 1_790_000_000)
 
 
+    def test_auth_folds_due_argocd_logins_into_one_pasteable_row(self):
+        store = self.claude / "plugins" / "store"
+        store.mkdir(parents=True)
+        office._radar.clear()
+        items = [
+            {"id": "argocd:argocd.sbtools.io", "label": "ArgoCD argocd", "state": "expired", "detail": "argocd.sbtools.io", "expiresAt": 1_790_000_100_000, "fix": ["argocd", "login", "argocd.sbtools.io", "--sso", "--grpc-web"]},
+            {"id": "argocd:argocd-kb.sbtools.io", "label": "ArgoCD argocd-kb", "state": "soon", "detail": "argocd-kb.sbtools.io", "expiresAt": 1_790_000_000_000, "fix": ["argocd", "login", "argocd-kb.sbtools.io", "--sso", "--grpc-web"]},
+            {"id": "argocd:argocd.dltools.io", "label": "ArgoCD argocd (dl)", "state": "ok", "fix": ["argocd", "login", "argocd.dltools.io", "--sso", "--grpc-web"]},
+            {"id": "mcp:panther", "label": "MCP panther", "state": "expired", "fix": ["/mcp"]},
+        ]
+        (store / "cc-mods_inline-x.json").write_text(json.dumps({"radar": {"at": 1_790_000_000_000, "items": items}}))
+        a = office.auth()
+        self.assertEqual([i["label"] for i in a["items"]], ["ArgoCD ×2", "MCP panther", "ArgoCD argocd (dl)"])
+        one = a["items"][0]
+        self.assertEqual((one["state"], one["detail"], one["expiresAt"]), ("expired", "argocd, argocd-kb", 1_790_000_000))
+        self.assertEqual(one["fix"], "argocd login argocd.sbtools.io --sso --grpc-web && argocd login argocd-kb.sbtools.io --sso --grpc-web")
+
+
 if __name__ == "__main__":
     unittest.main()
