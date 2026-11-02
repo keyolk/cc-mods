@@ -3,7 +3,7 @@
 // Policy tab, but a login is not a permission: policy says what Claude may do,
 // this says whether the tools it would do it with still work.
 
-import { ICON as AUTH_ICON, foldArgocd, type AuthItem } from '../lib/auth'
+import { ICON as AUTH_ICON, foldLogins, type AuthItem } from '../lib/auth'
 import type { McpLogin } from '../lib/mcpauth'
 import { C, field, section, type Els, type Node } from './common'
 
@@ -35,7 +35,7 @@ export function renderAuthTab(els: Els, v: AuthView): Node {
   const bad = v.auth.filter((a) => (a.state === 'expired' || a.state === 'soon') && !a.id.startsWith('mcp:'))
   if (bad.length) {
     rows.push(section(els, 'Needs you', bad.length + ''))
-    for (const a of foldArgocd(bad)) rows.push(authRow(els, a, v))
+    for (const a of foldLogins(bad)) rows.push(authRow(els, a, v))
   }
   for (const g of GROUPS) {
     const items = v.auth.filter((a) => g.test(a.id) && !bad.includes(a))

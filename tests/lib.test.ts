@@ -8,7 +8,7 @@ import { cockpitColumns } from '../hooks/lib/layout'
 // Pure library tests: no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldArgocd, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
+import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldLogins, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
 import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
 import { linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
@@ -1084,13 +1084,17 @@ test('unblock: a guard refusal is recorded and released by the grant that covers
   expect(resumePrompt([merge])).toContain('gh_merge keyolk/tweb: `gh pr merge 169`')
 })
 
-test('coder: local config finds the selected deployment without a network probe', () => {
-  const instances = { apne2: 'https://coder-apne2.example.com', usw2: 'https://coder-usw2.example.com/' }
-  expect(coderLocalItems('https://coder-apne2.example.com\n', true, instances)).toEqual([
-    { id: 'coder:apne2', label: 'Coder apne2', state: 'ok', detail: 'coder-apne2.example.com · local session present', fix: undefined },
-    { id: 'coder:usw2', label: 'Coder usw2', state: 'unknown', detail: 'coder-usw2.example.com · not selected', fix: ['coder', 'login', 'https://coder-usw2.example.com'] },
+test('coder: each instance is judged by its own keyring session, not by which one is selected', () => {
+  const instances = { apne2: 'https://coder-apne2.example.com', usw2: 'https://coder-usw2.example.com/', euc1: 'https://coder-euc1.example.com' }
+  expect(coderLocalItems('https://coder-apne2.example.com\n', { apne2: true, usw2: true, euc1: false }, instances)).toEqual([
+    { id: 'coder:apne2', label: 'Coder apne2', state: 'ok', detail: 'coder-apne2.example.com · selected', fix: undefined },
+    { id: 'coder:usw2', label: 'Coder usw2', state: 'ok', detail: 'coder-usw2.example.com', fix: undefined },
+    { id: 'coder:euc1', label: 'Coder euc1', state: 'expired', detail: 'coder-euc1.example.com · no session', fix: ['coder', 'login', 'https://coder-euc1.example.com'] },
   ])
-  expect(coderLocalItems('https://coder-apne2.example.com', false, instances)[0]).toMatchObject({ state: 'expired', detail: 'no local session' })
+  expect(coderLocalItems(undefined, {}, instances)[0]).toMatchObject({ state: 'unknown', detail: 'coder-apne2.example.com · session not checked' })
+  expect(coderSession({ exitCode: 0 })).toBe(true)
+  expect(coderSession({ exitCode: 1, stderr: "error: no session token found - run 'coder login' first" })).toBe(false)
+  expect(coderSession({ exitCode: 127, stderr: 'coder: command not found' })).toBeUndefined()
 })
 
 test('coder: auth failures offer the exact instance login; network failures stay unknown', () => {
@@ -1647,16 +1651,22 @@ test('policy: /god minutes and how far an extension reaches', () => {
   expect(godExtended(now + 50 * 60_000, now, 30)).toBe(now + 2 * GOD_MS)
 })
 
-test('foldArgocd turns several due ArgoCD logins into one row that logs in to each', () => {
+test('foldLogins turns several due ArgoCD or Coder logins into one row that logs in to each', () => {
   const argo = (n: string, state: 'expired' | 'soon' | 'ok' | 'unknown', exp?: number) => ({ id: 'argocd:' + n, label: 'ArgoCD ' + n, state, expiresAt: exp, fix: ['argocd', 'login', n, '--sso', '--grpc-web'] })
   const aws = { id: 'aws-sso', label: 'AWS SSO', state: 'expired' as const }
   const items = [aws, argo('a', 'expired', 5), argo('b', 'soon', 9), argo('c', 'ok', 99), argo('d', 'unknown')]
-  const out = foldArgocd(items)
+  const out = foldLogins(items)
   expect(out.map((i) => i.id)).toEqual(['aws-sso', 'argocd:*', 'argocd:c', 'argocd:d'])
   expect(out[1]).toMatchObject({ label: 'ArgoCD ×2', state: 'expired', expiresAt: 5, detail: 'a, b', fix: argo('a', 'expired').fix })
   expect(out[1]!.batch!.map((f) => f[2])).toEqual(['a', 'b'])
   // One due login stays its own row.
-  expect(foldArgocd([aws, argo('a', 'expired')]).map((i) => i.id)).toEqual(['aws-sso', 'argocd:a'])
+  expect(foldLogins([aws, argo('a', 'expired')]).map((i) => i.id)).toEqual(['aws-sso', 'argocd:a'])
+  // Coder folds on its own, next to ArgoCD.
+  const coder = (n: string) => ({ id: 'coder:' + n, label: 'Coder ' + n, state: 'expired' as const, fix: ['coder', 'login', 'https://coder-' + n + '.example.com'] })
+  const both = foldLogins([argo('a', 'expired'), argo('b', 'expired'), coder('apne2'), coder('usw2')])
+  expect(both.map((i) => i.id)).toEqual(['argocd:*', 'coder:*'])
+  expect(both[1]).toMatchObject({ label: 'Coder ×2', detail: 'apne2, usw2' })
+  expect(both[1]!.batch!.map((f) => f[2])).toEqual(['https://coder-apne2.example.com', 'https://coder-usw2.example.com'])
 })
 
 test('clearedByCache trusts a needs-auth cache written after the list', () => {
