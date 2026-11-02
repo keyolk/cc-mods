@@ -33,7 +33,7 @@ import { PALETTE_CLOSED, filterPalette, paletteItems, type PaletteItem, type Pal
 import { cacheGate, decide, resolveModel, routeLabel, type RouteLast, routeSettings, type RouteAnswer, type RouteDecision, type RouteSettings } from './lib/route'
 import { parseJev, parseQuota, parseUsage, type JevUsage, type Quota, type Usage } from './lib/usage'
 import { USAGE_WINDOWS, renderUsage, type UsageWindow } from './views/usage'
-import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderLocalItems, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
+import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
 import { EMPTY, parseProfiles, suggest, type Sources } from './lib/complete'
 import { BLOCK_TTL_MS, blockOf, grantLabel, nowAllowed, resumePrompt, type Blocked } from './lib/unblock'
 import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
@@ -546,6 +546,7 @@ async function runFix($: any, item: AuthItem): Promise<void> {
   const server = serverOf(item.id)
   if (server) return startMcpLogin($, server)
   if (!item.fix) return
+  if (item.id.startsWith('coder:')) return runCoderLogins($, item.batch ?? [item.fix])
   if (item.batch) return runBatch($, item.batch)
   $.ui.toast(item.label + ': opening the login page…')
   const before = item.id === 'aws-sso' ? item.expiresAt : undefined
@@ -563,7 +564,7 @@ async function runFix($: any, item: AuthItem): Promise<void> {
   }
 }
 
-// The logins of a folded row (foldArgocd), one after another: they share a
+// The logins of a folded row (foldLogins), one after another: they share a
 // callback port, so the next starts only when the last has returned.
 async function runBatch($: any, batch: string[][]): Promise<void> {
   const failed: string[] = []
@@ -575,6 +576,38 @@ async function runBatch($: any, batch: string[][]): Promise<void> {
   }
   $.ui.toast(failed.length ? 'ArgoCD: ' + failed.length + ' of ' + batch.length + ' failed (' + failed.join(', ') + ')' : 'ArgoCD: logged in to all ' + batch.length)
   await runRadar($, true)
+}
+
+// Coder logins, in one small pane under this one: `coder login` opens the
+// browser and then waits for the token pasted at "Paste your token here:",
+// which a run without a terminal never gets. Each login also points the
+// config dir's `url` (what plain `coder` and `coder config-ssh` use) at its
+// deployment, so the one selected now goes last and stays selected.
+let coderPane: string | undefined
+
+async function runCoderLogins($: any, batch: string[][]): Promise<void> {
+  if (coderPane) return void $.ui.toast('Coder: a login pane is already open (' + coderPane + ')')
+  const selected = ((await readText($, home + '/Library/Application Support/coderv2/url')) ?? '').trim().replace(/\/$/, '')
+  const urls = batch.map((f) => f[2]!).filter(Boolean)
+  urls.sort((a, b) => Number(a.replace(/\/$/, '') === selected) - Number(b.replace(/\/$/, '') === selected))
+  const script = 'for u in "$@"; do echo "== coder login $u"; coder login "$u" || { echo "coder login $u failed"; sleep 5; }; done'
+  const r = await $.process
+    .run(['tmux', 'split-window', '-v', '-l', '8', '-P', '-F', '#{pane_id}', '-t', pane ?? '', 'sh', '-c', script, 'coder-login', ...urls], { timeoutMs: 5000 })
+    .catch((err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+  const id = String(r.stdout ?? '').trim()
+  if (r.exitCode !== 0 || !isPaneId(id)) return void $.ui.toast('Coder: could not open a login pane: ' + clip(String(r.stderr || r.stdout), 160))
+  coderPane = id
+  $.ui.toast('Coder: paste each token in pane ' + id + ' (' + urls.length + ' login' + (urls.length > 1 ? 's' : '') + ')')
+  const started = Date.now()
+  const tick = async () => {
+    const alive = await $.process.run(['tmux', 'display-message', '-p', '-t', id, '#{pane_id}'], { timeoutMs: 3000 }).catch(() => ({ exitCode: 1 }))
+    if (alive.exitCode === 0 && Date.now() - started < 10 * 60_000) return void $.clock.after(2000, tick)
+    if (alive.exitCode === 0) await $.process.run(['tmux', 'kill-pane', '-t', id], { timeoutMs: 3000 }).catch(() => undefined)
+    coderPane = undefined
+    const due = (await runRadar($, true)).filter((i) => i.id.startsWith('coder:') && i.state !== 'ok').map((i) => i.label.replace('Coder ', ''))
+    $.ui.toast(due.length ? 'Coder: still no session for ' + due.join(', ') : 'Coder: logged in to all ' + urls.length)
+  }
+  $.clock.after(2000, tick)
 }
 
 // The AWS expiry a login left where it was (awsLoginReused): the radar notes
@@ -1299,7 +1332,13 @@ async function runRadar($: any, force = false): Promise<AuthItem[]> {
   if (d) items.push(d)
   items.push(...argocdItems(await readText($, home + '/.config/argocd/config'), now))
   const coderDir = home + '/Library/Application Support/coderv2/'
-  items.push(...coderLocalItems(await readText($, coderDir + 'url'), await $.fs.exists(coderDir + 'session').catch(() => false), org().coderInstances ?? {}))
+  // Each instance's session from the keyring; the token on stdout is dropped here.
+  const sessions: Record<string, boolean | undefined> = {}
+  for (const [name, url] of Object.entries(org().coderInstances ?? {})) {
+    const r = await $.process.run(['coder', '--url', url, 'login', 'token'], { timeoutMs: 5000 }).catch(() => undefined)
+    sessions[name] = r ? coderSession({ exitCode: r.exitCode, stderr: r.stderr }) : undefined
+  }
+  items.push(...coderLocalItems(await readText($, coderDir + 'url'), sessions, org().coderInstances ?? {}))
   try {
     const r = await $.process.run(['ccproxy', 'status', '--offline', '--json'], { timeoutMs: 8000 })
     // An older ccproxy rejects --json with a usage error: show nothing then.

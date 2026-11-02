@@ -10,7 +10,7 @@
 // A status bar and the tab row sit above every tab; digits 1-5 switch tabs,
 // Esc on any tab but 지금 comes back to it.
 
-import { ICON as AUTH_ICON, foldArgocd, type AuthItem } from '../lib/auth'
+import { ICON as AUTH_ICON, foldLogins, type AuthItem } from '../lib/auth'
 import type { MonitorState } from '../lib/monitor'
 import type { Policy } from '../lib/policy'
 import type { SlackThreadState } from '../lib/slack'
@@ -189,7 +189,7 @@ function quiet(els: Els, text: string): Node {
 
 function needsCard(els: Els, v: HomeView, w: number): Node | undefined {
   const { Box, Button, Text } = els
-  const authBad = foldArgocd(v.auth.filter((a) => (a.state === 'expired' || a.state === 'soon') && a.fix))
+  const authBad = foldLogins(v.auth.filter((a) => (a.state === 'expired' || a.state === 'soon') && a.fix))
   const prNeed = v.prs.filter((p) => STUCK.includes(needsAttention(p)!))
   const watch = v.monitors.filter((m) => m.mattered && v.now - m.at < 30 * 60_000)
   // Slack threads with replies nobody has looked at: a press opens the thread

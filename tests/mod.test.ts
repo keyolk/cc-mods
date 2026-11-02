@@ -13,7 +13,7 @@ const TEST_ORG = JSON.stringify({
   argocdDomains: { 'tools.acme.io': '', 'edge.acme.io': ' (edge)' },
 })
 
-function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined } = {}) {
+function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined } = {}) {
   const runs = opts.runs ?? []
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? opts.pane : undefined }))
@@ -43,7 +43,7 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
   on('process.run', (_$: any, e: any) => {
     runs.push(e.argv)
     const own = opts.run?.(e.argv)
-    if (own) return { value: { exitCode: own.code, stdout: own.out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (own) return { value: { exitCode: own.code, stdout: own.out, stderr: own.err ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (opts.status !== undefined && e.argv[0] === 'ccproxy' && e.argv[1] === 'status') {
       return { value: { exitCode: 0, stdout: opts.status, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
@@ -2025,15 +2025,17 @@ test('credentials have their own Auth tab, grouped by kind; the Policy tab holds
   await ui.unmount()
 })
 
-test('Coder instances appear in Auth and an expired one logs into its exact deployment', async ($, on) => {
-  const org = JSON.stringify({ ...JSON.parse(TEST_ORG), coderInstances: { east: 'https://coder-east.example.com', west: 'https://coder-west.example.com' } })
+test('Coder instances with no session fold into one row whose press logs in to each in a pane, the selected one last', async ($, on) => {
+  const org = JSON.stringify({ ...JSON.parse(TEST_ORG), coderInstances: { east: 'https://coder-east.example.com', west: 'https://coder-west.example.com', north: 'https://coder-north.example.com' } })
   const runs = baseStubs(on, {
     files: {
       '.config/cc-mods/org.json': org,
       'Library/Application Support/coderv2/url': 'https://coder-east.example.com\n',
     },
     run: (argv) => {
-      if (argv[0] === 'coder' && argv[1] === 'login') return { code: 0, out: '' }
+      // The keyring holds north only.
+      if (argv[0] === 'coder' && argv[3] === 'login' && argv[4] === 'token') return argv[2] === 'https://coder-north.example.com' ? { code: 0, out: 'tok' } : { code: 1, out: '', err: "error: no session token found - run 'coder login' first" }
+      if (argv[0] === 'tmux' && argv[1] === 'split-window') return { code: 0, out: '%9\n' }
       return undefined
     },
   })
@@ -2044,12 +2046,14 @@ test('Coder instances appear in Auth and an expired one logs into its exact depl
   const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
   await ui.press({ key: 'cockpit-auth' })
   const drawn = JSON.stringify(await ui.drawn())
-  expect(drawn).toContain('Coder east')
-  expect(drawn).toContain('expired')
-  expect(drawn).toContain('Coder west')
-  await ui.press({ key: 'auth-row-coder:east' })
+  expect(drawn).toContain('Coder north')
+  expect(drawn).toContain('Coder ×2')
+  await ui.press({ key: 'auth-row-coder:*' })
   await clock.advance(0)
-  expect(runs.some((a) => a.join(' ') === 'coder login https://coder-east.example.com')).toBe(true)
+  const split = runs.find((a) => a[0] === 'tmux' && a[1] === 'split-window')!
+  expect(split.slice(-3)).toEqual(['coder-login', 'https://coder-west.example.com', 'https://coder-east.example.com'])
+  // No login runs without a terminal.
+  expect(runs.some((a) => a[0] === 'coder' && a[1] === 'login')).toBe(false)
   await ui.unmount()
 })
 

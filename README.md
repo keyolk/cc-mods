@@ -524,7 +524,7 @@ SSO pre-check or AWS row, no default Slack target, no per-owner gh account.
 | `awsSsoProfiles` | profile prefixes whose `aws` calls are checked for an expired SSO session first |
 | `awsSsoStartUrl` | the IAM Identity Center start URL whose session the Auth tab shows (no AWS row without it) |
 | `argocdDomains` | ArgoCD host suffix → label suffix in the Auth tab |
-| `coderInstances` | Coder instance label → HTTPS deployment URL; Auth reads Coder's local selected URL/session without periodic network probes and offers `coder login <url>` for a missing session |
+| `coderInstances` | Coder instance label → HTTPS deployment URL; Auth asks the keyring for each one's session (`coder --url <url> login token`, no network) and offers `coder login <url>` for a missing one. Several missing fold into one row whose press runs the logins in a small pane (each waits for a pasted token), the selected deployment last so `coder config-ssh` keeps pointing at it |
 | `regionFiles` | region maintenance-window YAML files shown on IaC PR rows |
 
 ## Web: a TWeb pane beside (default)

@@ -20,7 +20,7 @@ export type AuthItem = {
   detail?: string
   // The command a person runs to fix it. Shown on a button; never run by Claude.
   fix?: string[]
-  // Several logins one press runs in turn (foldArgocd): `fix` is the first.
+  // Several logins one press runs in turn (foldLogins): `fix` is the first.
   batch?: string[][]
   // A second way out, drawn as its own button (AWS: the access portal, where
   // signing out ends the session a login would otherwise reuse).
@@ -93,21 +93,33 @@ export function coderItem(name: string, url: string, probe: CoderProbe): AuthIte
   }
 }
 
-export function coderLocalItems(currentUrl: string | undefined, hasSession: boolean, instances: Record<string, string>): AuthItem[] {
+// Coder keeps one session per deployment URL in the keyring, so several are
+// logged in at once; the config dir's `url` only names the one plain `coder`
+// commands (and `coder config-ssh`) use. `sessions` is, per instance, whether
+// `coder --url <url> login token` found a session (coderSession): it reads the
+// keyring, not the network.
+export function coderLocalItems(currentUrl: string | undefined, sessions: Record<string, boolean | undefined>, instances: Record<string, string>): AuthItem[] {
   const norm = (s: string | undefined) => (s ?? '').trim().replace(/\/$/, '')
   const active = norm(currentUrl)
   return Object.entries(instances).map(([name, raw]) => {
     const url = norm(raw)
-    const selected = url === active
-    const loggedIn = selected && hasSession
+    const has = sessions[name]
+    const host = url.replace(/^https:\/\//, '') + (url === active ? ' · selected' : '')
     return {
       id: 'coder:' + name,
       label: 'Coder ' + name,
-      state: loggedIn ? 'ok' : selected ? 'expired' : 'unknown',
-      detail: loggedIn ? url.replace(/^https:\/\//, '') + ' · local session present' : selected ? 'no local session' : url.replace(/^https:\/\//, '') + ' · not selected',
-      fix: loggedIn ? undefined : ['coder', 'login', url],
+      state: has === true ? 'ok' : has === false ? 'expired' : 'unknown',
+      detail: has === true ? host : has === false ? host + ' · no session' : host + ' · session not checked',
+      fix: has === true ? undefined : ['coder', 'login', url],
     }
   })
+}
+
+// What `coder --url <url> login token` says of the keyring: a session, none,
+// or (a missing CLI, a broken keyring) nothing known.
+export function coderSession(probe: CoderProbe): boolean | undefined {
+  if (probe.exitCode === 0) return true
+  return /no session token found/i.test((probe.stderr ?? '') + '\n' + (probe.stdout ?? '')) ? false : undefined
 }
 
 export const SOON_MS = 30 * 60_000
@@ -283,27 +295,37 @@ export function argocdItems(configYaml: string | undefined, now: number): AuthIt
   return items
 }
 
-// Several ArgoCD logins due at once become one row whose press logs in to
-// each in turn: the CLI listens on one callback port (8085) and rewrites the
-// whole config when the browser returns, so the logins cannot run side by
-// side, and with the Okta session open each after the first takes seconds.
-export function foldArgocd(items: readonly AuthItem[]): AuthItem[] {
-  const due = items.filter((i) => i.id.startsWith('argocd:') && (i.state === 'expired' || i.state === 'soon') && i.fix)
-  if (due.length < 2) return [...items]
-  const exp = due.map((i) => i.expiresAt).filter((x): x is number => x !== undefined)
-  const one: AuthItem = {
-    id: 'argocd:*',
-    label: 'ArgoCD ×' + due.length,
-    state: due.some((i) => i.state === 'expired') ? 'expired' : 'soon',
-    expiresAt: exp.length ? Math.min(...exp) : undefined,
-    detail: due.map((i) => i.label.replace(/^ArgoCD /, '')).join(', '),
-    fix: due[0]!.fix,
-    batch: due.map((i) => i.fix!),
+// Several logins of one kind due at once become one row whose press logs in
+// to each in turn. ArgoCD: the CLI listens on one callback port (8085) and
+// rewrites the whole config when the browser returns, so the logins cannot
+// run side by side, and with the Okta session open each after the first takes
+// seconds. Coder: each login waits for a pasted token, so they run one after
+// another in one pane (runCoderLogins).
+const FOLDS = [
+  { prefix: 'argocd:', name: 'ArgoCD' },
+  { prefix: 'coder:', name: 'Coder' },
+]
+
+export function foldLogins(items: readonly AuthItem[]): AuthItem[] {
+  let out = [...items]
+  for (const { prefix, name } of FOLDS) {
+    const due = out.filter((i) => i.id.startsWith(prefix) && (i.state === 'expired' || i.state === 'soon') && i.fix)
+    if (due.length < 2) continue
+    const exp = due.map((i) => i.expiresAt).filter((x): x is number => x !== undefined)
+    const one: AuthItem = {
+      id: prefix + '*',
+      label: name + ' ×' + due.length,
+      state: due.some((i) => i.state === 'expired') ? 'expired' : 'soon',
+      expiresAt: exp.length ? Math.min(...exp) : undefined,
+      detail: due.map((i) => i.label.replace(name + ' ', '')).join(', '),
+      fix: due[0]!.fix,
+      batch: due.map((i) => i.fix!),
+    }
+    const at = out.indexOf(due[0]!)
+    out = out.filter((i) => !due.includes(i))
+    out.splice(Math.min(at, out.length), 0, one)
   }
-  const at = items.indexOf(due[0]!)
-  const rest = items.filter((i) => !due.includes(i))
-  rest.splice(Math.min(at, rest.length), 0, one)
-  return rest
+  return out
 }
 
 function jwtExp(token: string): number | undefined {

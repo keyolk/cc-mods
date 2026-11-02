@@ -968,26 +968,34 @@ def fix_text(argv) -> str | None:
     return " ".join(str(a) for a in argv)
 
 
-# Several ArgoCD logins due at once become one row, as the cockpit's
-# foldArgocd does: the office never runs a fix, so the row's fix is the
-# logins chained with && to paste once. They cannot run side by side (the CLI
-# shares one callback port), and && stops at the first that fails.
-def fold_argocd(items: list[dict], ids: list[str]) -> list[dict]:
-    due = [n for n, i in enumerate(items) if ids[n].startswith("argocd:") and i["state"] in ("expired", "soon") and i["fix"]]
-    if len(due) < 2:
-        return items
-    rows = [items[n] for n in due]
-    exp = [i["expiresAt"] for i in rows if i["expiresAt"]]
-    one = {
-        "label": "ArgoCD ×%d" % len(rows),
-        "state": "expired" if any(i["state"] == "expired" for i in rows) else "soon",
-        "detail": ", ".join(i["label"].removeprefix("ArgoCD ") for i in rows),
-        "expiresAt": min(exp) if exp else None,
-        "fix": " && ".join(i["fix"] for i in rows),
-        "connector": False,
-        "mine": any(i["mine"] for i in rows),
-    }
-    return [one] + [i for n, i in enumerate(items) if n not in due]
+# Several logins of one kind due at once become one row, as the cockpit's
+# foldLogins does: the office never runs a fix, so the row's fix is the
+# logins chained with && to paste once. They cannot run side by side (ArgoCD's
+# CLI shares one callback port; each Coder login waits for a pasted token),
+# and && stops at the first that fails.
+LOGIN_FOLDS = (("argocd:", "ArgoCD"), ("coder:", "Coder"))
+
+
+def fold_logins(items: list[dict], ids: list[str]) -> list[dict]:
+    for prefix, name in LOGIN_FOLDS:
+        due = [n for n, i in enumerate(items) if ids[n].startswith(prefix) and i["state"] in ("expired", "soon") and i["fix"]]
+        if len(due) < 2:
+            continue
+        rows = [items[n] for n in due]
+        exp = [i["expiresAt"] for i in rows if i["expiresAt"]]
+        one = {
+            "label": "%s ×%d" % (name, len(rows)),
+            "state": "expired" if any(i["state"] == "expired" for i in rows) else "soon",
+            "detail": ", ".join(i["label"].removeprefix(name + " ") for i in rows),
+            "expiresAt": min(exp) if exp else None,
+            "fix": " && ".join(i["fix"] for i in rows),
+            "connector": False,
+            "mine": any(i["mine"] for i in rows),
+        }
+        keep = [n for n in range(len(items)) if n not in due]
+        items = [one] + [items[n] for n in keep]
+        ids = [prefix + "*"] + [ids[n] for n in keep]
+    return items
 
 
 def auth() -> dict | None:
@@ -1018,7 +1026,7 @@ def auth() -> dict | None:
         for i in r.get("items") or []
         if isinstance(i, dict)
     ]
-    items = fold_argocd(items, [str(i.get("id") or "") for i in r.get("items") or [] if isinstance(i, dict)])
+    items = fold_logins(items, [str(i.get("id") or "") for i in r.get("items") or [] if isinstance(i, dict)])
     items.sort(key=lambda i: (AUTH_ORDER.get(i["state"], 2), i["connector"], i["label"]))
     return {"at": (r.get("at") or 0) / 1000 or None, "items": items} if items else None
 

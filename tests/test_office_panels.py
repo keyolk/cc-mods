@@ -100,7 +100,7 @@ class PanelsTest(unittest.TestCase):
         self.assertEqual(a["items"][2]["expiresAt"], 1_790_000_000)
 
 
-    def test_auth_folds_due_argocd_logins_into_one_pasteable_row(self):
+    def test_auth_folds_due_argocd_and_coder_logins_into_pasteable_rows(self):
         store = self.claude / "plugins" / "store"
         store.mkdir(parents=True)
         office._radar.clear()
@@ -109,10 +109,13 @@ class PanelsTest(unittest.TestCase):
             {"id": "argocd:argocd-kb.sbtools.io", "label": "ArgoCD argocd-kb", "state": "soon", "detail": "argocd-kb.sbtools.io", "expiresAt": 1_790_000_000_000, "fix": ["argocd", "login", "argocd-kb.sbtools.io", "--sso", "--grpc-web"]},
             {"id": "argocd:argocd.dltools.io", "label": "ArgoCD argocd (dl)", "state": "ok", "fix": ["argocd", "login", "argocd.dltools.io", "--sso", "--grpc-web"]},
             {"id": "mcp:panther", "label": "MCP panther", "state": "expired", "fix": ["/mcp"]},
+            {"id": "coder:apne2", "label": "Coder apne2", "state": "expired", "detail": "coder-apne2 · no session", "fix": ["coder", "login", "https://coder-apne2.example.com"]},
+            {"id": "coder:usw2", "label": "Coder usw2", "state": "expired", "detail": "coder-usw2 · no session", "fix": ["coder", "login", "https://coder-usw2.example.com"]},
         ]
         (store / "cc-mods_inline-x.json").write_text(json.dumps({"radar": {"at": 1_790_000_000_000, "items": items}}))
         a = office.auth()
-        self.assertEqual([i["label"] for i in a["items"]], ["ArgoCD ×2", "MCP panther", "ArgoCD argocd (dl)"])
+        self.assertEqual([i["label"] for i in a["items"]], ["ArgoCD ×2", "Coder ×2", "MCP panther", "ArgoCD argocd (dl)"])
+        self.assertEqual(a["items"][1]["fix"], "coder login https://coder-apne2.example.com && coder login https://coder-usw2.example.com")
         one = a["items"][0]
         self.assertEqual((one["state"], one["detail"], one["expiresAt"]), ("expired", "argocd, argocd-kb", 1_790_000_000))
         self.assertEqual(one["fix"], "argocd login argocd.sbtools.io --sso --grpc-web && argocd login argocd-kb.sbtools.io --sso --grpc-web")
