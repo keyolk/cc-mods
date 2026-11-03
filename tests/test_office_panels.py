@@ -53,6 +53,12 @@ class PanelsTest(unittest.TestCase):
             ("second ask", "second answer", False),
         ])
 
+    def test_history_gist_is_the_answers_first_real_line(self):
+        self.write("s", [user("ask"), said("## **결론**: `main`에 머지했습니다\n\n자세한 내용")])
+        self.assertEqual(office.history("s")[0]["gist"], "결론: main에 머지했습니다")
+        self.assertEqual(office._gist("| a | b |\n|---|---|\n- 첫 항목"), "첫 항목")
+        self.assertEqual(office._gist(""), "")
+
     def test_history_reads_further_back_when_the_tail_is_all_tools(self):
         # The only prompt sits behind more tool output than the first window.
         big = {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "x" * 2000}]}}

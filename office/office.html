@@ -195,7 +195,19 @@ body.picking #c { cursor: crosshair; }
 #card .btw .err { background: #ffe1e1; }
 #card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
 #card .hist details.notice { opacity: .65; }
-#card .hist summary { cursor: pointer; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#card .hist summary { cursor: pointer; font-size: 12.5px; list-style: none; }
+#card .hist summary::-webkit-details-marker { display: none; }
+#card .hist summary .q, #card .hist summary .g { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#card .hist summary .q b { font-weight: 600; }
+#card .hist summary .g { color: #6b5a6e; font-size: 12px; padding-left: 2px; }
+#card .hist details[open] summary .g { display: none; }
+#card .hist .hbar { position: sticky; top: 0; z-index: 1; display: flex; gap: 6px; align-items: center; background: #fffaf0; padding: 2px 0 6px; }
+#card .hist .hbar input { flex: 1; min-width: 0; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 4px 8px; background: #fff; }
+#card .hist .hbar button { font: 11.5px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 3px 7px; background: #fff; cursor: pointer; white-space: nowrap; }
+#card .hist .hbar button.on { background: #2a2033; color: #fffaf0; }
+#card .hist .day { font-size: 11px; color: #7a7090; margin: 10px 2px 2px; border-bottom: 1px solid rgba(59,42,53,.15); }
+#card .hist mark { background: #ffe58a; border-radius: 2px; padding: 0; }
+#card .hist:not(.notices) details.notice { display: none; }
 #card .hist .ask { white-space: pre-wrap; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-radius: 8px; padding: 6px 8px; margin: 4px 0; max-height: 220px; overflow: auto; }
 #card .hist .said { background: none; padding: 0 2px; margin: 0; }
 #card.panes > .cpane { flex: 1 1 auto; min-height: 60px; overflow: auto; }
@@ -1201,10 +1213,50 @@ function infoClick(ev) {
   const v = a.dataset.open
   if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v)
 }
+// Past turns, newest last. Each row shows the ask and, under it, the first
+// line of the answer, so a scroll down the list reads like a log of what
+// was asked and what it came to; a click opens the whole answer. Plugin
+// notices hide behind a toggle: they are most of the rows in a long session.
 function historyHtml(turns) {
   if (!turns.length) return '<div class="m">지난 대화가 없습니다</div>'
-  return turns.map((t) => '<details class="' + (t.notice ? 'notice' : '') + '"><summary><span class="m">' + esc(clock(t.at)) + '</span> ' + (t.notice ? '🔔 ' : '🙋 ') + esc(firstLine(t.ask).slice(0, 120)) + '</summary>'
-    + '<div class="ask">' + esc(t.ask) + '</div>' + (t.said ? '<div class="said">' + md(t.said) + '</div>' : '<div class="m">(아직 답이 없습니다)</div>') + '</details>').join('')
+  const notices = turns.filter((t) => t.notice).length
+  let h = '<div class="hbar"><input class="hfind" type="search" placeholder="지난 대화 검색 (질문·답)">'
+    + (notices ? '<button class="hnote" title="플러그인 알림 턴을 보이거나 숨깁니다">🔔 알림 ' + notices + '</button>' : '')
+    + '<button class="hall" title="모두 펼치거나 접습니다">펼치기</button></div>', day = ''
+  for (const t of turns) {
+    const d = new Date(t.at), dd = isNaN(d) ? '' : d.toDateString()
+    if (dd && dd !== day) { day = dd; h += '<div class="day">' + esc(d.getMonth() + 1 + '/' + d.getDate() + ' (' + '일월화수목금토'[d.getDay()] + ')') + '</div>' }
+    const gist = t.gist || firstLine(t.said || '')
+    h += '<details class="' + (t.notice ? 'notice' : '') + '" data-q="' + esc((t.ask + '\n' + (t.said || '')).toLowerCase()) + '"><summary>'
+      + '<span class="q"><span class="m">' + esc(clock(t.at).split(' ').pop()) + '</span> ' + (t.notice ? '🔔 ' : '🙋 ') + '<b>' + esc(firstLine(t.ask).slice(0, 160)) + '</b></span>'
+      + '<span class="g">' + (t.said ? '↳ ' + esc(gist) : '(아직 답이 없습니다)') + '</span></summary>'
+      + '<div class="ask">' + esc(t.ask) + '</div>' + (t.said ? '<div class="said">' + md(t.said) + '</div>' : '<div class="m">(아직 답이 없습니다)</div>') + '</details>'
+  }
+  return h
+}
+function wireHistory(box) {
+  const find = box.querySelector('.hfind'), note = box.querySelector('.hnote'), all = box.querySelector('.hall')
+  if (!find) return
+  const rows = [...box.querySelectorAll('details')]
+  // A day heading shows while any row under it does.
+  const days = () => {
+    let head = null, any = false
+    for (const el of box.children) {
+      if (el.classList.contains('day')) { if (head) head.style.display = any ? '' : 'none'; head = el; any = false }
+      else if (el.tagName === 'DETAILS' && el.style.display !== 'none' && (!el.classList.contains('notice') || box.classList.contains('notices'))) any = true
+    }
+    if (head) head.style.display = any ? '' : 'none'
+  }
+  const apply = () => {
+    const q = find.value.trim().toLowerCase()
+    for (const r of rows) r.style.display = !q || r.dataset.q.includes(q) ? '' : 'none'
+    days()
+  }
+  find.oninput = apply
+  find.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); if (find.value) { find.value = ''; apply() } else find.blur() } }
+  if (note) note.onclick = () => { note.classList.toggle('on', box.classList.toggle('notices')); days() }
+  all.onclick = () => { const open = all.classList.toggle('on'); all.textContent = open ? '접기' : '펼치기'; for (const r of rows) if (r.style.display !== 'none') r.open = open }
+  days()
 }
 function workHtml(w) {
   const subs = w.subagents || [], bg = w.bg || []
@@ -1414,7 +1466,7 @@ async function openCard(sid, kind = null) {
   card.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
   if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir, true)
   for (const [k, , items, render] of groups) {
-    if (render) { const box = document.createElement('div'); box.className = k === 'hist' ? 'hist' : 'info'; box.innerHTML = render(items); box.onclick = infoClick; panes[k].appendChild(box) }
+    if (render) { const box = document.createElement('div'); box.className = k === 'hist' ? 'hist' : 'info'; box.innerHTML = render(items); box.onclick = infoClick; panes[k].appendChild(box); if (k === 'hist') wireHistory(box) }
     else if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
   }
   into = panes.said

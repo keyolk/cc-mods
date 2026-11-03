@@ -842,6 +842,19 @@ def _text_of(content) -> str:
     return ""
 
 
+MD_LEAD = re.compile(r"^\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)+")
+
+
+def _gist(text: str) -> str:
+    """The answer's first real line, markdown marks stripped: the user's
+    sessions answer conclusion first, so this is what the turn came to."""
+    for line in text.splitlines():
+        line = MD_LEAD.sub("", line).replace("**", "").replace("`", "").strip()
+        if line and not line.startswith(("|", "```")) and set(line) - set("-=_*|: "):
+            return line[:200]
+    return ""
+
+
 def _turns(lines: list[str]) -> list[dict]:
     turns: list[dict] = []
     for line in lines:
@@ -862,11 +875,12 @@ def _turns(lines: list[str]) -> list[dict]:
                 continue
             t = _text_of(c).strip()
             if t and not NOT_ASKED.match(t):
-                turns.append({"ask": t[:4000], "at": d.get("timestamp"), "said": "", "notice": bool(NOTICE.match(t))})
+                turns.append({"ask": t[:4000], "at": d.get("timestamp"), "said": "", "gist": "", "notice": bool(NOTICE.match(t))})
         elif role == "assistant" and turns:
             t = _text_of(c).strip()
             if t:
                 turns[-1]["said"] = t[-8000:]
+                turns[-1]["gist"] = _gist(t)
     return turns
 
 
