@@ -274,7 +274,7 @@ test('graph: timeline bars overlap for parallel agents, mermaid nests', async ()
   expect(mermaid([{ turnId: 't', text: 'q', at: 0, tools: {} }], [a, b])).toContain('na --> nb')
 })
 
-import { unlockFor } from '../hooks/lib/unlock'
+import { godSecretArgv, godSecretRevokeArgv, secretPaths, unlockFor } from '../hooks/lib/unlock'
 
 test('unlock: guard refusals map to the unlock the person can grant', async () => {
   const k = unlockFor(
@@ -283,11 +283,30 @@ test('unlock: guard refusals map to the unlock the person can grant', async () =
     { command: 'kubectl --context main-prod-apne2 delete pod x' },
     '/h',
   )
-  expect(k?.argv).toEqual(['python3', '/h/.claude/hooks/kubectl_prod_unlock.py', 'main-prod-apne2', '--duration', '15'])
+  expect(k?.argvs).toEqual([['python3', '/h/.claude/hooks/kubectl_prod_unlock.py', 'main-prod-apne2', '--duration', '15']])
   const sec = unlockFor('BLOCKED by secret_read_guard: this would pull\n\n  - /Users/x/.config/gh/hosts.yml\n', 'Read', { file_path: '/Users/x/.config/gh/hosts.yml' }, '/h')
-  expect(sec?.argv.slice(1, 3)).toEqual(['/h/.claude/hooks/secret_read_unlock.py', '/Users/x/.config/gh/hosts.yml'])
-  expect(unlockFor('ecr_push_guard: image built from a scratchpad (provenance)', 'Bash', {}, '/h')?.argv[1]).toBe('/h/.claude/hooks/ecr_push_unlock.py')
+  expect(sec?.argvs[0]?.slice(1, 3)).toEqual(['/h/.claude/hooks/secret_read_unlock.py', '/Users/x/.config/gh/hosts.yml'])
+  expect(unlockFor('ecr_push_guard: image built from a scratchpad (provenance)', 'Bash', {}, '/h')?.argvs[0]?.[1]).toBe('/h/.claude/hooks/ecr_push_unlock.py')
   expect(unlockFor('BLOCKED by session policy: gh_merge is not allowed', 'Bash', {}, '/h')).toBeUndefined()
+})
+
+test('unlock: a Bash line that hits several secret files unlocks all of them, not the first', async () => {
+  const deny =
+    'BLOCKED by secret_read_guard: this would pull credential material into the transcript.\n\n' +
+    '  - /r/13-redis/terraform.tfvars\n    known secret location: tfvars\n' +
+    '  - /r/20-messaging/terraform.tfvars\n    contains Slack webhook (line 3: https:…)\n\n' +
+    'Do instead:\n  - Need the file\'s *shape*? Read a .example sibling.\n' +
+    '      python3 ~/.claude/hooks/secret_read_unlock.py <path> --duration 10\n'
+  expect(secretPaths(deny)).toEqual(['/r/13-redis/terraform.tfvars', '/r/20-messaging/terraform.tfvars'])
+  const u = unlockFor(deny, 'Bash', { command: 'cat 13-redis/terraform.tfvars 20-messaging/terraform.tfvars' }, '/h')
+  expect(u?.argvs.map((a) => a[2])).toEqual(['/r/13-redis/terraform.tfvars', '/r/20-messaging/terraform.tfvars'])
+  expect(u?.label).toContain('files')
+})
+
+test('unlock: god mode lifts secret reads until its end, and puts them back', async () => {
+  expect(godSecretArgv('/h', 29.2)).toEqual(['python3', '/h/.claude/hooks/secret_read_unlock.py', '--all', '--duration', '30'])
+  expect(godSecretArgv('/h', 0)[4]).toBe('1')
+  expect(godSecretRevokeArgv('/h')).toEqual(['python3', '/h/.claude/hooks/secret_read_unlock.py', '--all', '--revoke'])
 })
 
 test('flow: a lone heading folds into the paragraph under it, a heading with a body does not', async () => {
