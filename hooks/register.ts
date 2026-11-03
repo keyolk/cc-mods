@@ -62,7 +62,7 @@ import { answerBody, freshItems, itemKey, parseAttention, parseRuns, resultPromp
 import { RESUME_SPREAD_MS, backoff, classify, decide as resumeDecide, slept, type Pending } from './lib/resume'
 import { mayRun, parseLease, settled, spread, taken, type Lease, type LeaseTimes } from './lib/lease'
 import { mcpText, newestTs, parseChannelName, parseThread, unseenReplies, type SlackThreadState, followDue, type SlackFollow } from './lib/slack'
-import { unlockFor } from './lib/unlock'
+import { godSecretArgv, godSecretRevokeArgv, unlockFor } from './lib/unlock'
 import { renderBand, type Neighbor } from './views/band'
 import { renderFlow, type FlowFilter } from './views/flow'
 import { mermaid, renderGraph, type GraphMode } from './views/graph'
@@ -1000,7 +1000,7 @@ async function startGod($: any, minutes: number, asked = false) {
   let answer = asked ? 'allow everything' : 'cancel'
   if (!asked) {
     try {
-      answer = await $.ui.ask('Allow every capability (merge, prod EKS write, Slack to anyone, tmux outside this window …) for ' + minutes + ' minutes?', ['allow everything', 'cancel'])
+      answer = await $.ui.ask('Allow every capability (merge, prod EKS write, Slack to anyone, tmux outside this window, secret file reads …) for ' + minutes + ' minutes?', ['allow everything', 'cancel'])
     } catch {
       answer = 'cancel'
     }
@@ -1010,6 +1010,7 @@ async function startGod($: any, minutes: number, asked = false) {
   god?.timer?.cancel()
   for (const argv of godArgvs()) await runPolicy($, argv)
   const until = Date.now() + Math.min(minutes * 60_000, 2 * GOD_MS)
+  await godSecrets($, until)
   god = { until, before: prior, timer: $.clock.after(until - Date.now(), () => void endGod($, 'time is up')) }
   await $.store.set(K.god(sid), { until, before: prior })
   await loadPolicy($)
@@ -1026,6 +1027,7 @@ async function extendGod($: any, minutes: number) {
   const until = godExtended(god.until, now, minutes)
   const p = (await read($, policyA)) as Policy | null
   if (p && !isGod(p)) for (const argv of godArgvs()) await runPolicy($, argv)
+  await godSecrets($, until)
   god.timer?.cancel()
   god = { until, before: god.before, timer: $.clock.after(until - now, () => void endGod($, 'time is up')) }
   await $.store.set(K.god(sid), { until, before: god.before })
@@ -1040,10 +1042,25 @@ async function endGod($: any, why: string) {
   god = undefined
   await $.store.set(K.god(sid), null)
   if (!g) return
+  await runQuiet($, godSecretRevokeArgv(home))
   for (const argv of restoreArgvs(g.before)) await runPolicy($, argv)
   await loadPolicy($)
   await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode ended (' + why + '): policy put back' }))
   $.ui.toast('god mode ended (' + why + '): policy put back')
+}
+
+// secret_read_guard is not a session_policy capability: god mode lifts it with
+// its own --all stamp, ending with god (lib/unlock.ts godSecretArgv).
+async function godSecrets($: any, until: number) {
+  if (!(await runQuiet($, godSecretArgv(home, (until - Date.now()) / 60_000)))) $.ui.toast('god mode: secret read unlock failed, secret files still ask')
+}
+
+async function runQuiet($: any, argv: string[]): Promise<boolean> {
+  try {
+    return (await $.process.run(argv, { timeoutMs: 10000 })).exitCode === 0
+  } catch {
+    return false
+  }
 }
 
 // After a reload: an unexpired god mode keeps its end time; an expired one
@@ -4996,10 +5013,12 @@ async function approveGuard($: any, e: any, result: any, retry: () => Promise<an
     answer = 'deny'
   }
   if (answer !== 'allow once') return result
-  const r = await $.process.run(u.argv, { timeoutMs: 10000 })
-  if (r.exitCode !== 0) {
-    $.ui.toast('unlock failed: ' + clip(r.stderr || r.stdout, 120))
-    return result
+  for (const argv of u.argvs) {
+    const r = await $.process.run(argv, { timeoutMs: 10000 })
+    if (r.exitCode !== 0) {
+      $.ui.toast('unlock failed: ' + clip(r.stderr || r.stdout, 120))
+      return result
+    }
   }
   $.ui.toast(u.label + ' (' + u.minutes + 'm)')
   return retry()
