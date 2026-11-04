@@ -89,6 +89,16 @@ const ssoCacheFile = (h: string) => {
 // The office server's port (office/office.py); 8787 is taken by cco here.
 const OFFICE_PORT = 8796
 const IDLE_MS = 30 * 60_000
+// A session with no turn for this long skips the probes only its own band
+// shows (neighbors, the radar): ~40 sessions sit waiting on a person at once,
+// and each one probing on its own clock was most of cc-mods' exec load on
+// 2026-11-03 (~270 exec/s machine-wide, every exec checked by the endpoint
+// security agents). The next turn refreshes them at once.
+const QUIET_MS = 10 * 60_000
+// One narwhal attention fetch machine-wide per NARWHAL_POLL_MS (lib/lease.ts);
+// a daemon that does not answer backs every session off together, 1 to 10 min.
+const NARWHAL_POLL_MS = 20_000
+const NARWHAL_LEASE: LeaseTimes = { runMs: 15_000, freshMs: NARWHAL_POLL_MS - 5_000, baseMs: 60_000, capMs: 10 * 60_000 }
 const RADAR_MS = 5 * 60_000
 const PR_POLL_MS = 90_000
 // One PR poll machine-wide per PR_POLL_MS; after failures, 90 s doubling to 15 min.
@@ -1453,6 +1463,18 @@ let mainTurnAt = 0
 // What the previous main step was sent with (routing's cache gate, lib/route.ts).
 let routeLast: RouteLast | undefined
 let mainTurnRunning = false
+// Engine-clock ms of the last turn or keystroke in this session (see QUIET_MS).
+// Undefined until the session starts: the engine clock may start at 0.
+let activeAt: number | undefined
+async function quiet($: any): Promise<boolean> {
+  return !mainTurnRunning && activeAt !== undefined && (await clockNow($)) - activeAt > QUIET_MS
+}
+// Marks the session active; true when it was quiet until now.
+async function wake($: any): Promise<boolean> {
+  const was = await quiet($)
+  activeAt = await clockNow($)
+  return was
+}
 // MCP auto-reconnect (lib/mcpheal.ts): on unless Settings turned it off. Only
 // a server that was in use and dropped is retried, one at a time; servers that
 // never connected (needs sign-in, unused) are left alone.
@@ -1593,25 +1615,41 @@ async function narwhalURL($: any): Promise<string | undefined> {
 
 // Ask the narwhal daemon what the runs this session started need. A daemon
 // that is not running is no runs: nothing to show, and nothing to report.
+//
+// One session at a time asks for every session's items (no session filter)
+// and leaves the answer in NARWHAL_SHARED; each session keeps those its own
+// runs raised (origin.session_id). Asking per session was 2 curls every 20 s
+// in each of ~40 sessions, failing ones included while the daemon was down.
+const NARWHAL_SHARED = '/.claude/state/cc-mods/narwhal-attention.json'
+// Set once this session drove narwhal (its MCP tools): only then are its own
+// runs worth asking for. A run that needs the person shows in attention first.
+let narwhalTouched = false
 async function pollNarwhal($: any) {
-  if (!sid) return
+  if (!sid || !home) return
   const base = await narwhalURL($)
   if (!base) return
-  let body: string | undefined
+  await withLease($, 'narwhal-poll', NARWHAL_LEASE, async () => {
+    const r = await $.process.run(['/usr/bin/curl', '-sf', '-m', '5', base + '/api/v1/control/attention'], { timeoutMs: 8000 }).catch(() => undefined)
+    if (!r || r.exitCode !== 0 || !r.stdout) return false
+    await $.fs.write(home + NARWHAL_SHARED, JSON.stringify({ at: await clockNow($), body: r.stdout })).catch(() => undefined)
+    return true
+  })
+  let shared: { at?: number; body?: string } = {}
   try {
-    const r = await $.process.run(['/usr/bin/curl', '-s', '-m', '5', base + '/api/v1/control/attention?session=' + encodeURIComponent(sid)], { timeoutMs: 8000 })
-    body = r.stdout
-  } catch {
-    return
-  }
-  const items = parseAttention(body)
-  // The runs themselves, for Work, and what they made, for Outputs.
-  let runs: NarwhalRun[] = []
-  try {
-    const r = await $.process.run(['/usr/bin/curl', '-s', '-m', '5', base + '/api/v1/control/runs?session=' + encodeURIComponent(sid)], { timeoutMs: 8000 })
-    runs = parseRuns(r.stdout)
+    shared = JSON.parse((await readText($, home + NARWHAL_SHARED)) ?? '{}')
   } catch {}
+  // Nobody has answered for a while (the daemon is down): keep what was shown.
+  if (!shared.body || (await clockNow($)) - Number(shared.at ?? 0) > 3 * NARWHAL_POLL_MS) return
+  const items = parseAttention(shared.body).filter((it) => it.origin?.session_id === sid)
   const prev = (await read($, narwhalA)) as { items: NarwhalItem[]; told: string[]; dismissed: string[]; runs: NarwhalRun[] }
+  // The runs themselves, for Work, and what they made, for Outputs.
+  let runs: NarwhalRun[] = prev.runs
+  if (narwhalTouched || items.length || prev.runs.length) {
+    try {
+      const r = await $.process.run(['/usr/bin/curl', '-s', '-m', '5', base + '/api/v1/control/runs?session=' + encodeURIComponent(sid)], { timeoutMs: 8000 })
+      runs = parseRuns(r.stdout)
+    } catch {}
+  }
   const live = new Set(items.map(itemKey))
   const fresh = freshItems(items, prev.told)
   await update($, narwhalA, () => ({
@@ -3168,12 +3206,15 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     if (interactive) {
       // Shared probes: whichever session's timer fires first refreshes the store;
       // the others read it.
+      activeAt = await clockNow($)
       void runRadar($)
-      $.clock.every(RADAR_MS, () => void runRadar($))
+      $.clock.every(RADAR_MS, async () => {
+        if (!(await quiet($))) void runRadar($)
+      })
       $.clock.every(CRED_WATCH_MS, () => void watchCredentials($))
       $.clock.every(PR_POLL_MS, () => void pollPrs($))
       $.clock.every(SLACK_POLL_MS, () => void pollSlack($))
-      $.clock.every(20_000, () => void pollNarwhal($))
+      $.clock.every(NARWHAL_POLL_MS, () => void pollNarwhal($))
       void pollNarwhal($)
       $.clock.every(15_000, () => void resumeProbe($))
       void $.process
@@ -3182,7 +3223,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
           slackMe = { email: String(r.stdout ?? '').trim() || undefined }
         })
         .catch(() => {})
-      $.clock.every(60_000, () => void refreshNeighbors($))
+      $.clock.every(60_000, async () => {
+        if (!(await quiet($))) void refreshNeighbors($)
+      })
       $.clock.every(2_000, () => void officeInbox($))
       // Elapsed times on running work only move if something redraws; do it
       // while anything is running, and not at all otherwise.
@@ -3289,6 +3332,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // ---- turns: tmux state, flow, graph ----
   on('turn.start', async ($: any, e: any, next: any) => {
     idleTimer?.cancel()
+    if (!e.agentId && (await wake($)) && interactive) {
+      void refreshNeighbors($)
+      void runRadar($)
+    }
     if (!e.agentId) {
       // Our own keep-going does not count as "someone else resumed it": its
       // streak (and attempt count) carries on until it answers.
@@ -3327,6 +3374,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     if (!e.agentId) {
       routeJobs.delete(e.turnId)
       mainTurnRunning = false
+      activeAt = await clockNow($)
       if (slackFollowQueue.size) {
         const urls = [...slackFollowQueue]
         slackFollowQueue.clear()
@@ -3453,6 +3501,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // An MCP call that failed because its server dropped: reconnect that one
   // server when the turn ends.
   on('tool.call', { tool: /^mcp__/ }, async ($: any, e: any, next: any) => {
+    if (/^mcp__narwhal__/.test(e.tool)) narwhalTouched = true
     const r = await next(e)
     if (mcpHealEnabled && isMcpTool(e.tool) && (r?.isError || r?.deny) && looksDisconnected(r)) mcpHealPending.add(e.tool)
     return r
@@ -3794,6 +3843,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // History, undo and accepting a completion change the draft without
   // prompt.edit. Restore/hide from the resulting box too.
   on('prompt.change', async ($: any, e: any, next: any) => {
+    if ((await wake($)) && interactive) void refreshNeighbors($)
     await setSlashCockpit($, slashToken(e.text))
     return next(e)
   })
