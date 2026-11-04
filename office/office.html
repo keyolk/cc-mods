@@ -30,8 +30,12 @@ canvas.drag { cursor: grabbing; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
 /* The conversation is the card: everything around it one thin line. */
 #card.panes > .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-height: none !important; font-size: 11px; margin-bottom: 2px !important; }
-#card .maxb kbd { font: 10px ui-monospace, Menlo, monospace; color: #7a7090; border: 1px solid rgba(59,42,53,.3); border-radius: 4px; padding: 0 3px; margin-right: 4px; vertical-align: 3px; }
-#card .x, #card .maxb { flex: 0 0 auto; border: 0; background: none; font-size: 15px; cursor: pointer; padding: 0 3px; }
+#card .x, #card .maxb { flex: 0 0 auto; position: relative; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: #3b2a35; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; padding: 0; }
+#card .x:hover, #card .maxb:hover { background: rgba(59,42,53,.1); }
+/* Drawn, not a glyph: □ and ❐ sit on a different baseline from ✕. */
+#card .maxb::before, #card .maxb.on::after { content: ''; position: absolute; width: 9px; height: 9px; border: 1.6px solid currentColor; border-radius: 2px; left: 6px; top: 6px; }
+#card .maxb.on::before { left: 8px; top: 5px; width: 8px; height: 8px; }
+#card .maxb.on::after { left: 5px; top: 8px; width: 8px; height: 8px; background: #fffaf0; }
 #card .resize { position: absolute; left: 1px; bottom: 1px; width: 18px; height: 18px; cursor: nesw-resize; z-index: 2; opacity: .5; }
 #card .resize::after { content: ''; position: absolute; left: 3px; bottom: 3px; width: 9px; height: 9px; border-left: 2px solid #7a7090; border-bottom: 2px solid #7a7090; }
 #card.max .resize, #card.max .rz { display: none; }
@@ -193,10 +197,11 @@ body.picking #c { cursor: crosshair; }
 #card .btw .it p:last-child { margin-bottom: 0; }
 #card .btw .typing { color: #7a7090; font-style: italic; }
 #card .btw .err { background: #ffe1e1; }
-#card .turnnav { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; background: #fffaf0; padding: 0 0 6px; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; }
-#card .turnnav button { font: inherit; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 2px 8px; background: #fff; cursor: pointer; }
-#card .turnnav button:disabled { opacity: .35; cursor: default; }
-#card .turnnav .where { color: #7a7090; flex: 1; text-align: center; }
+#card .ctabs .turnnav { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+#card .ctabs .turnnav button { padding: 0 6px; }
+#card .ctabs .turnnav button:disabled { opacity: .3; cursor: default; }
+#card .ctabs .turnnav .where { font-size: 11px; color: #7a7090; padding: 0 3px; white-space: nowrap; }
+#card .ctabs .turnnav.past .where { color: #6a4c8c; font-weight: 600; }
 #card .pastask { white-space: pre-wrap; max-height: 120px; overflow: auto; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-left: 3px solid #e0a64a; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; }
 #card .said.old { background: #efe9f5; }
 #card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
@@ -301,7 +306,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
       <dt><kbd>⌥M</kbd></dt><dd>최대화 ↔ 원래 크기</dd>
       <dt><kbd>⌥1</kbd>…<kbd>⌥9</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
       <dt><kbd>⌥B</kbd></dt><dd>☕ btw 곁대화 칸 열기·닫기 (오른쪽, 일하는 중에도 바로 답함; 여는 동안 최대화)</dd>
-      <dt><kbd>H</kbd> <kbd>L</kbd></dt><dd>답변 탭에서 이전·다음 대화 (답장칸에서는 ⌥H ⌥L)</dd>
+      <dt><kbd>⌥,</kbd> <kbd>⌥.</kbd></dt><dd>답변 자리에 이전·다음 대화 (답장칸 밖에선 <kbd>&lt;</kbd> <kbd>&gt;</kbd>)</dd>
       <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>읽던 탭 한 화면씩 (btw 중에도)</dd>
       <dt><kbd>⇧PgUp</kbd> <kbd>⇧PgDn</kbd></dt><dd>btw 칸 한 화면씩</dd>
       <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤</dd>
@@ -939,7 +944,6 @@ function menuKey(menu, k, pick, hide, hit) {
 // letter is typing.
 function cardLetter(k) {
   if (k === 'm') return toggleCardMax
-  if ((k === 'h' || k === 'l') && card.turnStep) return () => { if (card.selectTab) card.selectTab(0); card.turnStep(k === 'h' ? -1 : 1) }
   if ((k === 'r' || k === '/') && card.reply) return () => card.reply.focus()
   if (k === 's' && card.stop) return () => card.stop.click()
   if (k === 'a' && card.grant) return () => card.grant.click()
@@ -968,6 +972,7 @@ function officeKey(e) {
   if (typing) return // the reply box handles its own keys
   if (viewer.path && k === 'Escape') return hit(closeViewer)
   if (viewer.path && k === 'o') return hit(() => (e.shiftKey ? showPlaces(viewer.path, viewer.querySelector('.place')) : openLink(viewer.path)))
+  if (open && (k === '<' || k === '>') && card.turnStep) return hit(() => turnKey(k === '<' ? -1 : 1))
   if (k === ',') return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
   if (settings.style.display === 'block' && k === 'Escape') return hit(closeSettings)
   if (k === 'Escape' && authp.style.display === 'block') return hit(() => toggleAuth(false))
@@ -1043,6 +1048,9 @@ function handleCardAlt(e, k) {
   if (e.code === 'Equal' || e.code === 'NumpadAdd') return hit(() => zoomCard(1))
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') return hit(() => zoomCard(-1))
   if (k === '0') return hit(() => zoomCard(0))
+  // ⌥, ⌥. by code: ⌥ turns them into ≤ ≥ on macOS. Not ⌥H/⌥L: tmux's root
+  // table takes M-h/j/k/l/H/L/w/Tab before the page sees them.
+  if ((e.code === 'Comma' || e.code === 'Period') && card.turnStep) return hit(() => turnKey(e.code === 'Comma' ? -1 : 1))
   if (e.shiftKey && k === 'ArrowLeft') return hit(() => moveCardBy(-40, 0))
   if (e.shiftKey && k === 'ArrowRight') return hit(() => moveCardBy(40, 0))
   if (e.shiftKey && k === 'ArrowUp') return hit(() => moveCardBy(0, -40))
@@ -1131,12 +1139,12 @@ function zoomCard(dir) {
   toast('🔍 글자 ' + Math.round(cardZoom * 100) + '%')
 }
 card.style.setProperty('--cz', cardZoom)
-// The max button says its key (⌥M works everywhere, the reply box and TWeb's
-// normal mode included), so the toggle needs no hunting in the help.
+// The key (⌥M works everywhere, the reply box and TWeb's normal mode
+// included) is in the tooltip and the help.
 function maxFace() {
   if (!card.maxButton) return
   const on = card.classList.contains('max')
-  card.maxButton.innerHTML = '<kbd>⌥M</kbd>' + (on ? '❐' : '□')
+  card.maxButton.classList.toggle('on', on)
   card.maxButton.title = (on ? '원래 크기로' : '최대화') + ' (⌥M, 답장칸 밖에선 M)'
 }
 function toggleCardMax() {
@@ -1266,32 +1274,34 @@ function wireHistory(box) {
   all.onclick = () => { const open = all.classList.toggle('on'); all.textContent = open ? '접기' : '펼치기'; for (const r of rows) if (r.style.display !== 'none') r.open = open }
   days()
 }
-// Back through the conversation from the answer itself: H/L (⌥H/⌥L from
-// the reply box) or the arrows swap the answer for an earlier turn's, with
+// Back through the conversation from the answer itself: ⌥, ⌥. (or < > out
+// of the reply box) or the ‹ › buttons swap the answer for an earlier turn's, with
 // what was asked above it. The newest position is the live answer, so the
 // card is never left showing an old one as if it were current.
 function turnNav(pane, said, live, turns) {
   const past = turns.filter((t) => !t.notice && t.said)
   // The last turn is usually the live answer itself; don't list it twice.
-  if (past.length && past[past.length - 1].said.trim() === String(live).trim().slice(-8000)) past.pop()
-  card.turnStep = null
+  if (live && past.length && past[past.length - 1].said.trim() === String(live).trim().slice(-8000)) past.pop()
+  card.turnStep = card.turnNavEl = null
   if (!past.length) return
-  const bar = document.createElement('div'); bar.className = 'turnnav'
+  // The tab row carries it (see showTab), so it costs the answer no height.
+  const bar = document.createElement('span'); bar.className = 'turnnav'; card.turnNavEl = bar
   const ask = document.createElement('div'); ask.className = 'pastask'; ask.style.display = 'none'
-  pane.insertBefore(bar, pane.firstChild); pane.insertBefore(ask, said)
+  pane.insertBefore(ask, said)
   let at = past.length
   const show = () => {
     const t = past[at], n = past.length
-    bar.innerHTML = '<button class="prev"' + (at ? '' : ' disabled') + ' title="이전 대화 (H)">◀ <span class="key">H</span></button>'
-      + '<span class="where">' + (t ? esc(clock(t.at)) + ' · ' + (at + 1) + '/' + (n + 1) : '지금 답 · ' + (n + 1) + '/' + (n + 1)) + '</span>'
-      + '<button class="next"' + (t ? '' : ' disabled') + ' title="다음 대화 (L)"><span class="key">L</span> ▶</button>'
-      + (t ? '<button class="now" title="지금 답으로">⏭ 지금</button>' : '')
+    bar.classList.toggle('past', !!t)
+    bar.innerHTML = '<button class="prev"' + (at ? '' : ' disabled') + ' title="이전 대화 (⌥, · 답장칸 밖에선 <)">‹</button>'
+      + '<span class="where" title="' + (t ? '지난 대화' : '지금 답') + '">' + (t ? esc(clock(t.at)) + ' · ' : '') + (at + 1) + '/' + (n + 1) + '</span>'
+      + '<button class="next"' + (t ? '' : ' disabled') + ' title="다음 대화 (⌥. · 답장칸 밖에선 >)">›</button>'
+      + (t ? '<button class="now" title="지금 답으로">지금</button>' : '')
     bar.querySelector('.prev').onclick = () => go(-1)
     bar.querySelector('.next').onclick = () => go(1)
     const now = bar.querySelector('.now'); if (now) now.onclick = () => go(n - at)
     ask.style.display = t ? '' : 'none'
     ask.innerHTML = t ? '🙋 ' + esc(t.ask) : ''
-    said.innerHTML = md(t ? t.said : live)
+    said.innerHTML = t ? md(t.said) : live ? md(live) : '<div class="m">지금 답은 아직 없습니다 · ⌥, 로 지난 대화</div>'
     said.classList.toggle('old', !!t)
     // A past turn opens at its start, where its conclusion is; the live
     // answer at its end, where the question usually is.
@@ -1302,6 +1312,7 @@ function turnNav(pane, said, live, turns) {
   card.turnStep = go
   show()
 }
+function turnKey(dir) { if (card.selectTab) card.selectTab(0); card.turnStep(dir) }
 function workHtml(w) {
   const subs = w.subagents || [], bg = w.bg || []
   let h = ''
@@ -1500,6 +1511,7 @@ async function openCard(sid, kind = null) {
       b.className = j === curTab ? 'on' : ''; b.textContent = icon + (j === curTab ? ' ' + name.join(' ') : '') + (n ? ' ' + n : ''); b.title = label + (n ? ' ' + n : '') + ' (⌥' + (j + 1) + ')'
       b.onclick = () => showTab(j); tabbar.appendChild(b)
     })
+    if (card.turnNavEl && groups[curTab][0] === 'said') tabbar.appendChild(card.turnNavEl)
     groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
     card.curPane = panes[groups[curTab][0]]
     // Past turns read like a chat: the newest at the bottom, where it opens.
@@ -1521,7 +1533,11 @@ async function openCard(sid, kind = null) {
     card.said = said
     add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
     turnNav(panes.said, said, d.text, pn.history || [])
-  } else card.turnStep = null
+  } else if ((pn.history || []).some((t) => !t.notice && t.said)) {
+    // Mid-work there is no answer yet, but the past ones are still worth a look.
+    const said = add('div', 'said'); card.said = said
+    turnNav(panes.said, said, '', pn.history)
+  } else card.turnStep = card.turnNavEl = null
   showTab(0)
   if (groups.length < 2) tabbar.style.display = 'none'
   // The foot: everything to press stays in view at the card's bottom.
