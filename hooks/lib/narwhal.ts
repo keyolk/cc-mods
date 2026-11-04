@@ -36,6 +36,8 @@ export type NarwhalItem = {
   run_id: string
   flow?: string
   request: string
+  // The Claude session that started the run, when it was started through the MCP tools.
+  origin?: { session_id?: string; tmux_pane?: string }
   at: string
   title: string
   question?: NarwhalQuestion

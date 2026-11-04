@@ -2153,16 +2153,18 @@ test('the Web tab picks the engine by URL rule: claude.ai on Chrome, a redirect 
 
 test('a narwhal run this session started asks in Needs you; pressing an option answers it through the daemon', async ($, on) => {
   const attention = JSON.stringify({
-    items: [{ kind: 'question', run_id: 's1', request: 'install dayx locally', at: '', title: '#3 checkpoint · SessionStart hook only?',
+    items: [{ kind: 'question', run_id: 's1', request: 'install dayx locally', origin: { session_id: 'sid-1' }, at: '', title: '#3 checkpoint · SessionStart hook only?',
       question: { id: 3, task_id: 'research', text: 'SessionStart hook only?', options: ['SessionStart only', 'both hooks'], recommended: 1, grounds: ['N3: UserPromptSubmit p99 55.6ms > 50ms'] } }],
   })
+  const files: Record<string, string> = { '.narwhal/daemon.url': 'http://127.0.0.1:9\n' }
   const runs = baseStubs(on, {
     store: {},
-    files: { '.narwhal/daemon.url': 'http://127.0.0.1:9\n' },
+    files,
+    written: files,
     run: (argv) => {
       if (argv[0] !== '/usr/bin/curl') return undefined
       const url = String(argv.at(-1))
-      if (url.includes('/control/attention?session=sid-1')) return { code: 0, out: attention }
+      if (url.endsWith('/control/attention')) return { code: 0, out: attention }
       if (url.endsWith('/control/answer')) return { code: 0, out: '{"answered":1,"open":0}' }
       return undefined
     },
@@ -2189,22 +2191,27 @@ test('the Work tab lists the narwhal runs this session started, and a press open
     runs: [{ run_id: 's9', request: 'install dayx locally', state: 'active', started_at: new Date().toISOString(), done: 1, failed: 0, running: 1, artifacts: {},
       tasks: [{ id: 'task-1', name: 'install', state: 'completed', outcome: 'binary installed' }, { id: 'task-2', name: 'hook', state: 'dispatched' }] }],
   })
+  const files: Record<string, string> = { '.narwhal/daemon.url': 'http://127.0.0.1:9\n' }
   const runs = baseStubs(on, {
     store: {},
     pane: '%42',
-    files: { '.narwhal/daemon.url': 'http://127.0.0.1:9\n' },
+    files,
+    written: files,
     run: (argv) => {
       if (argv[0] !== '/usr/bin/curl') return undefined
       const url = String(argv.at(-1))
-      if (url.includes('/control/attention')) return { code: 0, out: '{"items":[]}' }
+      if (url.endsWith('/control/attention')) return { code: 0, out: '{"items":[]}' }
       if (url.includes('/control/runs?session=sid-1')) return { code: 0, out: runsBody }
       return undefined
     },
   })
+  on('tool.call', () => ({ result: { content: 'started s9' } }))
   const clock = mock.clock(on)
   on('store.keys', () => ({ value: [] }))
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
-  await clock.advance(10)
+  // This session started the run through the narwhal MCP tools.
+  await $.tool.call({ tool: 'mcp__narwhal__narwhal_spawn', input: {} } as any)
+  await clock.advance(20_000)
   const ui = await $.ui.mount<'terminal', 'Pane'>({ ...COCKPIT, surface: 'terminal' } as any)
   await ui.press({ key: 'cockpit-graph' })
   const drawn = JSON.stringify(await ui.drawn())
@@ -2214,6 +2221,78 @@ test('the Work tab lists the narwhal runs this session started, and a press open
   await ui.press({ key: 'nwrun-open-s9' })
   expect(runs.some((a) => a[0] === 'tmux' && a.includes('split-window') && a.includes('narwhal monitor --run s9'))).toBe(true)
   await ui.unmount()
+})
+
+test('narwhal: while another session holds the fetch, this one reads its shared answer and runs no curl', async ($, on) => {
+  const now = Date.now()
+  const body = JSON.stringify({ items: [
+    { kind: 'question', run_id: 'r1', request: 'mine', origin: { session_id: 'sid-1' }, at: '', title: 'pick one?', question: { id: 1, task_id: 't', text: 'pick one?' } },
+    { kind: 'question', run_id: 'r2', request: 'theirs', origin: { session_id: 'other-sid' }, at: '', title: 'not mine?', question: { id: 1, task_id: 't', text: 'not mine?' } },
+  ] })
+  const files: Record<string, string> = {
+    '.narwhal/daemon.url': 'http://127.0.0.1:9\n',
+    '/home/u/.claude/state/cc-mods/lease/narwhal-poll.json': JSON.stringify({ by: 'other-sid', until: Number.MAX_SAFE_INTEGER, fails: 0, failUntil: 0 }),
+    '/home/u/.claude/state/cc-mods/narwhal-attention.json': JSON.stringify({ at: now, body }),
+  }
+  const toasts: string[] = []
+  const runs = baseStubs(on, { store: {}, files, written: files, toasts })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(10)
+  // No attention fetch of its own; its own run's details, since it has one.
+  expect(runs.some((a) => a[0] === '/usr/bin/curl' && String(a.at(-1)).includes('/control/attention'))).toBe(false)
+  expect(runs.some((a) => a[0] === '/usr/bin/curl' && String(a.at(-1)).endsWith('/control/runs?session=sid-1'))).toBe(true)
+  expect(toasts).toContain('narwhal asks: pick one?')
+  expect(toasts.some((t) => t.includes('not mine'))).toBe(false)
+})
+
+test('narwhal: a session that never drove narwhal and has no items asks for no runs', async ($, on) => {
+  const files: Record<string, string> = { '.narwhal/daemon.url': 'http://127.0.0.1:9\n' }
+  const runs = baseStubs(on, { store: {}, files, written: files, run: (argv) => (argv[0] === '/usr/bin/curl' ? { code: 0, out: '{"items":[]}' } : undefined) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(2 * 60_000)
+  expect(runs.some((a) => a[0] === '/usr/bin/curl' && String(a.at(-1)).includes('/control/runs'))).toBe(false)
+})
+
+test('narwhal: a daemon that does not answer backs every session off instead of 2 curls per session every 20 s', async ($, on) => {
+  const files: Record<string, string> = { '.narwhal/daemon.url': 'http://127.0.0.1:9\n' }
+  const runs = baseStubs(on, { store: {}, files, written: files, run: (argv) => (argv[0] === '/usr/bin/curl' ? { code: 7, out: '' } : undefined) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(5 * 60_000)
+  const curls = runs.filter((a) => a[0] === '/usr/bin/curl' && String(a.at(-1)).includes('/control/'))
+  // Before: 16 polls x 2 curls. Backing off 60, 120, 240 s: polls at 0, 60, 180 s.
+  expect(curls.length).toBe(3)
+  expect(curls.every((a) => String(a.at(-1)).endsWith('/control/attention'))).toBe(true)
+  const lease = JSON.parse(files['/home/u/.claude/state/cc-mods/lease/narwhal-poll.json']!)
+  expect(lease).toMatchObject({ by: 'sid-1', fails: 3 })
+})
+
+test('a session quiet for 10 minutes stops refreshing neighbors; its next turn refreshes at once', async ($, on) => {
+  const runs = baseStubs(on, { store: {}, pane: '%42' })
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const neighbors = () => runs.filter((a) => String(a[1] ?? '').endsWith('cc-bridge.py') && a[2] === 'neighbors').length
+  await clock.advance(10 * 60_000)
+  const active = neighbors()
+  expect(active).toBeGreaterThanOrEqual(10)
+  await clock.advance(60 * 60_000)
+  // At most the one tick that landed on the 10-minute edge.
+  expect(neighbors() - active).toBeLessThanOrEqual(1)
+  const quiet = neighbors()
+  await $.turn.start({ turnId: 't1', text: 'back again' })
+  await clock.advance(10)
+  expect(neighbors()).toBe(quiet + 1)
+  await $.turn.complete({ turnId: 't1', answer: 'ok', durationMs: 5, isAborted: false, usage: null } as any)
+  await clock.advance(3 * 60_000)
+  expect(neighbors()).toBeGreaterThanOrEqual(quiet + 3)
 })
 
 test('an alert thread the person pastes starts RCA mode: grants, a card, and ending it reverts them', async ($, on) => {
