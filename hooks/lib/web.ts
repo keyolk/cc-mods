@@ -220,6 +220,58 @@ export function pickRank(o: { url?: string; kind: string }): number {
   return 0
 }
 
+// How well `q` matches `hay` as a fuzzy subsequence (fzf-like), or -1 when
+// its letters are not all there in order. A contiguous hit beats a scattered
+// one, and letters that start a segment (after / . - _ : ? = # or a space)
+// count more, so "grafdash" finds grafana…/d/dashboard before a long URL that
+// merely holds those letters somewhere.
+export function fuzzyScore(hay: string, q: string): number {
+  const h = hay.toLowerCase()
+  const n = q.toLowerCase()
+  if (!n) return 0
+  const at = h.indexOf(n)
+  if (at >= 0) return 1000 + n.length * 10 - Math.min(at, 200) / 10 + (at === 0 || /[\/.\-_:?=# ]/.test(h[at - 1] ?? '') ? 50 : 0)
+  let score = 0
+  let i = 0
+  let run = 0
+  let last = -1
+  for (const c of n) {
+    const j = h.indexOf(c, i)
+    if (j < 0) return -1
+    run = j === last + 1 ? run + 1 : 0
+    score += 10 + run * 15 + (j === 0 || /[\/.\-_:?=# ]/.test(h[j - 1] ?? '') ? 20 : 0) - Math.min(j - i, 30)
+    last = j
+    i = j + 1
+  }
+  return score
+}
+
+// The /web argument's typeahead: the same session URLs as urlPicks, matched
+// fuzzily on every typed word (in the URL or the title) and ordered by how
+// well they match; ties keep urlPicks's order (the rest before tickets, PRs
+// and threads, then newest).
+export function urlFuzzy(outputs: readonly { url?: string; title: string; kind: string; at: number }[], query: string, limit = 8): UrlPick[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const seen = new Set<string>()
+  const scored: { p: UrlPick; s: number; i: number }[] = []
+  for (const o of [...outputs].sort((a, b) => pickRank(a) - pickRank(b) || b.at - a.at)) {
+    if (!o.url || !/^https?:\/\//.test(o.url) || seen.has(o.url)) continue
+    seen.add(o.url)
+    const hay = o.url.replace(/^https?:\/\/(www\.)?/, '') + ' ' + o.title
+    let s = 0
+    for (const w of words) {
+      const ws = fuzzyScore(hay, w)
+      if (ws < 0) {
+        s = -1
+        break
+      }
+      s += ws
+    }
+    if (s >= 0) scored.push({ p: { url: o.url, title: o.title, kind: o.kind }, s, i: scored.length })
+  }
+  return scored.sort((a, b) => b.s - a.s || a.i - b.i).slice(0, limit).map((x) => x.p)
+}
+
 export function urlPicks(outputs: readonly { url?: string; title: string; kind: string; at: number }[], query: string, limit = 8): UrlPick[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
   const seen = new Set<string>()

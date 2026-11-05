@@ -45,3 +45,25 @@ export function mcpServerKey(tool: string): string | undefined {
   const m = /^mcp__(.+?)__/.exec(tool)
   return m ? m[1] : undefined
 }
+
+// This session's own MCP connections, apart from sign-in (`claude mcp list`,
+// the radar, is one answer for every session): a server whose tools were here
+// and are gone dropped in this session alone. The servers live now come from
+// the context breakdown's MCP tools, named as /mcp lists them, so a reconnect
+// takes the name as is. A server never seen here is not counted: it may be
+// one this project leaves off, or one that needs signing in.
+export type McpDrop = { server: string; since: number }
+export type McpWatch = { seen: string[]; live: string[]; dropped: McpDrop[] }
+
+export const MCP_WATCH_EMPTY: McpWatch = { seen: [], live: [], dropped: [] }
+
+export function liveServers(tools: readonly { serverName?: unknown }[] | undefined): string[] {
+  return [...new Set((tools ?? []).map((t) => t.serverName).filter((s): s is string => typeof s === 'string' && !!s))].sort()
+}
+
+export function nextWatch(prev: McpWatch, live: readonly string[], now: number): McpWatch {
+  const seen = [...new Set([...prev.seen, ...live])].sort()
+  const since = new Map(prev.dropped.map((d) => [d.server, d.since]))
+  const dropped = seen.filter((s) => !live.includes(s)).map((server) => ({ server, since: since.get(server) ?? now }))
+  return { seen, live: [...live], dropped }
+}

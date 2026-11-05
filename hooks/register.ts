@@ -22,10 +22,10 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, RenderElement } from 'claude-code'
 
 import { BROWSER_LABEL, resolveBrowser, browserArgv, parseBrowser, type BrowserChoice } from './lib/browser'
-import { WEB_IDLE, engineForUrl, engineOfTarget, formatEngineRules, parseEngine, parseEngineRules, type EngineRule, urlPicks, urlsIn, type WebEngine, keyBytes, urlFromInput, sgrMouse, sgrWheel, toHex, type KeyMsg, type PointerMsg, type WebState } from './lib/web'
+import { WEB_IDLE, engineForUrl, engineOfTarget, formatEngineRules, parseEngine, parseEngineRules, type EngineRule, urlFuzzy, urlPicks, urlsIn, type WebEngine, keyBytes, urlFromInput, sgrMouse, sgrWheel, toHex, type KeyMsg, type PointerMsg, type WebState } from './lib/web'
 import { WEB_SETTINGS_ROWS, pickRows, renderWeb, type WebSettings } from './views/web'
 import { renderWebSide } from './views/webside'
-import { LINK_RENEW_MS, SIDE_EMPTY, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps, type AutoStep, type SidePane, type SideWeb, type TwebLink } from './lib/webside'
+import { LINK_RENEW_MS, SIDE_EMPTY, activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps, type AutoStep, type SidePane, type SideWeb, type TwebLink } from './lib/webside'
 import { renderHelp } from './views/help'
 import { helpSections } from './lib/help'
 import { COCKPIT_ACTION, GROW_ACTION, PALETTE_ACTION, catchAll, paletteNextKey, renderPalette } from './views/palette'
@@ -53,7 +53,7 @@ import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
 import { clip, hhmm } from './lib/text'
-import { isMcpTool, looksDisconnected, mcpServerKey, normalizeServer } from './lib/mcpheal'
+import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
 import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseOpen, parseSums, type ExpCheck } from './lib/exp'
 import { focusWindowArgv, parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
@@ -1499,7 +1499,9 @@ async function healMcpTool($: any, tool: string) {
   if (!norm) return
   const names = ((await read($, authA)) as AuthItem[]).map((i) => serverOf(i.id)).filter((x): x is string => !!x)
   const server = names.find((n) => normalizeServer(n) === norm)
-  if (!server) return
+  if (server) await healServer($, server)
+}
+async function healServer($: any, server: string) {
   const t = mcpHealTries.get(server) ?? { at: -Infinity, n: 0 }
   if (t.n >= MCP_HEAL_MAX || Date.now() - t.at < MCP_HEAL_GAP_MS) return
   mcpHealTries.set(server, { at: Date.now(), n: t.n + 1 })
@@ -1509,6 +1511,74 @@ async function healMcpTool($: any, tool: string) {
     if (!/not connected|failed|error/i.test(text)) $.ui.toast('MCP ' + server + ' reconnected')
   } catch (err) {
     $.ui.log('mcp heal ' + server + ' failed: ' + String(err), { to: 'debug' })
+  }
+}
+
+// This session's own MCP connections (lib/mcpheal.ts nextWatch), checked every
+// minute and as a turn ends: a server can drop while nothing calls it (a
+// sleep, a proxy reset), and the first sign used to be the failed call. A
+// dropped server is reconnected on its own while the session is between turns
+// (auto-reconnect on, the same gap and cap as after a failed call), and the
+// state goes to the office (office.py mcp_state), whose card can ask for a
+// reconnect by hand (officeMcp).
+let mcpWatch: McpWatch = MCP_WATCH_EMPTY
+let mcpWatchOut = ''
+let mcpChecking = false
+async function mcpCheck($: any) {
+  if (mcpChecking || !sid) return
+  mcpChecking = true
+  try {
+    // summary: local estimates, no token-count calls.
+    const u = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
+    const tools = u?.context?.breakdown?.mcpTools
+    if (!Array.isArray(tools)) return
+    mcpWatch = nextWatch(mcpWatch, liveServers(tools), Date.now())
+    if (mcpHealEnabled && !mainTurnRunning) for (const d of mcpWatch.dropped) await healServer($, d.server)
+    await mcpExport($)
+  } finally {
+    mcpChecking = false
+  }
+}
+async function mcpExport($: any) {
+  if (!home || !sid) return
+  const out = JSON.stringify({ live: mcpWatch.live, dropped: mcpWatch.dropped.map((d) => ({ ...d, tries: mcpHealTries.get(d.server)?.n ?? 0 })), heal: mcpHealEnabled })
+  if (out === mcpWatchOut) return
+  const dir = home + '/.claude/state/office/mcp'
+  await $.process.run(['mkdir', '-p', dir], { timeoutMs: 3000 }).catch(() => {})
+  await $.fs.write(dir + '/' + sid + '.json', out).then(() => (mcpWatchOut = out)).catch(() => {})
+}
+// The office card's reconnect: the servers it names, or every dropped one.
+// By hand, so the auto-reconnect's gap and cap do not hold it back.
+let officeMcpBusy = false
+async function officeMcp($: any) {
+  if (officeMcpBusy || !home) return
+  const file = home + '/.claude/state/office/mcp/' + sid + '.reconnect.json'
+  if (!(await $.fs.exists(file).catch(() => false))) return
+  officeMcpBusy = true
+  try {
+    const raw = await readText($, file)
+    await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
+    let ask: { servers?: unknown; at?: unknown } = {}
+    try {
+      ask = JSON.parse(raw ?? '{}')
+    } catch {
+      return
+    }
+    if (Date.now() / 1000 - Number(ask.at ?? 0) > 120) return
+    const named = Array.isArray(ask.servers) ? ask.servers.filter((x): x is string => typeof x === 'string' && !!x) : []
+    const want = named.length ? named : mcpWatch.dropped.map((d) => d.server)
+    if (!want.length) return void $.ui.toast('office: no MCP server has dropped here')
+    const bad: string[] = []
+    for (const server of want) {
+      mcpHealTries.delete(server)
+      const text = await reconnectMcp($, server).catch((err: unknown) => String(err))
+      $.ui.log('office mcp reconnect ' + server + ': ' + text, { to: 'debug' })
+      if (/not connected|failed|error/i.test(text)) bad.push(server)
+    }
+    $.ui.toast(bad.length ? 'office: MCP ' + bad.join(', ') + ' did not reconnect' : 'office: MCP ' + want.join(', ') + ' reconnected')
+    await mcpCheck($)
+  } finally {
+    officeMcpBusy = false
   }
 }
 let ownResume = false // the next main turn is our keep-going
@@ -1757,6 +1827,7 @@ let officeBusy = false
 async function officeInbox($: any) {
   if (officeBusy || !home) return
   void officeSide($)
+  void officeMcp($)
   const file = home + '/.claude/state/office/inbox/' + sid + '.json'
   if (!(await $.fs.exists(file).catch(() => false))) return
   officeBusy = true
@@ -2511,19 +2582,48 @@ async function webLinkBadge($: any): Promise<'ok' | 'down' | 'driving' | undefin
   return side.link.state === 'ok' ? 'ok' : 'down'
 }
 
+// Every URL this session met, for the Web tab's go field and /web's
+// typeahead: outputs first (they carry titles), then any other URL the
+// answers and prompts held, newest turns first.
+async function sessionUrls($: any): Promise<{ url?: string; title: string; kind: string; at: number }[]> {
+  const said = Object.values((await read($, answersA)) as Record<string, string>).flatMap((t, i) => urlsIn(t, i))
+  const asked = ((await read($, flowA)) as FlowEntry[]).filter((f) => f.kind === 'prompt').flatMap((f) => urlsIn(f.text, f.at))
+  return [...((await read($, outputsA)) as Output[]).map((o) => ({ ...o, at: o.at + 1e13 })), ...said, ...asked]
+}
+
 // A page asked for here (/web, the Web tab's go field, a palette pick): into
-// the driven pane when it runs the engine the URL wants, else a new pane
-// right of this one. Links Claude opens take tmux-chrome's own path to the
-// same pane (its try_tweb_open), since @cc_web is not set in this mode.
+// a TWeb pane already in this window when there is one (pickSidePane), else a
+// new pane right of this one. Its active tab when that runs the engine the URL
+// wants; else a new tab moved to that engine before the page loads, since a
+// URL meant for managed Chrome must not load in Electron (device trust fails).
+// Links Claude opens take tmux-chrome's own path to the same pane (its
+// try_tweb_open), since @cc_web is not set in this mode.
 async function openSide($: any, url: string, engine: WebEngine): Promise<string> {
   if (!isPaneId(pane)) return 'Outside tmux there is no window to open a TWeb pane in.'
   const s = (await read($, sideWebA)) as SideWeb
-  const hit = pickSidePane((await listSide($)).panes, { engine, prefer: s.pane, strict: true })
+  const hit = pickSidePane((await listSide($)).panes, { engine, prefer: s.pane })
   let err = ''
+  const last = (r: any, what: string) => clip(String(r.stderr || r.stdout).trim().split('\n').pop() ?? '', 160) || what + ' failed'
   try {
     if (hit) {
-      const r = await $.process.run(sideArgv(hit.pane, ['navigate', url]), { timeoutMs: 20_000 })
-      if (r.exitCode !== 0) err = clip(String(r.stderr || r.stdout).trim().split('\n').pop() ?? '', 160) || 'navigate failed'
+      if (activeEngine(hit) !== engine) {
+        const t = await $.process.run(sideArgv(hit.pane, ['tab', 'new', 'about:blank', '--json']), { timeoutMs: 10_000 })
+        let got: string | undefined
+        try {
+          got = (JSON.parse(String(t.stdout ?? '{}')).tabs ?? []).find((x: any) => x?.active)?.engine
+        } catch {
+          got = undefined
+        }
+        if (t.exitCode !== 0) err = last(t, 'tab new')
+        else if (got !== engine) {
+          const m = await $.process.run(sideArgv(hit.pane, ['tab', 'engine', engine]), { timeoutMs: 20_000 })
+          if (m.exitCode !== 0) err = last(m, 'tab engine')
+        }
+      }
+      if (!err) {
+        const r = await $.process.run(sideArgv(hit.pane, ['navigate', url]), { timeoutMs: 20_000 })
+        if (r.exitCode !== 0) err = last(r, 'navigate')
+      }
       await update($, sideWebA, (x) => ({ ...x, pane: hit.pane }))
     } else {
       const r = await $.process.run(['tmux', ...splitArgv(pane, engine, url, cwd)], { timeoutMs: 5000 })
@@ -3227,6 +3327,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         if (!(await quiet($))) void refreshNeighbors($)
       })
       $.clock.every(2_000, () => void officeInbox($))
+      $.clock.every(60_000, () => void mcpCheck($))
+      $.clock.after(15_000, () => void mcpCheck($))
       // Elapsed times on running work only move if something redraws; do it
       // while anything is running, and not at all otherwise.
       $.clock.every(5_000, async () => {
@@ -3387,8 +3489,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         mcpHealPending.clear()
         void (async () => {
           for (const t of tools) await healMcpTool($, t)
+          await mcpCheck($)
         })()
-      }
+      } else void mcpCheck($)
       // Awaited: left running, it read $.state after the turn's caller moved on
       // (a test's environment torn down under it).
       await update($, liveA, (l) => (l && l.turnId === e.turnId ? null : l))
@@ -3934,6 +4037,16 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   })
 
   // ---- autocomplete ----
+  // `/web <typed>`: the URLs this session met, fuzzy-matched (lib/web
+  // urlFuzzy). Only the argument (after an engine flag, if any); a flag being
+  // typed is left alone.
+  on('prompt.autocomplete', async ($: any, e: any, next: any) => {
+    if (!/^\/web\s+(--\w+\s+)?$/.test(e.text.slice(0, e.start)) || e.token.startsWith('-')) return next(e)
+    const mine = urlFuzzy(await sessionUrls($), e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
+    const r = await next(e)
+    return { suggestions: [...mine, ...(r?.suggestions ?? [])] }
+  })
+
   on('prompt.autocomplete', async ($: any, e: any, next: any) => {
     const mine = suggest(e.token, e.text.slice(0, e.cursor), sources)
     if (mine.length === 0) return next(e)
@@ -4904,11 +5017,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       // WEB_TOP rows above the page, the key legend below it.
       const ws = (await read($, webSettingsA)) as WebSettings
       const keyboard = (await read($, webKeyboardA)) as 'controls' | 'page'
-      // Outputs first (they carry titles), then any other URL the answers and
-      // prompts held, newest turns first.
-      const said = Object.values((await read($, answersA)) as Record<string, string>).flatMap((t, i) => urlsIn(t, i))
-      const asked = ((await read($, flowA)) as FlowEntry[]).filter((f) => f.kind === 'prompt').flatMap((f) => urlsIn(f.text, f.at))
-      const picks = urlPicks([...((await read($, outputsA)) as Output[]).map((o) => ({ ...o, at: o.at + 1e13 })), ...said, ...asked], ui.webQuery ?? '')
+      const picks = urlPicks(await sessionUrls($), ui.webQuery ?? '')
       const pickOpen = !!ui.webPick && picks.length > 0
       // Folded is a preference: it holds across opens of the field.
       const pickFolded = !!ui.webPickFolded
