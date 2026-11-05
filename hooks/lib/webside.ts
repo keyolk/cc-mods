@@ -6,7 +6,8 @@
 
 import type { WebEngine } from './web'
 
-export type SideTab = { index: number; title: string; url: string; active: boolean }
+// `engine`: the tab's own page engine, which can differ from its pane's (`tweb tab engine`).
+export type SideTab = { index: number; title: string; url: string; active: boolean; engine?: WebEngine }
 
 export type SidePane = { pane: string; engine: WebEngine; tabs: SideTab[]; presence?: SidePresence }
 
@@ -77,7 +78,7 @@ export function parseTwebPanes(json: string, inWindow: ReadonlySet<string>, self
       pane: id,
       presence: presenceOf(p.status?.presence),
       engine: engineOf(p.status?.browser),
-      tabs: tabs.map((t: any, i: number) => ({ index: Number(t?.index ?? i), title: String(t?.title ?? ''), url: String(t?.url ?? ''), active: !!t?.active })),
+      tabs: tabs.map((t: any, i: number) => ({ index: Number(t?.index ?? i), title: String(t?.title ?? ''), url: String(t?.url ?? ''), active: !!t?.active, ...(t?.engine ? { engine: engineOf(t.engine) } : {}) })),
     })
   }
   return out
@@ -133,13 +134,25 @@ export function linkArgv(pane: string, self: string): string[] {
   return sideArgv(pane, ['link', '--owner', linkOwner(self), '--ttl', String(LINK_TTL_S)])
 }
 
-// The pane to drive: the one already driven while it lives, else one on the
-// wanted engine, else the first. A URL meant for managed Chrome must not land
-// in Electron (device trust fails), so `strict` refuses another engine.
-export function pickSidePane(panes: readonly SidePane[], want?: { engine?: WebEngine; prefer?: string; strict?: boolean }): SidePane | undefined {
-  const byEngine = want?.engine ? panes.filter((p) => p.engine === want.engine) : panes
-  const pool = want?.strict ? byEngine : byEngine.length ? byEngine : panes
-  return pool.find((p) => p.pane === want?.prefer) ?? pool[0]
+// The engine a new tab in the pane starts on: the active tab's (a new tab
+// takes it), else the pane's own.
+export function activeEngine(p: SidePane): WebEngine {
+  return p.tabs.find((t) => t.active)?.engine ?? p.engine
+}
+
+// The pane to drive: the one already driven while it lives, else the one
+// whose active tab runs the wanted engine, then one with any tab on it, then
+// the first. Any pane in the window will do, whatever its engine: a tab moves
+// to another engine in place (openSide), so a pane is never split off for
+// that alone. The pane's own engine is only its first tab's: a pane of chrome
+// tabs reports electron.
+export function pickSidePane(panes: readonly SidePane[], want?: { engine?: WebEngine; prefer?: string }): SidePane | undefined {
+  const driven = panes.find((p) => p.pane === want?.prefer)
+  if (driven) return driven
+  const e = want?.engine
+  if (!e) return panes[0]
+  const rank = (p: SidePane) => (activeEngine(p) === e ? 0 : p.tabs.some((t) => t.engine === e) || p.engine === e ? 1 : 2)
+  return [...panes].sort((a, b) => rank(a) - rank(b))[0]
 }
 
 // The argv that sends one `tweb` command to the pane.

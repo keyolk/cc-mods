@@ -49,7 +49,6 @@ canvas.drag { cursor: grabbing; }
 #card .rz.ne, #card .rz.nw, #card .rz.se { width: 14px; height: 14px; }
 #card .rz.ne { top: 0; right: 0; cursor: nesw-resize; } #card .rz.nw { top: 0; left: 0; cursor: nwse-resize; } #card .rz.se { bottom: 0; right: 0; cursor: nwse-resize; }
 #card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
-#card .scrollhint { font-size: 11px; color: #9a90b0; text-align: right; margin-bottom: 8px; }
 #card .q { font-size: 14px; margin: 6px 0; }
 #card .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 #card button.act { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 10px; padding: 4px 10px; cursor: pointer; background: #fff; box-shadow: 0 2px 0 var(--line); }
@@ -73,6 +72,9 @@ canvas.drag { cursor: grabbing; }
 #card .said hr { border: 0; border-top: 1px solid rgba(59,42,53,.2); margin: 8px 0; }
 #card .said a { color: #2f6fd6; text-decoration: underline; cursor: pointer; word-break: break-all; }
 #card .grant { background: #fff1c9; border: 2px solid #e0a52e; border-radius: 12px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
+#card .mcpdrop { background: #e6eefc; border: 2px solid #6d8fd0; border-radius: 12px; padding: 6px 10px; margin-bottom: 8px; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+#card .mcpdrop .m { color: #4f6290; font: 11.5px -apple-system, sans-serif; flex: 1 1 auto; }
+#mcpchip { font: inherit; color: #2a2033; cursor: pointer; pointer-events: auto; background: #c9d8f7; }
 #card .grant .why { color: #7a6030; font-size: 12px; margin: 3px 0 6px; font-family: -apple-system, sans-serif; }
 #card button.grantb { background: #ffcf5a; }
 #card .rel { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
@@ -197,12 +199,13 @@ body.picking #c { cursor: crosshair; }
 #card .btw .it p:last-child { margin-bottom: 0; }
 #card .btw .typing { color: #7a7090; font-style: italic; }
 #card .btw .err { background: #ffe1e1; }
-#card .ctabs .turnnav { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+#card .ctabs .turnnav { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; }
 #card .ctabs .turnnav button { padding: 0 6px; }
 #card .ctabs .turnnav button:disabled { opacity: .3; cursor: default; }
-#card .ctabs .turnnav .where { font-size: 11px; color: #7a7090; padding: 0 3px; white-space: nowrap; }
+#card .ctabs .turnnav .where { font-size: 11px; color: #7a7090; padding: 0 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 #card .ctabs .turnnav.past .where { color: #6a4c8c; font-weight: 600; }
 #card .pastask { white-space: pre-wrap; max-height: 120px; overflow: auto; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-left: 3px solid #e0a64a; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; }
+#card .pastask .m { color: #6a4c8c; font-weight: 600; margin-right: 4px; }
 #card .said.old { background: #efe9f5; }
 #card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
 #card .hist details.notice { opacity: .65; }
@@ -230,7 +233,6 @@ body.picking #c { cursor: crosshair; }
 #card.panes .ctabs { flex-wrap: wrap; }
 #card.panes .ctabs button { flex: 0 0 auto; }
 #card.panes > .sub { max-height: 2.9em; overflow: hidden; font-size: 11px; margin-bottom: 4px; }
-#card.panes .scrollhint { display: none; }
 #card.panes .cfoot { padding: 4px 8px 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 #card.panes .cfoot > * { margin: 0 !important; }
 #card.panes .cfoot > .q { flex: 1 0 100%; }
@@ -243,6 +245,16 @@ body.picking #c { cursor: crosshair; }
 #card.panes .cfoot .key { font-size: 10px; min-width: 12px; padding: 0 3px; margin-right: 3px; }
 #card.panes .cfoot button.send { display: none; }
 #card.panes .cfoot .msg:empty { display: none; }
+/* What the keys do right now, one line under the buttons; the least useful
+   fall off its end first. ⌥/ or its ✕ hides it once they are known. */
+#card .khint { order: 9; flex: 1 0 100%; min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 4px; font: 10.5px -apple-system, "Apple SD Gothic Neo", sans-serif; color: #7a7090; }
+#card .khint:empty { display: none; }
+#card .khint .ks { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#card .khint .k { margin-right: 8px; }
+#card .khint kbd { font: 10px ui-monospace, Menlo, monospace; color: #3b2a35; background: #fff; border: 1px solid rgba(59,42,53,.3); border-radius: 4px; padding: 0 3px; margin-right: 3px; }
+#card .khint .khx { flex: 0 0 auto; border: 0; background: none; color: #9a90b0; font-size: 11px; cursor: pointer; padding: 0 2px; }
+#card > .khint { margin-top: 6px; }
+#card .cfoot .khint { padding-left: 12px; } /* clear of the corner resize grip */
 #card.panes.compact .cfoot .q { display: none; }
 #card .shelf .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 #card .shelf .tabs button { font: inherit; font-size: 12px; border: 2px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 9px; cursor: pointer; }
@@ -278,7 +290,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <body>
 <header>
   <h1 id="office-title">🏢 __OFFICE_OWNER__네 사무실</h1>
-  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span><span class="chip" id="res" title="공용 자원 (계정·쿼터)"></span><button class="chip" id="authchip" title="인증 상태 (모든 세션 공통) · K"></button>
+  <span class="chip" id="s1"></span><span class="chip" id="s2"></span><span class="chip" id="s3"></span><span class="chip" id="s4"></span><span class="chip" id="res" title="공용 자원 (계정·쿼터)"></span><button class="chip" id="authchip" title="인증 상태 (모든 세션 공통) · K"></button><button class="chip" id="mcpchip" style="display:none"></button>
   <button id="reset" class="chip" title="확대·이동을 처음으로 (0, 더블클릭)">⤢ 전체 보기 · 0</button>
   <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
@@ -301,15 +313,16 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
       <dt><kbd>Z</kbd></dt><dd>미루기 (30분 · 1시간 · 오늘 · 말 걸 때까지)</dd>
       <dt><kbd>A</kbd></dt><dd>제안된 정책 허용 승인</dd>
       <dt><kbd>G</kbd></dt><dd>그 agent의 tmux 창으로</dd>
+      <dt><kbd>C</kbd></dt><dd>그 세션에서 끊긴 MCP 다시 연결 (끊긴 게 있을 때)</dd>
     </dl></section>
     <section><h4>대화창</h4><dl>
       <dt><kbd>⌥M</kbd></dt><dd>최대화 ↔ 원래 크기</dd>
+      <dt><kbd>⌥/</kbd></dt><dd>아래 줄의 상황별 단축키 힌트 켜기·끄기 (⚙ 설정에도 있음)</dd>
       <dt><kbd>⌥1</kbd>…<kbd>⌥9</kbd> <kbd>[</kbd> <kbd>]</kbd></dt><dd>탭 바로 열기 · 이동</dd>
       <dt><kbd>⌥B</kbd></dt><dd>☕ btw 곁대화 칸 열기·닫기 (오른쪽, 일하는 중에도 바로 답함; 여는 동안 최대화)</dd>
-      <dt><kbd>⌥,</kbd> <kbd>⌥.</kbd></dt><dd>답변 자리에 이전·다음 대화 (답장칸 밖에선 <kbd>&lt;</kbd> <kbd>&gt;</kbd>)</dd>
-      <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>읽던 탭 한 화면씩 (btw 중에도)</dd>
+      <dt><kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>답변 탭에선 이전·다음 대화, 다른 탭은 한 화면씩 (btw 중에도; <kbd>⌥,</kbd> <kbd>⌥.</kbd>도 대화 이동)</dd>
       <dt><kbd>⇧PgUp</kbd> <kbd>⇧PgDn</kbd></dt><dd>btw 칸 한 화면씩</dd>
-      <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>Home</kbd> <kbd>End</kbd></dt><dd>답변 스크롤 (↑↓는 빈 답장칸에서도)</dd>
       <dt><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></dt><dd>목록 탭에서 고르기 · 열기</dd>
       <dt><kbd>⌥+</kbd> <kbd>⌥−</kbd> <kbd>⌥0</kbd></dt><dd>글자 크게 · 작게 · 원래대로</dd>
       <dt><kbd>⌥←↑↓→</kbd></dt><dd>폭 · 높이 (변·모서리를 끌어도 됨)</dd>
@@ -332,6 +345,15 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <script src="skins.js"></script>
 <script src="resources.js"></script>
 <script>
+// The page's choices live in office.py's prefs.json as well as here (see
+// PREFS_FILE there): the browser's copy can be lost, so the server's is laid
+// over it before anything below reads one. keep() writes both.
+const KEPT = __OFFICE_PREFS__
+try { for (const [k, v] of Object.entries(KEPT)) localStorage.setItem(k, v) } catch {}
+function keep(key, value) {
+  try { localStorage.setItem(key, value) } catch {}
+  fetch('/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': '__OFFICE_TOKEN__' }, body: JSON.stringify({ key, value }) }).catch(() => {})
+}
 // Every Claude Code session in tmux as a chibi in a quarter-view office:
 // one pod per tmux window (its sessions share it), the library while
 // reading, the workshop while running, a phone booth on an MCP call, the lounge while idle, and each
@@ -397,7 +419,7 @@ function setSkin(key, save = true) {
   skinStyle.textContent = skin.css || ''
   document.getElementById('office-title').textContent = skin.title
   for (const [k, [label, when]] of Object.entries(skin.zones)) { ZONES[k].label = label; ZONES[k].when = when }
-  if (save) { try { localStorage.setItem('office.skin', skin.key) } catch {} }
+  if (save) keep('office.skin', skin.key)
 }
 function savedSkin() { try { return localStorage.getItem('office.skin') || 'office' } catch { return 'office' } }
 
@@ -815,6 +837,13 @@ function scrollSaid(how) {
   else if (how === 'top') el.scrollTop = 0; else if (how === 'bottom') el.scrollTop = el.scrollHeight
   return true
 }
+// PgUp/PgDn on the answer tab step through the conversation's turns, so the
+// answer itself scrolls only by line (↑↓ j k) and a page key never lands
+// mid-turn; every other tab still pages.
+function pageKey(dir) {
+  if (card.turnStep && card.said && card.curPane && card.curPane.contains(card.said)) return card.turnStep(dir)
+  scrollSaid(dir < 0 ? 'pgup' : 'pgdn')
+}
 // ⇧PgUp/⇧PgDn scroll the btw strip while it is open; plain PgUp/PgDn keep
 // scrolling what is being read above it, so talking never moves that key.
 function scrollSide(dir) {
@@ -947,6 +976,7 @@ function cardLetter(k) {
   if ((k === 'r' || k === '/') && card.reply) return () => card.reply.focus()
   if (k === 's' && card.stop) return () => card.stop.click()
   if (k === 'a' && card.grant) return () => card.grant.click()
+  if (k === 'c' && card.mcpFix) return () => card.mcpFix.click()
   if (k === 'z' && card.mute) return () => card.mute.click()
   if (k === 'g' && card.go) return () => card.go.click()
   if (k === 'n') return () => step(1)
@@ -998,8 +1028,8 @@ function officeKey(e) {
   if (open && card.moveResource && (k === 'ArrowDown' || k === 'j')) return hit(() => card.moveResource(1))
   if (open && (k === 'PageUp' || k === 'PageDown') && e.shiftKey && scrollSide(k === 'PageUp' ? -1 : 1)) return hit(() => {})
   if (open && (card.said || card.curPane)) {
-    if (k === 'PageUp' || (k === ' ' && e.shiftKey)) return hit(() => scrollSaid('pgup'))
-    if (k === 'PageDown' || k === ' ') return hit(() => scrollSaid('pgdn'))
+    if (k === 'PageUp' || k === 'PageDown') return hit(() => pageKey(k === 'PageUp' ? -1 : 1))
+    if (k === ' ') return hit(() => scrollSaid(e.shiftKey ? 'pgup' : 'pgdn'))
     if (k === 'ArrowUp' || k === 'k') return hit(() => scrollSaid('up'))
     if (k === 'ArrowDown' || k === 'j') return hit(() => scrollSaid('down'))
     if (k === 'Home') return hit(() => scrollSaid('top'))
@@ -1048,6 +1078,8 @@ function handleCardAlt(e, k) {
   if (e.code === 'Equal' || e.code === 'NumpadAdd') return hit(() => zoomCard(1))
   if (e.code === 'Minus' || e.code === 'NumpadSubtract') return hit(() => zoomCard(-1))
   if (k === '0') return hit(() => zoomCard(0))
+  // By code: ⌥/ is ÷ on macOS.
+  if (e.code === 'Slash') return hit(() => toggleHints())
   // ⌥, ⌥. by code: ⌥ turns them into ≤ ≥ on macOS. Not ⌥H/⌥L: tmux's root
   // table takes M-h/j/k/l/H/L/w/Tab before the page sees them.
   if ((e.code === 'Comma' || e.code === 'Period') && card.turnStep) return hit(() => turnKey(e.code === 'Comma' ? -1 : 1))
@@ -1068,7 +1100,7 @@ function cardLayout() {
 }
 function saveCardLayout() {
   if (card.classList.contains('max') || !card.offsetWidth) return
-  try { localStorage.setItem('office-card-layout', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight, x: card.offsetLeft, y: card.offsetTop })) } catch (_) {}
+  keep('office-card-layout', JSON.stringify({ w: card.offsetWidth, h: card.offsetHeight, x: card.offsetLeft, y: card.offsetTop }))
 }
 // The card whole on the screen: its size first (no larger than the window),
 // then its position. Placed again on every open, since the layout saved in
@@ -1135,7 +1167,7 @@ function zoomCard(dir) {
   const i = CARD_ZOOM.findIndex((z) => z >= cardZoom - 1e-6)
   cardZoom = dir === 0 ? 1 : CARD_ZOOM[Math.min(CARD_ZOOM.length - 1, Math.max(0, (i < 0 ? CARD_ZOOM.length - 1 : i) + dir))]
   card.style.setProperty('--cz', cardZoom)
-  try { localStorage.setItem('office-card-zoom', String(cardZoom)) } catch (_) {}
+  keep('office-card-zoom', String(cardZoom))
   toast('🔍 글자 ' + Math.round(cardZoom * 100) + '%')
 }
 card.style.setProperty('--cz', cardZoom)
@@ -1274,8 +1306,8 @@ function wireHistory(box) {
   all.onclick = () => { const open = all.classList.toggle('on'); all.textContent = open ? '접기' : '펼치기'; for (const r of rows) if (r.style.display !== 'none') r.open = open }
   days()
 }
-// Back through the conversation from the answer itself: ⌥, ⌥. (or < > out
-// of the reply box) or the ‹ › buttons swap the answer for an earlier turn's, with
+// Back through the conversation from the answer itself: PgUp/PgDn, ⌥, ⌥.
+// (or < > out of the reply box) or the ‹ › buttons swap the answer for an earlier turn's, with
 // what was asked above it. The newest position is the live answer, so the
 // card is never left showing an old one as if it were current.
 function turnNav(pane, said, live, turns) {
@@ -1292,16 +1324,18 @@ function turnNav(pane, said, live, turns) {
   const show = () => {
     const t = past[at], n = past.length
     bar.classList.toggle('past', !!t)
-    bar.innerHTML = '<button class="prev"' + (at ? '' : ' disabled') + ' title="이전 대화 (⌥, · 답장칸 밖에선 <)">‹</button>'
-      + '<span class="where" title="' + (t ? '지난 대화' : '지금 답') + '">' + (t ? esc(clock(t.at)) + ' · ' : '') + (at + 1) + '/' + (n + 1) + '</span>'
-      + '<button class="next"' + (t ? '' : ' disabled') + ' title="다음 대화 (⌥. · 답장칸 밖에선 >)">›</button>'
-      + (t ? '<button class="now" title="지금 답으로">지금</button>' : '')
+    bar.innerHTML = '<button class="prev"' + (at ? '' : ' disabled') + ' title="이전 대화 (PgUp · ⌥,)">‹</button>'
+      + '<span class="where" title="' + (t ? '지난 대화' : '지금 답') + '">' + (at + 1) + '/' + (n + 1) + '</span>'
+      + '<button class="next"' + (t ? '' : ' disabled') + ' title="다음 대화 (PgDn · ⌥.)">›</button>'
+      + '<button class="now"' + (t ? '' : ' disabled') + ' title="지금 답으로">지금</button>'
     bar.querySelector('.prev').onclick = () => go(-1)
     bar.querySelector('.next').onclick = () => go(1)
-    const now = bar.querySelector('.now'); if (now) now.onclick = () => go(n - at)
+    bar.querySelector('.now').onclick = () => go(n - at)
     ask.style.display = t ? '' : 'none'
-    ask.innerHTML = t ? '🙋 ' + esc(t.ask) : ''
-    said.innerHTML = t ? md(t.said) : live ? md(live) : '<div class="m">지금 답은 아직 없습니다 · ⌥, 로 지난 대화</div>'
+    // The time rides with the question, not the tab row: the bar keeps one
+    // width whichever turn is shown, so it never wraps onto a line of its own.
+    ask.innerHTML = t ? '🙋 <span class="m">' + esc(clock(t.at)) + '</span> ' + esc(t.ask) : ''
+    said.innerHTML = t ? md(t.said) : live ? md(live) : '<div class="m">지금 답은 아직 없습니다 · PgUp 으로 지난 대화</div>'
     said.classList.toggle('old', !!t)
     // A past turn opens at its start, where its conclusion is; the live
     // answer at its end, where the question usually is.
@@ -1355,6 +1389,24 @@ function toggleAuth(on = authp.style.display !== 'block') {
   if (on && authNow) { authp.innerHTML = authHtml(authNow); authp.style.display = 'block' } else authp.style.display = 'none'
 }
 authchip.onclick = () => toggleAuth()
+// Sessions whose MCP connections dropped: one press asks each to reconnect.
+const mcpchip = document.getElementById('mcpchip')
+let mcpDown = []
+function renderMcpChip(people) {
+  mcpDown = (people || []).filter((p) => p.mcp && p.mcp.dropped && p.mcp.dropped.length)
+  mcpchip.style.display = mcpDown.length ? '' : 'none'
+  if (!mcpDown.length) return
+  const names = [...new Set(mcpDown.flatMap((p) => p.mcp.dropped.map((x) => x.server.replace(/^claude\.ai /, ''))))]
+  mcpchip.textContent = '🔌 MCP 끊김 ' + mcpDown.length + '세션'
+  mcpchip.title = names.join(', ') + ' · 누르면 모두 다시 연결 (세션마다 /mcp reconnect)'
+}
+mcpchip.onclick = async () => {
+  let ok = 0
+  for (const p of mcpDown) {
+    try { const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ sid: p.id, kind: 'mcp', value: [] }) }); if (r.status === 403) return staleToken(); if (r.ok) ok++ } catch { /* the next poll shows it still down */ }
+  }
+  toast('🔌 ' + ok + '개 세션에 MCP 다시 연결을 요청했습니다')
+}
 addEventListener('mousedown', (e) => { if (authp.style.display === 'block' && !e.target.closest('#authp, #authchip')) toggleAuth(false) }, true)
 function webHtml(panes) {
   return panes.map((w) => '<div class="h">🌐 ' + esc(w.pane) + ' · ' + esc(w.engine || '') + (w.linked ? ' · 이 세션에 연결' : ' · 같은 창') + '</div>'
@@ -1396,7 +1448,7 @@ function sideBox(sid, t) {
     if (e.isComposing || e.keyCode === 229) return
     if (e.altKey) return // ⌥B, ⌥M… are the card's
     if ((e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey) { e.preventDefault(); scrollSide(e.key === 'PageUp' ? -1 : 1); return }
-    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
+    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); pageKey(e.key === 'PageUp' ? -1 : 1); return }
     if (e.key === 'Escape') { e.preventDefault(); ta.blur(); return }
     if (e.key !== 'Enter' || e.shiftKey) return
     e.preventDefault()
@@ -1484,10 +1536,11 @@ async function openCard(sid, kind = null) {
     card.shelfTab = (dir) => { if (avail.length) { cur = (cur + dir + avail.length) % avail.length; show(true) } }
     show()
     // The drawer is the whole card: no conversation, just a way to it.
-    card.said = card.reply = card.stop = card.grant = card.mute = card.go = card.turnStep = null
+    card.said = card.reply = card.stop = card.grant = card.mute = card.go = card.turnStep = card.mcpFix = null
     const nav2 = add('div', 'row')
     const talk = document.createElement('button'); talk.className = 'act nav'; talk.innerHTML = '<span class="key">⏎</span>💬 대화 보기'; talk.onclick = () => openCard(sid); nav2.appendChild(talk)
     card.keys[0] = talk
+    card.khint = add('div', 'khint'); drawHints()
     return
   } else card.shelfTab = null
   // Tabs: the answer, and what it was handed, sent and wrote (from its
@@ -1531,7 +1584,6 @@ async function openCard(sid, kind = null) {
     const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
     // Opens at the end, where the question usually is; the keys scroll it.
     card.said = said
-    add('div', 'scrollhint', 'PgUp/PgDn · 빈 답장칸에서 ↑↓ · 답장칸 밖에서 j/k · Space · Home/End')
     turnNav(panes.said, said, d.text, pn.history || [])
   } else if ((pn.history || []).some((t) => !t.notice && t.said)) {
     // Mid-work there is no answer yet, but the past ones are still worth a look.
@@ -1552,6 +1604,18 @@ async function openCard(sid, kind = null) {
     const gb = document.createElement('button'); gb.className = 'act grantb'; gb.innerHTML = '<span class="key">A</span>승인하고 계속'; gb.onclick = () => send({ kind: 'grant' }, d.grant.label + ' ' + d.grant.minutes + '분 허용')
     gbox.appendChild(gb); card.grant = gb
   } else card.grant = null
+  // MCP servers this session had and lost (its cc-mods watches them; sign-in
+  // is the header's 🔑, one answer for all sessions). One press asks that
+  // session to reconnect them; it also tries on its own between turns.
+  const mc = me.mcp
+  if (mc && mc.dropped && mc.dropped.length) {
+    const since = Math.min(...mc.dropped.map((x) => x.since || Date.now() / 1000)), tries = Math.max(...mc.dropped.map((x) => x.tries || 0))
+    const mbox = add('div', 'mcpdrop', '🔌 <b>MCP 끊김</b> ' + esc(mc.dropped.map((x) => x.server.replace(/^claude\.ai /, '')).join(', '))
+      + '<span class="m">' + esc(ago(since)) + ' · ' + (mc.heal ? '자동 재연결 ' + tries + '/3' : '자동 재연결 꺼짐') + '</span>')
+    const mb = document.createElement('button'); mb.className = 'act'; mb.innerHTML = '<span class="key">C</span>다시 연결'; mb.title = '그 세션에서 /mcp reconnect (C)'
+    mb.onclick = () => send({ kind: 'mcp', value: [] }, 'MCP 다시 연결 요청 · 몇 초 뒤 반영')
+    mbox.appendChild(mb); card.mcpFix = mb
+  } else card.mcpFix = null
   const msg = document.createElement('div'); msg.className = 'msg'
   let armed = null
   const send = async (body, label) => {
@@ -1613,7 +1677,7 @@ async function openCard(sid, kind = null) {
       if (e.key === 'Tab') { e.preventDefault(); step(e.shiftKey ? -1 : 1); return }
       if (!ta.value && /^[1-9]$/.test(e.key) && card.keys && card.keys[+e.key]) { e.preventDefault(); card.keys[+e.key].click(); return }
       if ((e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey && scrollSide(e.key === 'PageUp' ? -1 : 1)) { e.preventDefault(); return }
-      if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); scrollSaid(e.key === 'PageUp' ? 'pgup' : 'pgdn'); return }
+      if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); pageKey(e.key === 'PageUp' ? -1 : 1); return }
       if (!ta.value && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); scrollSaid(e.key === 'ArrowUp' ? 'up' : 'down'); return }
       if (e.key === 'Escape') { e.preventDefault(); ta.blur() }
     }
@@ -1630,18 +1694,16 @@ async function openCard(sid, kind = null) {
   zz.onclick = () => showQuiet(sid, zz); nav.appendChild(zz); card.mute = zz
   const nx = document.createElement('button'); nx.className = 'act nav'; nx.innerHTML = '<span class="key">N</span>▶'; nx.title = '다음 agent (N · Tab)'; nx.onclick = () => step(1); nav.appendChild(nx)
   foot.appendChild(msg)
-  // Laid out now: open the answer at its end, where the question usually is,
-  // and keep the scroll hint only when there is something to scroll.
+  card.khint = add('div', 'khint'); drawHints()
+  // Laid out now: open the answer at its end, where the question usually is.
   if (card.said) {
     const pane0 = card.said.closest('.cpane'); for (const el of [card.said, pane0]) if (el) el.style.scrollBehavior = 'auto'
     scrollSaid('bottom')
     for (const el of [card.said, pane0]) if (el) el.style.scrollBehavior = ''
-    const pane = card.said.closest('.cpane'), hint = pane && pane.querySelector('.scrollhint')
-    const over = (el) => el && el.scrollHeight > el.clientHeight + 4
-    if (hint && !over(pane) && !over(card.said)) hint.remove()
   }
   // A dialog has no reply box; the card itself takes the keys then.
-  setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } }, 30)
+  // drawHints after: focus() in a window without focus fires no focusin.
+  setTimeout(() => { if (cardSid !== sid) return; if (card.reply) card.reply.focus({ preventScroll: true }); else { card.tabIndex = -1; card.focus({ preventScroll: true }) } drawHints() }, 30)
 }
 
 // ---------- hover ----------
@@ -1854,19 +1916,64 @@ function showPlaces(v, anchor) {
 }
 function pickPlace(k) {
   const v = placeMenu.v; hidePlaces()
-  try { localStorage.setItem(placeKey(v), k) } catch {}
+  keep(placeKey(v), k)
   openLink(v, k)
 }
 function hidePlaces() { placeMenu.style.display = 'none'; placeMenu.v = null; const b = placeMenu.back; placeMenu.back = null; if (b && b.isConnected && b !== document.body) b.focus({ preventScroll: true }) }
 addEventListener('mousedown', (e) => { if (placeMenu.v && !e.target.closest('#placemenu, .place')) hidePlaces() }, true)
 
 // ---------- settings (⚙) ----------
-// The office's own choices, kept in this browser: where links and files open
+// The office's own choices, kept by keep(): where links and files open
 // outside (the same choice the ▾ menu remembers), whether a file chip shows the
 // file inside first. The session default is its @browser, named beside it.
 function pref(k, d) { try { return localStorage.getItem('office.' + k) ?? d } catch { return d } }
-function setPref(k, v) { try { localStorage.setItem('office.' + k, v) } catch {} }
+function setPref(k, v) { keep('office.' + k, v) }
 const viewInside = () => pref('viewInside', '1') === '1'
+const hintsOn = () => pref('keyHints', '1') === '1'
+function toggleHints() { setPref('keyHints', hintsOn() ? '0' : '1'); drawHints(); toast(hintsOn() ? '⌨ 단축키 힌트 켬' : '⌨ 단축키 힌트 끔 · ⌥/ 로 다시 켭니다') }
+// The keys that do something where the focus is now, most useful first: the
+// reply box with text in it only sends; empty, it also scrolls and moves; out
+// of it the bare letters work. Drawn again on every focus change, keyup and
+// click in the card, so it follows tabs, past turns and btw without each of
+// them having to say so.
+function hintItems() {
+  const a = document.activeElement, inReply = !!card.reply && a === card.reply, inBtw = !!card.side && a === card.side.input
+  const onSaid = !!(card.said && card.curPane && card.curPane.contains(card.said))
+  const past = !!(card.turnNavEl && card.turnNavEl.classList.contains('past'))
+  if (inBtw) return [['Enter', 'btw 보내기'], ['⇧PgUp/PgDn', 'btw 스크롤'], ['PgUp/PgDn', onSaid && card.turnStep ? '왼쪽 대화 이동' : '왼쪽 스크롤'], ['⌥B', 'btw 닫기'], ['Esc', '입력 나가기']]
+  if (inReply && card.reply.value) return [['Enter', '보내기'], ['⇧Enter', '줄바꿈'], ['Esc', '입력 나가기']]
+  const h = [], alt = inReply ? '⌥' : ''
+  if (card.keys && card.keys.slice(1).some(Boolean)) h.push(['1-9', '버튼 고르기'])
+  if (card.keys && card.keys[0] && !card.reply) h.push(['Enter', '대화 보기'])
+  if (onSaid) {
+    h.push([inReply ? '↑↓' : '↑↓ j k', '스크롤'])
+    if (card.turnStep) h.push(['PgUp/PgDn', past ? '이전·다음 대화' : '지난 대화'])
+  } else if (card.moveResource) h.push(['↑↓', '고르기'], ['Enter', '열기'])
+  else if (card.curPane) h.push(['PgUp/PgDn', '한 화면씩'])
+  if (card.selectTab) h.push([inReply ? '⌥1-9' : '[ ] ⌥1-9', '탭'])
+  if (inReply) h.push(['Tab', '다음 agent'], ['Esc', '입력 나가기'])
+  else if (card.reply) h.push(['R', '답장칸'])
+  if (card.grant) h.push([alt + 'A', '승인'])
+  if (card.mcpFix) h.push([alt + 'C', 'MCP 다시 연결'])
+  if (card.stop) h.push([alt + 'S', '멈추기'])
+  if (card.side) h.push(['⌥B', 'btw'])
+  h.push(['⌥M', card.classList.contains('max') ? '원래 크기' : '최대화'])
+  if (!inReply) h.push(['?', '전체 단축키'])
+  return h
+}
+function drawHints() {
+  const box = card.khint
+  if (!box || !box.isConnected) return
+  if (!hintsOn() || card.style.display !== 'block') { box.innerHTML = ''; return }
+  const html = '<span class="ks">' + hintItems().map(([k, t]) => '<span class="k"><kbd>' + esc(k) + '</kbd>' + esc(t) + '</span>').join('') + '</span><button class="khx" title="힌트 숨기기 (⌥/ · ⚙ 설정)">✕</button>'
+  if (box.innerHTML === html) return
+  box.innerHTML = html
+  box.querySelector('.khx').onclick = toggleHints
+}
+let hintFrame = 0
+const queueHints = () => { if (!hintFrame) hintFrame = requestAnimationFrame(() => { hintFrame = 0; drawHints() }) }
+for (const ev of ['focusin', 'focusout', 'input', 'click']) card.addEventListener(ev, queueHints)
+addEventListener('keyup', queueHints)
 const settings = document.createElement('div'); settings.id = 'settings'; document.body.appendChild(settings)
 function settingPick(k, cur, options) {
   const selected = options.find(([v]) => v === cur) || options[0]
@@ -1879,6 +1986,7 @@ function openSettings() {
     + '<div class="row"><div>🌐 웹 링크 열 곳 <span class="m">PR · 아티팩트 · Slack · 티켓</span></div>' + settingPick('place.web', pref('place.web', 'session'), web) + '</div>'
     + '<div class="row"><div>📄 파일 밖으로 열 곳 <span class="m">↗ 밖으로 · O</span></div>' + settingPick('place.file', pref('place.file', 'session'), file) + '</div>'
     + '<div class="row"><label><input type="checkbox" data-k="viewInside"' + (viewInside() ? ' checked' : '') + '> 볼 수 있는 파일은 먼저 안에서 보기 (👁)</label></div>'
+    + '<div class="row"><label><input type="checkbox" data-k="keyHints"' + (hintsOn() ? ' checked' : '') + '> 대화창 아래에 상황별 단축키 힌트 (⌥/)</label></div>'
     + '<div class="m">"이 세션 설정대로"는 그 세션 pane의 @browser를 따릅니다 (tmux-chrome). 고른 곳은 이 브라우저에 저장되고, 칩의 ▾·우클릭 메뉴에서 고른 것도 여기에 반영됩니다. <kbd>,</kbd> 또는 <kbd>Esc</kbd>로 닫기.</div>'
   settings.querySelectorAll('.pick').forEach((pick) => {
     const trigger = pick.querySelector('.trigger'), opts = pick.querySelector('.opts')
@@ -1886,7 +1994,7 @@ function openSettings() {
     trigger.onkeydown = (e) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trigger.click() } }
     opts.querySelectorAll('button').forEach((b) => { b.onclick = () => { const k = pick.dataset.k; if (k === 'skin') setSkin(b.dataset.v); else setPref(k, b.dataset.v); toast('⚙ 저장했습니다'); openSettings() }; b.onkeydown = (e) => { const all = [...opts.querySelectorAll('button')], i = all.indexOf(b); if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); all[(i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length].focus() } } })
   })
-  settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); toast('⚙ 저장했습니다') } })
+  settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); drawHints(); toast('⚙ 저장했습니다') } })
   settings.style.display = 'block'
 }
 const closeSettings = () => { settings.style.display = 'none' }
@@ -3387,7 +3495,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; renderAuthChip(); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; renderAuthChip(); renderMcpChip(j.people); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

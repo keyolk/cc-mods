@@ -58,3 +58,28 @@ class AliveSessionsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrefsTest(unittest.TestCase):
+    # The skin and settings outlive the browser's storage: TWeb's Electron
+    # Local Storage was found rebuilt empty and the skin fell back to default.
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        p = mock.patch.object(office, "PREFS_FILE", os.path.join(self.dir.name, "office", "prefs.json"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_a_kept_choice_reads_back(self):
+        self.assertEqual(office.prefs(), {})
+        self.assertTrue(office.set_pref("office.skin", "guildhall"))
+        self.assertTrue(office.set_pref("office-card-zoom", "1.2"))
+        self.assertEqual(office.prefs(), {"office.skin": "guildhall", "office-card-zoom": "1.2"})
+        self.assertTrue(office.set_pref("office.skin", None))
+        self.assertEqual(office.prefs(), {"office-card-zoom": "1.2"})
+
+    def test_only_the_pages_own_keys(self):
+        self.assertFalse(office.set_pref("token", "x"))
+        self.assertFalse(office.set_pref("office.skin", 3))
+        self.assertFalse(office.set_pref("office.skin", "x" * 3000))
+        self.assertEqual(office.prefs(), {})

@@ -87,7 +87,7 @@ export function renderSettings(els: Els, v: SettingsView): Node {
       section(els, 'Cockpit'),
       line('at start', onOff('start', v.onStart, v.onStartChange), 'open the cockpit when a session starts (this machine)'),
       line('slash list', onOff('slash-hide', v.slashHide, v.onSlashHide), 'hide the cockpit while the prompt shows /command candidates; restore it when the token ends'),
-      line('MCP', onOff('mcp-heal', v.mcpHeal, v.onMcpHeal), 'when an MCP call fails because its server dropped, reconnect that server as the turn ends (/mcp reconnect <server> does it by hand)'),
+      line('MCP', onOff('mcp-heal', v.mcpHeal, v.onMcpHeal), 'when an MCP server drops in this session (a failed call, or its tools gone at the minute check), reconnect it between turns, at most 3 times; the office card has a reconnect button (/mcp reconnect <server> does it by hand)'),
       line('resume', onOff('resume', v.autoResume, v.onAutoResume), 'a turn a disconnect cut off (sleep, VPN, refused) continues once the API answers again'),
       line('RCA', onOff('rca', v.rcaAuto, v.onRcaAuto), 'an alert thread you paste starts RCA mode: read prod, write in the alerting service, post in its channel, for 2h'),
 

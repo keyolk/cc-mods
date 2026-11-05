@@ -11,16 +11,16 @@ import { expect, test } from 'claude-code/testing'
 import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldLogins, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
 import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
-import { linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
+import { activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
 import { treeRows } from '../hooks/views/home'
 import { filterPalette, paletteItems } from '../hooks/lib/palette'
 import { helpSections } from '../hooks/lib/help'
-import { isMcpTool, looksDisconnected, mcpServerKey, normalizeServer, resultText } from '../hooks/lib/mcpheal'
+import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, resultText } from '../hooks/lib/mcpheal'
 import { goalChip, goalVisible, parseGoal } from '../hooks/lib/goal'
 import { blockOf, nowAllowed, resumePrompt } from '../hooks/lib/unblock'
 import { accountStrip, bar, cacheHit, effortMix, hookName, modelStrip, seriesBy, parseJev, parseQuota, parseUsage, share, shortModel, span, sparkline, until, usd, type Usage } from '../hooks/lib/usage'
 import { ROUTE_OFF, cacheGate, decide, resolveModel, routeLabel } from '../hooks/lib/route'
-import { WEB_ANCHOR, engineForUrl, engineOfTarget, parseEngine, parseEngineRules, urlPicks, urlsIn, keyBytes, sgrMouse, sgrWheel, toHex, urlFromInput } from '../hooks/lib/web'
+import { WEB_ANCHOR, engineForUrl, engineOfTarget, parseEngine, parseEngineRules, fuzzyScore, urlFuzzy, urlPicks, urlsIn, keyBytes, sgrMouse, sgrWheel, toHex, urlFromInput } from '../hooks/lib/web'
 import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/backfill'
 import { agentFlow, flowOf, paragraphs } from '../hooks/lib/flow'
 import { CAPS, GOD_MS, badge, godArgvs, godExtended, isGod, parseGodMinutes, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
@@ -1325,6 +1325,23 @@ test('web: the go field offers the session URLs, newest first, narrowed by every
   expect(urlPicks(outs, 'nothing')).toEqual([])
 })
 
+test('web: /web typeahead matches session URLs fuzzily, best match first', () => {
+  const outs = [
+    { url: 'https://grafana-internal.tools.acme.io/d/abc/pubsub-dashboard', title: 'grafana-internal.tools.acme.io/d/abc/pubsub-dashboard', kind: 'link', at: 1 },
+    { url: 'https://github.com/acme/ccproxy/pull/267', title: 'acme/ccproxy#267', kind: 'pr', at: 5 },
+    { url: 'https://docs.example.com/guide/graphs', title: 'docs.example.com/guide/graphs', kind: 'link', at: 3 },
+  ]
+  // Letters in order, not side by side.
+  expect(urlFuzzy(outs, 'grfpub').map((p) => p.kind)).toEqual(['link'])
+  expect(urlFuzzy(outs, 'cpx267')[0]?.url).toBe('https://github.com/acme/ccproxy/pull/267')
+  // A contiguous hit outranks letters scattered through a longer URL.
+  expect(urlFuzzy(outs, 'graph')[0]?.url).toBe('https://docs.example.com/guide/graphs')
+  // Every word must match.
+  expect(urlFuzzy(outs, 'graf zzz')).toEqual([])
+  expect(fuzzyScore('abc', 'ca')).toBe(-1)
+  expect(fuzzyScore('a/b-c', 'abc')).toBeGreaterThan(fuzzyScore('axxbxxc', 'abc'))
+})
+
 test('web: URLs in an answer become picks, without trailing punctuation or markdown', () => {
   expect(urlsIn('see https://example.com/docs. and [x](https://a.io/b?c=1), or `https://q.dev`', 1).map((u) => [u.url, u.title])).toEqual([
     ['https://example.com/docs', 'example.com/docs'],
@@ -1466,6 +1483,20 @@ test('mcp heal: a dropped-server failure is told from a tool error; a tool maps 
   expect(mcpServerKey('Bash')).toBeUndefined()
 })
 
+test('mcp watch: a server seen in this session and gone is dropped, kept with when it went; one never seen is not', () => {
+  expect(liveServers([{ serverName: 'portal' }, { serverName: 'claude.ai Slack' }, { serverName: 'portal' }, {}])).toEqual(['claude.ai Slack', 'portal'])
+  const a = nextWatch(MCP_WATCH_EMPTY, ['portal', 'rea'], 1)
+  expect(a.dropped).toEqual([])
+  const b = nextWatch(a, ['portal'], 2)
+  expect(b.dropped).toEqual([{ server: 'rea', since: 2 }])
+  // Still gone a minute later: the time it went stays.
+  expect(nextWatch(b, ['portal'], 3).dropped).toEqual([{ server: 'rea', since: 2 }])
+  // Back: no longer dropped, still remembered as this session's.
+  const c = nextWatch(b, ['portal', 'rea', 'narwhal'], 4)
+  expect(c.dropped).toEqual([])
+  expect(c.seen).toEqual(['narwhal', 'portal', 'rea'])
+})
+
 test('slack follow: due only when auto, unseen replies exist and their newest is not the one already run', () => {
   const st = { channel: 'C1', root: '1.0', replies: 2, unseen: 1, newest: '2.0', checkedAt: 0 }
   expect(followDue(st, { auto: true })).toBe(true)
@@ -1473,6 +1504,20 @@ test('slack follow: due only when auto, unseen replies exist and their newest is
   expect(followDue(st, { auto: false })).toBe(false)
   expect(followDue({ ...st, unseen: 0 }, { auto: true })).toBe(false)
   expect(followDue(undefined, { auto: true })).toBe(false)
+})
+
+test('webside: a pane of chrome tabs is a chrome pane, whatever its own engine says', () => {
+  // Live: %265 reported browser electron with four chrome tabs, and every
+  // claude.ai link made a new pane beside it.
+  const json = JSON.stringify([
+    { pane: '%244', status: { browser: 'electron', tabs: { tabs: [{ index: 0, url: 'http://127.0.0.1:8796/', active: true, engine: 'electron' }] } } },
+    { pane: '%265', status: { browser: 'electron', tabs: { tabs: [{ index: 0, url: 'https://claude.ai/a', active: true, engine: 'chrome' }, { index: 1, url: 'https://claude.ai/b', engine: 'chrome' }] } } },
+  ])
+  const panes = parseTwebPanes(json, new Set(['%244', '%265']))
+  expect(panes[1]?.tabs[0]?.engine).toBe('chrome')
+  expect(activeEngine(panes[1]!)).toBe('chrome')
+  expect(pickSidePane(panes, { engine: 'chrome' })?.pane).toBe('%265')
+  expect(pickSidePane(panes, { engine: 'electron' })?.pane).toBe('%244')
 })
 
 test('webside: tweb panes narrowed to this window; the driven pane stays, else the wanted engine', () => {
@@ -1489,9 +1534,11 @@ test('webside: tweb panes narrowed to this window; the driven pane stays, else t
   expect(panes[0]?.tabs[0]).toEqual({ index: 0, title: 'A', url: 'https://a/', active: true })
   expect(pickSidePane(panes, { prefer: '%44' })?.pane).toBe('%44')
   expect(pickSidePane(panes, { engine: 'chrome' })?.pane).toBe('%44')
-  // A managed-Chrome URL must not land in Electron.
-  expect(pickSidePane(panes, { engine: 'webkit', strict: true })).toBeUndefined()
+  // No pane on that engine: still a pane here (its new tab moves engines),
+  // never undefined, which split off a new pane.
   expect(pickSidePane(panes, { engine: 'webkit' })?.pane).toBe('%43')
+  // The driven pane wins whatever its engine.
+  expect(pickSidePane(panes, { engine: 'chrome', prefer: '%43' })?.pane).toBe('%43')
   expect(parseTwebPanes('not json', new Set())).toEqual([])
   expect(sideArgv('%43', ['tab', 'switch', '1'])).toEqual(['tweb', 'tab', 'switch', '1', '--pane', '%43'])
   expect(splitArgv('%42', 'chrome', 'https://x/', '/work')).toEqual(['split-window', '-h', '-P', '-F', '#{pane_id}', '-t', '%42', '-c', '/work', 'tweb', 'open', '--engine', 'chrome', 'https://x/'])

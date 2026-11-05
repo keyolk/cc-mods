@@ -476,9 +476,36 @@ def snapshot() -> list[dict]:
                 "job": job_of(tc["by"]),
                 "rank": rank_of(tc["total"]),
                 "born": born(sid),
+                "mcp": mcp_state(sid),
             }
         )
     return people
+
+
+# ---- MCP connections, per session ----------------------------------------
+# Not sign-in (that is auth(), one answer for every session): which of the
+# servers a session had are gone from it now, as its cc-mods writes them
+# (register.ts mcpExport). The card's reconnect goes back the same way, a file
+# that session takes (officeMcp), so the office never runs /mcp itself.
+MCP_DIR = os.path.expanduser("~/.claude/state/office/mcp")
+
+
+def mcp_state(sid: str) -> dict | None:
+    try:
+        with open(os.path.join(MCP_DIR, sid + ".json")) as f:
+            d = json.load(f) or {}
+    except (OSError, ValueError):
+        return None
+    dropped = [{"server": str(x.get("server") or ""), "since": (x.get("since") or 0) / 1000 or None, "tries": int(x.get("tries") or 0)} for x in d.get("dropped") or [] if isinstance(x, dict) and x.get("server")]
+    return {"dropped": dropped, "live": len(d.get("live") or []), "heal": d.get("heal") is not False} if dropped else None
+
+
+def mcp_reconnect(sid: str, servers: list[str]) -> None:
+    os.makedirs(MCP_DIR, exist_ok=True)
+    tmp = os.path.join(MCP_DIR, sid + ".reconnect.json.tmp")
+    with open(tmp, "w") as f:
+        json.dump({"servers": servers, "at": time.time()}, f)
+    os.replace(tmp, os.path.join(MCP_DIR, sid + ".reconnect.json"))
 
 
 # ---- quick actions -------------------------------------------------------
@@ -1360,6 +1387,11 @@ def act(body: dict) -> tuple[int, dict]:
             env["TMUX_CHROME_BROWSER"] = via
         subprocess.Popen([opener, target], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return 200, {"ok": True, "sent": "opened in " + (via if via not in ("", "session") else route_of(pane))}
+    if kind == "mcp":
+        # value: the server names to reconnect, or empty for every dropped one.
+        names = [str(x)[:200] for x in value if isinstance(x, str) and x] if isinstance(value, list) else []
+        mcp_reconnect(sid, names[:20])
+        return 200, {"ok": True, "sent": "MCP 다시 연결 요청"}
     if kind == "stop":
         if me["state"] != "working":
             return 409, {"error": "it is not working"}
@@ -1435,6 +1467,40 @@ def rearrange(kind: str, me: dict, value) -> tuple[int, dict]:
 # type to the session themselves (a human prompt in its transcript after
 # `since`; a plugin's asUser prompt counts, as the office's replies go that
 # way, a plugin's own notification does not).
+# The page's own choices (skin, settings, card size, where links open), kept
+# here and not only in the browser: TWeb's Electron storage was found rebuilt
+# empty (its Local Storage leveldb recreated) and a write it had not flushed
+# yet dies with the engine, so the skin fell back to the default. The page
+# still keeps them in localStorage too; this copy wins when the page loads.
+PREFS_FILE = os.path.expanduser("~/.claude/state/office/prefs.json")
+PREF_KEY = re.compile(r"office[.-][\w.-]{1,60}")
+
+
+def prefs() -> dict:
+    try:
+        with open(PREFS_FILE) as f:
+            d = json.load(f) or {}
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in d.items() if isinstance(k, str) and PREF_KEY.fullmatch(k) and isinstance(v, str)}
+
+
+def set_pref(key: str, value: str | None) -> bool:
+    if not isinstance(key, str) or not PREF_KEY.fullmatch(key) or not (value is None or (isinstance(value, str) and len(value) <= 2000)):
+        return False
+    d = prefs()
+    if value is None:
+        d.pop(key, None)
+    else:
+        d[key] = value
+    os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
+    tmp = PREFS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, PREFS_FILE)
+    return True
+
+
 MUTE_FILE = os.path.expanduser("~/.claude/state/office/mute.json")
 _spoke: dict[str, tuple[int, float | None]] = {}
 
@@ -1547,12 +1613,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/next":
             NEXT["n"] += 1
             return self.send(204, b"", "text/plain")
-        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path != "/act":
+        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs"):
             return self.send(403, b"forbidden", "text/plain")
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 20_000)) or b"{}")
         except ValueError:
             return self.send(400, b"bad json", "text/plain")
+        if self.path == "/prefs":
+            ok = isinstance(body, dict) and set_pref(body.get("key"), body.get("value"))
+            return self.send(204 if ok else 400, b"", "text/plain")
         code, out = act(body)
         self.send(code, json.dumps(out).encode(), "application/json")
 
@@ -1608,7 +1677,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, skin, "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
-                page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
+                page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_PREFS__", json.dumps(prefs()).replace("<", "\\u003c").encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
                 return self.send(200, page, "text/html; charset=utf-8")
         self.send(404, b"not found", "text/plain")
 
