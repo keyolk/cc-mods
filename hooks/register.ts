@@ -4040,14 +4040,13 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // `/web <typed>`: the URLs this session met, fuzzy-matched (lib/web
   // urlFuzzy). Only the argument (after an engine flag, if any); a flag being
   // typed is left alone.
+  // One hook: the engine refuses a second matcher-less one on this event.
   on('prompt.autocomplete', async ($: any, e: any, next: any) => {
-    if (!/^\/web\s+(--\w+\s+)?$/.test(e.text.slice(0, e.start)) || e.token.startsWith('-')) return next(e)
-    const mine = urlFuzzy(await sessionUrls($), e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
-    const r = await next(e)
-    return { suggestions: [...mine, ...(r?.suggestions ?? [])] }
-  })
-
-  on('prompt.autocomplete', async ($: any, e: any, next: any) => {
+    if (/^\/web\s+(--\w+\s+)?$/.test(e.text.slice(0, e.start)) && !e.token.startsWith('-')) {
+      const urls = urlFuzzy(await sessionUrls($), e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
+      const r = await next(e)
+      return { suggestions: [...urls, ...(r?.suggestions ?? [])] }
+    }
     const mine = suggest(e.token, e.text.slice(0, e.cursor), sources)
     if (mine.length === 0) return next(e)
     const r = await next(e)
