@@ -4043,7 +4043,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // One hook: the engine refuses a second matcher-less one on this event.
   on('prompt.autocomplete', async ($: any, e: any, next: any) => {
     if (/^\/web\s+(--\w+\s+)?$/.test(e.text.slice(0, e.start)) && !e.token.startsWith('-')) {
-      const urls = urlFuzzy(await sessionUrls($), e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
+      // A row once taken is asked again with the whole URL as the token: no
+      // row for the URL already in the box.
+      const urls = urlFuzzy(await sessionUrls($), e.token).filter((p) => p.url !== e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
       const r = await next(e)
       return { suggestions: [...urls, ...(r?.suggestions ?? [])] }
     }
