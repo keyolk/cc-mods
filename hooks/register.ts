@@ -3957,6 +3957,11 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // prompt.edit. Restore/hide from the resulting box too.
   on('prompt.change', async ($: any, e: any, next: any) => {
     if ((await wake($)) && interactive) void refreshNeighbors($)
+    // `/web` + Tab: the command completion writes `/web ` (an engine write,
+    // not an edit), and the engine asks for no completions on an empty
+    // token, while a second Tab reaches no hook. So the list comes up here:
+    // `?` is the /web typeahead's list-all token (typing on narrows it).
+    if (e.origin?.kind === 'engine' && WEB_ARG.test(e.text) && e.cursor === e.text.length) void $.prompt.fill({ text: '?', mode: 'append' })
     await setSlashCockpit($, slashToken(e.text))
     return next(e)
   })
