@@ -2582,6 +2582,9 @@ async function webLinkBadge($: any): Promise<'ok' | 'down' | 'driving' | undefin
   return side.link.state === 'ok' ? 'ok' : 'down'
 }
 
+// The draft up to /web's URL argument: the command, then an engine flag if any.
+const WEB_ARG = /^\/web\s+(--\w+\s+)?$/
+
 // Every URL this session met, for the Web tab's go field and /web's
 // typeahead: outputs first (they carry titles), then any other URL the
 // answers and prompts held, newest turns first.
@@ -3930,6 +3933,13 @@ export function register(on: any, options: Record<string, unknown> = {}) {
 
   // ---- prompts: slash-command typeahead, fork offer, policy section ----
   on('prompt.edit', { origin: { kind: 'composer' } }, async ($: any, e: any, next: any) => {
+    // Tab right after `/web ` lists the session's URLs. The engine asks for
+    // completions only once a token is typed, so Tab writes `?`, the token
+    // the /web typeahead reads as "everything" (typing `?` works the same).
+    if (e.key?.key === 'tab' && !e.key.shift && !e.key.ctrl && !e.key.meta && e.cursor === e.text.length && WEB_ARG.test(e.text)) {
+      await setSlashCockpit($, slashToken(e.text + '?'))
+      return { text: e.text + '?', cursor: e.text.length + 1 }
+    }
     const r = await next(e)
     await setSlashCockpit($, slashToken(r.text))
     return r
@@ -4042,10 +4052,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // typed is left alone.
   // One hook: the engine refuses a second matcher-less one on this event.
   on('prompt.autocomplete', async ($: any, e: any, next: any) => {
-    if (/^\/web\s+(--\w+\s+)?$/.test(e.text.slice(0, e.start)) && !e.token.startsWith('-')) {
+    if (WEB_ARG.test(e.text.slice(0, e.start)) && !e.token.startsWith('-')) {
       // A row once taken is asked again with the whole URL as the token: no
-      // row for the URL already in the box.
-      const urls = urlFuzzy(await sessionUrls($), e.token).filter((p) => p.url !== e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
+      // row for the URL already in the box. A leading `?` (Tab's) is no query.
+      const urls = urlFuzzy(await sessionUrls($), e.token.replace(/^\?/, '')).filter((p) => p.url !== e.token).map((p) => ({ text: p.url, label: p.title, description: p.kind + ' · ' + clip(p.url.replace(/^https?:\/\//, ''), 60) }))
       const r = await next(e)
       return { suggestions: [...urls, ...(r?.suggestions ?? [])] }
     }
@@ -4113,7 +4123,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const flag = /^--(\w+)\s+/.exec(args)
     const engine = flag ? parseEngine(flag[1]) : undefined
     if (flag && !engine) return { text: 'Unknown engine --' + flag[1] + '. Use --electron, --chrome or --webkit.' }
-    let url = flag ? args.slice(flag[0].length) : args
+    let url = (flag ? args.slice(flag[0].length) : args).replace(/^\?/, '')
+    if (!url) return openCockpit($, 'web', e.presentation.columns, e.presentation.isFullscreen, false)
     if (!/^[a-z][\w+.-]*:/i.test(url)) url = 'https://' + url
     const err = await openWeb($, url, engine)
     return { text: err || 'Opening ' + url + (embedOn ? ' in the Web tab (6).' : ' in a TWeb pane beside this one.') }

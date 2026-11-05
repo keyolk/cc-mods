@@ -1338,6 +1338,8 @@ test('web: /web typeahead matches session URLs fuzzily, best match first', () =>
   expect(urlFuzzy(outs, 'graph')[0]?.url).toBe('https://docs.example.com/guide/graphs')
   // Every word must match.
   expect(urlFuzzy(outs, 'graf zzz')).toEqual([])
+  // No query (Tab's `?` stripped): every URL, the rest before PRs, newest first.
+  expect(urlFuzzy(outs, '').map((p) => p.kind)).toEqual(['link', 'link', 'pr'])
   expect(fuzzyScore('abc', 'ca')).toBe(-1)
   expect(fuzzyScore('a/b-c', 'abc')).toBeGreaterThan(fuzzyScore('axxbxxc', 'abc'))
 })
