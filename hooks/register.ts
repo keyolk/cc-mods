@@ -3961,7 +3961,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // not an edit), and the engine asks for no completions on an empty
     // token, while a second Tab reaches no hook. So the list comes up here:
     // `?` is the /web typeahead's list-all token (typing on narrows it).
-    if (e.origin?.kind === 'engine' && WEB_ARG.test(e.text) && e.cursor === e.text.length) void $.prompt.fill({ text: '?', mode: 'append' })
+    // `insert`, not `append`: with the append the picked URL went in ahead of
+    // the `?` (the cursor seemingly stayed before it) and /web opened `<url>?`.
+    if (e.origin?.kind === 'engine' && WEB_ARG.test(e.text) && e.cursor === e.text.length) void $.prompt.fill({ text: '?', mode: 'insert' })
     await setSlashCockpit($, slashToken(e.text))
     return next(e)
   })
@@ -4128,7 +4130,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const flag = /^--(\w+)\s+/.exec(args)
     const engine = flag ? parseEngine(flag[1]) : undefined
     if (flag && !engine) return { text: 'Unknown engine --' + flag[1] + '. Use --electron, --chrome or --webkit.' }
-    let url = (flag ? args.slice(flag[0].length) : args).replace(/^\?/, '')
+    // A `?` on either end is the typeahead's list-all token left beside a
+    // picked URL; a bare trailing `?` is an empty query, so nothing is lost.
+    let url = (flag ? args.slice(flag[0].length) : args).replace(/^\?|\?$/g, '')
     if (!url) return openCockpit($, 'web', e.presentation.columns, e.presentation.isFullscreen, false)
     if (!/^[a-z][\w+.-]*:/i.test(url)) url = 'https://' + url
     const err = await openWeb($, url, engine)
