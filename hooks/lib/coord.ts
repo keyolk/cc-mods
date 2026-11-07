@@ -197,11 +197,17 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
     }
     const asks = s.attention === 'ask' || s.attention === 'action'
     if (asks && w.attention !== s.attention) changes.push({ slug: w.slug, text: w.slug + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane', wake: true })
-    else if (s.state === 'done' && w.state === 'working') changes.push({ slug: w.slug, text: w.slug + ': finished its turn', wake: true })
+    // cc-mods publishes done at a turn's end and waiting (attention none)
+    // when the session idles after it; a watch tick can miss the done, and
+    // can miss the working too when the whole turn fits between two ticks.
+    // So any move into an idle state from a non-idle one is a finished turn.
+    else if (!asks && idle(s.state) && !idle(w.state) && (w.state === 'working' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, text: w.slug + ': finished its turn', wake: true })
     return next
   })
   return { ledger: { ...l, workers }, changes }
 }
+
+const idle = (state: string | undefined) => state === 'done' || state === 'waiting'
 
 export function held(w: Worker, now: number): boolean {
   return !!w.heldAt && now - w.heldAt < HOLD_MS
