@@ -4174,7 +4174,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   on('command.run', { command: 'coord' }, async ($: any, e: any) => ({ text: await coordCommand($, String(e.args ?? '')) }))
 
   // The coord_* tools (coord.ts), registered when the person turns the mode on.
-  on('tool.call', { tool: /coord_(roster|spawn|send|close)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e.input) : next(e)))
+  // A tool's arguments arrive spread on the event itself (as Bash's command
+  // does), not under `input`.
+  on('tool.call', { tool: /coord_(roster|spawn|send|close)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
 
   on('command.run', { command: 'office' }, async ($: any) => {
     const url = 'http://127.0.0.1:' + OFFICE_PORT + '/'

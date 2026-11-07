@@ -2814,3 +2814,46 @@ test('/office restarts a server left over from older code and keeps a current on
   expect(starts().length).toBe(1)
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
 })
+
+test('coordinator: /coord on registers the tools; a spawn reads its arguments off the call and starts a worker window', async ($, on) => {
+  const written: Record<string, string> = {}
+  const runs = baseStubs(on, {
+    pane: '%42',
+    written,
+    run: (a) => {
+      if (a[0] === 'git' && a.includes('--show-toplevel')) return { code: 0, out: '/src/tmc' }
+      if (a[0] === 'git' && a.includes('symbolic-ref')) return { code: 0, out: 'origin/main' }
+      if (a[0] === 'git') return { code: 0, out: '' }
+      if (a[0] === 'uuidgen') return { code: 0, out: 'ABC-1' }
+      if (a[0] === 'tmux' && a[1] === 'display-message') return { code: 0, out: 'main' }
+      if (a[0] === 'tmux' && a[1] === 'new-window') return { code: 0, out: '@9 %90' }
+      if (a[0] === 'tmux' && a[1] === 'list-panes') return { code: 0, out: '' }
+      return undefined
+    },
+  })
+  const registered: string[] = []
+  on('tool.register', (_$: any, e: any) => {
+    registered.push(e.name)
+    return { value: { tool: 'mcp__cc-mods__' + e.name } }
+  })
+  mock.clock(on)
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const cmd = (args: string) => ({ command: 'coord', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as any
+  await $.command.run(cmd('on'))
+  expect(registered).toEqual(['coord_roster', 'coord_spawn', 'coord_send', 'coord_close'])
+  const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', ...input } as any).catch((err: unknown) => ({ error: String(err) }))
+  const over: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'max', brief: 'b', repo_dir: '/src/tmc' })
+  expect(JSON.stringify(over)).toContain('above the limit high')
+  const ok: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc' })
+  expect(JSON.stringify(ok)).toContain('Started worker tmc-x in window @9 (pane %90)')
+  const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
+  expect(nw).toContain('main:')
+  expect(nw.slice(-6)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt'])
+  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes('/home/u/worktrees/tmc/tmc-x'))).toBe(true)
+  expect(written['/home/u/research/tmc-x/prompt.txt']).toContain('worker `tmc-x`')
+  const ledger = JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
+  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane])).toEqual([['tmc-x', 'owned', '%90']])
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})
