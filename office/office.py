@@ -33,13 +33,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resources  # noqa: E402 - office/resources.py, beside this file
+import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py")
 
 
 def code_stamp() -> str:
@@ -61,6 +62,7 @@ FMT = "|".join(
         "#{@cc_agents}",
         "#{@cc_ctx}",
         "#{window_id}",
+        "#{pane_current_path}",
     ]
 )
 
@@ -439,6 +441,7 @@ def snapshot() -> list[dict]:
     _live_panes = {p[0] for p in rows if len(p) >= 12}
     alive = alive_sessions()
     seen, people = set(), []
+    rel = coord.relations()
     for p in rows:
         if len(p) < 12 or not p[4] or p[4] in seen:
             continue
@@ -446,6 +449,7 @@ def snapshot() -> list[dict]:
             continue  # the pane still names a session that has ended
         seen.add(p[4])
         pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid = p[:12]
+        cwd = "|".join(p[12:])  # last, so a "|" in the path stays in it
         t = last_tool(sid)
         where, doing = room(state, attn, t, int(since) if since.isdigit() else None)
         tc = tool_counts(sid)
@@ -477,6 +481,8 @@ def snapshot() -> list[dict]:
                 "rank": rank_of(tc["total"]),
                 "born": born(sid),
                 "mcp": mcp_state(sid),
+                "cwd": cwd,
+                "coord": rel.get(sid),
             }
         )
     return people
@@ -1657,6 +1663,8 @@ class Handler(BaseHTTPRequestHandler):
 
             sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
             return self.send(200, json.dumps(panels(sid)).encode(), "application/json")
+        if self.path.startswith("/coord"):
+            return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
             return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth()}).encode(), "application/json")

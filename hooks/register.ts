@@ -76,6 +76,7 @@ import { FRAME_BOTTOM, FRAME_TOP, SPACER_ROWS, TABS, frame, renderHome, renderNa
 import { renderAuthTab } from './views/auth'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
+import { coordCommand, coordPrompt, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -3244,6 +3245,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     setOrg(parseOrg(await readText($, home + ORG_PATH)))
     pane = await $.env.get('TMUX_PANE')
     sid = await $.session.id()
+    await coordStart($, { sid: () => sid, home: () => home, pane: () => pane }).catch((err: unknown) => $.ui.log('coord: ' + String(err)))
     // Panes from before the single cockpit (cc-flow, cc-outputs, …) survive a
     // reload as tabs; their tabs are where the ring escaped to. Close them.
     try {
@@ -3399,6 +3401,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       ['fold', 'fold finished tool calls to one line (/focus is built in)'],
       ['route', 'let Jev pick each turn\'s effort (and model): on, off, model on|off', '[on|off|model on|off]'],
       ['office', 'every session in tmux as a character in a quarter-view office; click one to answer it', ''],
+      ['coord', 'coordinator mode: this session starts worker sessions in their own tmux windows and asks you before deciding', '[on|off|adopt <pane|name>|release <slug>|limits ...]'],
       ['web', 'open a page in the cockpit Web tab (TWeb drawn in this pane); no argument shows the tab, "close" stops it', '[url | close | --electron|--chrome|--webkit url]'],
       ['browser', 'where this session opens links: TWeb (Electron), TWeb on your Chrome or on WebKit, or the Chrome tab group', '[tweb|tweb-chrome|tweb-webkit|chrome|inherit]'],
     ]
@@ -4006,6 +4009,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       proceedStreak = 0
     }
     if (e.origin?.kind === 'composer' && !e.text.startsWith('<')) pendingHuman = e.text
+    // The person typed here themselves (a coordinator's instructions come in
+    // through the office inbox, a plugin prompt): a coordinator holding this
+    // session as a worker leaves it alone for a while (lib/coord.ts HOLD_MS).
+    if (e.origin?.kind === 'composer' && !String(e.text ?? '').startsWith('/') && isPaneId(pane)) void tmux($, [['set', '-p', '-t', pane!, '@cc_human_at', String(Math.floor(Date.now() / 1000))]])
     // A prompt to Claude takes the person's attention to the chat; a slash
     // command (/web, /reload-plugins) does not.
     if (e.origin?.kind === 'composer' && !String(e.text ?? '').startsWith('/')) void update($, uiA, (u) => ({ ...u, promptAt: Date.now() }))
@@ -4063,7 +4070,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       .join('; ')
     const rca = (await read($, rcaA)) as RcaState
     const moved = (await read($, movedA)) as { prompt: string; pane: string }[]
+    const coord = coordPrompt(Date.now())
     const text =
+      (coord ? coord + '\n\n' : '') +
       (rca ? rcaSection(rca) + '\n\n' : '') +
       (moved.length ? movedSection(moved) + '\n\n' : '') +
       '# Session policy (' + p.mode + ')\n' + caps + (scopes ? '\n' + scopes : '') +
@@ -4162,6 +4171,11 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // office, with a quick-action card per session (office/office.py). The
   // server is shared by all sessions and outlives this one; started here when
   // nothing answers on its port.
+  on('command.run', { command: 'coord' }, async ($: any, e: any) => ({ text: await coordCommand($, String(e.args ?? '')) }))
+
+  // The coord_* tools (coord.ts), registered when the person turns the mode on.
+  on('tool.call', { tool: /coord_(roster|spawn|send|close)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e.input) : next(e)))
+
   on('command.run', { command: 'office' }, async ($: any) => {
     const url = 'http://127.0.0.1:' + OFFICE_PORT + '/'
     const up = async () => (await $.process.run(['/usr/bin/curl', '-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '2', url], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout.trim() === '200'
@@ -4170,7 +4184,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // asks for routes it does not have (live: resources.js 404, an empty
     // office). The stamp is office.py's code_stamp(); an old server has no
     // /version and answers 404, which also counts as old.
-    const want = (await Promise.all(['office.py', 'resources.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
+    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
     const ver = (await $.process.run(['/usr/bin/curl', '-s', '-m', '2', url + 'version'], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout
     let running: { stamp?: string; pid?: number } | undefined
     try { running = JSON.parse(ver) } catch { running = undefined }

@@ -145,6 +145,42 @@ detail or the session window it came from; any order, case-insensitive. It
 narrows the kind tabs and both sides, and their counts: `slack infra` is
 Slack threads whose channel or title says infra, `abc-12` tickets by key.
 Esc leaves the field; ✕ clears it.
+## Coordinator mode (`/coord`)
+
+One session hands work to worker sessions and asks you before anything your
+decision rides on. You keep both ways of working: go to any worker's tmux
+window and type there, or talk only to the coordinator.
+
+| You run | It does |
+|---|---|
+| `/coord on` / `off` | turn this session into the coordinator (only you can) |
+| `/coord limits models opus,sonnet` / `effort high` / `workers 4` | what it may hand out (default: all three models, effort up to high, 4 workers) |
+| `/coord adopt <pane\|name>` | hand it a session that was already running |
+| `/coord release <slug>` | take a worker back; it keeps running, observed only |
+| `/coord` | the workers and their state |
+
+While it is on, the coordinator's Claude gets four tools (it never starts
+sessions from Bash, which the tmux guard keeps in its own window):
+
+- `coord_roster`: every live session with its relation: **owned** (started
+  by it), **adopted** (handed over by you) or **observed** (read only).
+- `coord_spawn`: a worktree off origin at `~/worktrees/<repo>/<slug>`, the
+  brief in `~/research/<slug>/prompt.txt`, and `claude --model --effort
+  --permission-mode auto --disallowedTools AskUserQuestion --session-id` in a
+  new window `w:<slug>` of your tmux session. Refused above your limits, and
+  when a live session already works in that directory until you decide.
+- `coord_send`: an instruction to an owned or adopted worker, through the
+  office inbox (it arrives as `[coordinator] …`).
+- `coord_close`: closes an owned worker's window and removes its worktree
+  (refused with uncommitted changes); an adopted one is handed back.
+
+Every 10 s it reads the workers' panes and tells the coordinator when one
+asks something, finishes a turn, exits, or when you typed in it yourself. A
+worker you typed in is **held** for 10 minutes: the coordinator sends it
+nothing. Workers report back with SendMessage (`READY <sha>`, `BLOCKED`,
+`QUESTION`). The ledger is `~/.claude/state/office/coord/<sid>.json`; the
+office reads it (`/coord` on the office server) to show who works for whom.
+
 ## Archive folders (`~/exp/<date>_<topic>/`)
 
 What a session exchanged with an outside party (a vendor ticket, a Slack
