@@ -88,30 +88,49 @@ def ccproxy_accounts(text: str) -> list[dict]:
 
 
 def cco_accounts(text: str) -> list[dict]:
-    """`cco status --once --json`: no per-account quota yet, only whether each
-    provider is reachable. Shown as plain lamps until cco reports more."""
+    """`cco quota --json`: one AccountReport per login. cco reports used
+    percent (`utilization`), so the gauge is the left percent."""
     raw = json.loads(text)
-    hz = raw.get("healthz") or {}
     out = []
-    for name in ("anthropic", "codex"):
-        h = hz.get(name)
-        if not isinstance(h, dict):
+    for a in raw.get("accounts") or []:
+        if a.get("removed"):
             continue
-        if name == "anthropic" and not h.get("configured", True):
-            continue
-        cd = h.get("cooldown_remaining_seconds")
-        state = "cooldown" if cd else "ok" if h.get("available", True) else "unknown"
-        acc = {"id": name, "provider": name, "state": state, "gauges": [], "note": "", "stale": False}
-        if cd:
-            acc["until"] = time.time() + cd
-        out.append(acc)
+        gauges = []
+        for w in a.get("windows") or []:
+            u = w.get("utilization")
+            if not isinstance(u, (int, float)):
+                continue
+            g = {"name": str(w.get("label") or "?"), "left_pct": max(0, round(100 - u))}
+            if isinstance(w.get("resets_at"), (int, float)):
+                g["reset_at"] = w["resets_at"]
+            gauges.append(g)
+        oauth = a.get("oauth_status")
+        avail = a.get("availability")
+        if oauth in ("expired", "reauth-required", "missing"):
+            state = "expired"
+        elif avail in ("cooling", "exhausted"):
+            state = "cooldown"
+        elif avail in ("offline", "not-loaded"):
+            state = "unknown"
+        else:
+            state = "ok"
+        if state == "ok" and any(g["left_pct"] <= 10 for g in gauges):
+            state = "soon"
+        out.append({
+            "id": f'{a.get("provider") or "?"}/{a.get("name") or "?"}',
+            "provider": a.get("provider") or "",
+            "state": state,
+            "gauges": gauges,
+            "note": "" if gauges else (a.get("reason") or ""),
+            "stale": False,
+        })
     return out
 
 
 # name -> (label, argv, parser). Order is the order they are drawn in.
 SOURCES = {
     "ccproxy": ("ccproxy", ["ccproxy", "status", "--offline", "--json"], ccproxy_accounts),
-    "cco": ("cco", ["cco", "status", "--once", "--json"], cco_accounts),
+    "cco": ("cco", ["cco", "quota", "--json"], cco_accounts),
 }
 
 _lock = threading.Lock()

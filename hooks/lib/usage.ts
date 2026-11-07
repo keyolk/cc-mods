@@ -223,3 +223,19 @@ export function hookName(caller: string): string {
 export function usd(n: number): string {
   return '$' + (n < 1 ? n.toFixed(4) : n.toFixed(2))
 }
+
+// `cco quota --json` in the same shape: used percent turns into left percent,
+// and resets_at is epoch seconds like ccproxy's reset_at.
+export function parseCcoQuota(json: string | undefined): Quota[] {
+  let raw: any
+  try { raw = json ? JSON.parse(json) : undefined } catch { return [] }
+  if (!Array.isArray(raw?.accounts)) return []
+  return raw.accounts.filter((a: any) => !a.removed).map((a: any): Quota => {
+    const windows: QuotaWindow[] = (Array.isArray(a.windows) ? a.windows : [])
+      .filter((w: any) => typeof w?.utilization === 'number')
+      .map((w: any) => ({ label: String(w.label), left: Math.max(0, 100 - w.utilization), resetAt: w.resets_at ?? undefined }))
+    const dead = a.oauth_status === 'expired' || a.oauth_status === 'reauth-required' || a.oauth_status === 'missing'
+    const state = dead ? 'expired' : a.availability === 'cooling' || a.availability === 'exhausted' ? 'cooldown' : 'ready'
+    return { name: a.provider + '/' + String(a.name ?? a.account_id ?? '?'), state, windows, note: windows.length ? undefined : (a.reason ?? 'no usage reading') }
+  })
+}

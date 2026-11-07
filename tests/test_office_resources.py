@@ -54,17 +54,22 @@ class CcproxyTest(unittest.TestCase):
 
 
 class CcoTest(unittest.TestCase):
-    def test_providers_as_lamps(self):
-        out = resources.cco_accounts(json.dumps({"healthz": {
-            "anthropic": {"available": False, "configured": False},
-            "codex": {"available": True, "cooldown_remaining_seconds": None},
-        }}))
-        self.assertEqual([(a["id"], a["state"]) for a in out], [("codex", "ok")])
+    # Shape of `cco quota --json` (0.10.x); names are synthetic.
+    QUOTA = {"accounts": [
+        {"provider": "anthropic", "name": "acme", "oauth_status": "saved", "availability": "available", "windows": [{"label": "5h", "utilization": 15.0, "resets_at": 100}, {"label": "7d", "utilization": 95}]},
+        {"provider": "anthropic", "name": "spare", "oauth_status": "reauth-required", "availability": "reauth-required", "reason": "log in again", "windows": []},
+        {"provider": "codex", "name": "team", "oauth_status": "saved", "availability": "exhausted", "windows": [{"label": "monthly", "utilization": 100}]},
+        {"provider": "codex", "name": "gone", "removed": True, "windows": []},
+    ]}
 
-    def test_cooldown(self):
-        out = resources.cco_accounts(json.dumps({"healthz": {"anthropic": {"configured": True, "cooldown_remaining_seconds": 60}}}))
-        self.assertEqual(out[0]["state"], "cooldown")
-        self.assertGreater(out[0]["until"], time.time())
+    def test_used_percent_becomes_left_gauges(self):
+        out = resources.cco_accounts(json.dumps(self.QUOTA))
+        self.assertEqual([(a["id"], a["state"]) for a in out], [("anthropic/acme", "soon"), ("anthropic/spare", "expired"), ("codex/team", "cooldown")])
+        self.assertEqual(out[0]["gauges"], [{"name": "5h", "left_pct": 85, "reset_at": 100}, {"name": "7d", "left_pct": 5}])
+        self.assertEqual(out[1]["note"], "log in again")
+
+    def test_no_accounts_is_empty(self):
+        self.assertEqual(resources.cco_accounts(json.dumps({"accounts": []})), [])
 
 
 class ReadTest(unittest.TestCase):

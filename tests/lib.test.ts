@@ -8,7 +8,7 @@ import { cockpitColumns } from '../hooks/lib/layout'
 // Pure library tests: no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldLogins, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderItem, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
+import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldLogins, parseMcpList, sha1Hex, ssoProfile, ccoItems, ccproxyItems, coderItem, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
 import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
 import { activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
@@ -18,7 +18,7 @@ import { helpSections } from '../hooks/lib/help'
 import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, resultText } from '../hooks/lib/mcpheal'
 import { goalChip, goalVisible, parseGoal } from '../hooks/lib/goal'
 import { blockOf, nowAllowed, resumePrompt } from '../hooks/lib/unblock'
-import { accountStrip, bar, cacheHit, effortMix, hookName, modelStrip, seriesBy, parseJev, parseQuota, parseUsage, share, shortModel, span, sparkline, until, usd, type Usage } from '../hooks/lib/usage'
+import { accountStrip, bar, cacheHit, effortMix, hookName, modelStrip, seriesBy, parseCcoQuota, parseJev, parseQuota, parseUsage, share, shortModel, span, sparkline, until, usd, type Usage } from '../hooks/lib/usage'
 import { ROUTE_OFF, cacheGate, decide, resolveModel, routeLabel } from '../hooks/lib/route'
 import { WEB_ANCHOR, engineForUrl, engineOfTarget, parseEngine, parseEngineRules, fuzzyScore, urlFuzzy, urlPicks, urlsIn, keyBytes, sgrMouse, sgrWheel, toHex, urlFromInput } from '../hooks/lib/web'
 import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/backfill'
@@ -1750,4 +1750,34 @@ test('clearedByCache trusts a needs-auth cache written after the list', () => {
   expect(clearedByCache(listed, cache, 500, 1000)).toEqual(listed)
   expect(clearedByCache(listed, undefined, 2000, 1000)).toEqual(listed)
   expect(clearedByCache(listed, 'not json', 2000, 1000)).toEqual(listed)
+})
+
+// Shape copied from a real `cco quota --json` (0.10.1); names are synthetic.
+const ccoQuotaJson = JSON.stringify({
+  accounts: [
+    { provider: 'anthropic', name: 'acme', account_id: 'a1', oauth_status: 'saved', availability: 'available', removed: false, reason: null, windows: [{ label: '5h', utilization: 3.6, resets_at: 100 }, { label: '7d', utilization: 93, resets_at: 200 }] },
+    { provider: 'anthropic', name: 'spare', account_id: 'a2', oauth_status: 'reauth-required', availability: 'reauth-required', removed: false, reason: 'OAuth profile not read yet for this credential', windows: [] },
+    { provider: 'codex', name: 'team', account_id: 'c1', oauth_status: 'saved', availability: 'exhausted', removed: false, reason: null, windows: [{ label: 'primary', utilization: 100, resets_at: 300 }] },
+    { provider: 'codex', name: 'gone', account_id: 'c2', oauth_status: 'saved', availability: 'unknown', removed: true, reason: null, windows: [] },
+  ],
+  lanes: {},
+})
+
+test('cco: used percent becomes left percent, availability and oauth decide the state', () => {
+  expect(ccoItems(ccoQuotaJson).map((i) => [i.id, i.state, i.detail])).toEqual([
+    ['cco:anthropic/acme', 'soon', '5h 96% · 7d 7% left'],
+    ['cco:anthropic/spare', 'expired', 'reauth-required · OAuth profile not read yet for this credential'],
+    ['cco:codex/team', 'soon', 'exhausted · primary 0% left'],
+  ])
+  expect(ccoItems('usage: cco quota')).toEqual([])
+  expect(ccoItems(undefined)).toEqual([])
+})
+
+test('cco: parseCcoQuota keeps reset times and skips removed accounts', () => {
+  const q = parseCcoQuota(ccoQuotaJson)
+  expect(q.map((x) => x.name)).toEqual(['anthropic/acme', 'anthropic/spare', 'codex/team'])
+  expect(q[0]!.windows).toEqual([{ label: '5h', left: 96.4, resetAt: 100 }, { label: '7d', left: 7, resetAt: 200 }])
+  expect(q[1]!.state).toBe('expired')
+  expect(q[2]!.state).toBe('cooldown')
+  expect(parseCcoQuota('nope')).toEqual([])
 })

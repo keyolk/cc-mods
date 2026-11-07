@@ -31,9 +31,9 @@ import { helpSections } from './lib/help'
 import { COCKPIT_ACTION, GROW_ACTION, PALETTE_ACTION, catchAll, paletteNextKey, renderPalette } from './views/palette'
 import { PALETTE_CLOSED, filterPalette, paletteItems, type PaletteItem, type PaletteState } from './lib/palette'
 import { cacheGate, decide, resolveModel, routeLabel, type RouteLast, routeSettings, type RouteAnswer, type RouteDecision, type RouteSettings } from './lib/route'
-import { parseJev, parseQuota, parseUsage, type JevUsage, type Quota, type Usage } from './lib/usage'
+import { parseCcoQuota, parseJev, parseQuota, parseUsage, type JevUsage, type Quota, type Usage } from './lib/usage'
 import { USAGE_WINDOWS, renderUsage, type UsageWindow } from './views/usage'
-import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccproxyItems, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
+import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccoItems, ccproxyItems, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
 import { EMPTY, parseProfiles, suggest, type Sources } from './lib/complete'
 import { BLOCK_TTL_MS, blockOf, grantLabel, nowAllowed, resumePrompt, type Blocked } from './lib/unblock'
 import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
@@ -1366,12 +1366,26 @@ async function runRadar($: any, force = false): Promise<AuthItem[]> {
     sessions[name] = r ? coderSession({ exitCode: r.exitCode, stderr: r.stderr }) : undefined
   }
   items.push(...coderLocalItems(await readText($, coderDir + 'url'), sessions, org().coderInstances ?? {}))
+  // cco is the successor: prefer it, and fall back to ccproxy while both exist.
+  let proxied = false
   try {
-    const r = await $.process.run(['ccproxy', 'status', '--offline', '--json'], { timeoutMs: 8000 })
-    // An older ccproxy rejects --json with a usage error: show nothing then.
-    if (r.exitCode === 0) items.push(...ccproxyItems(r.stdout))
+    const r = await $.process.run(['cco', 'quota', '--json'], { timeoutMs: 8000 })
+    if (r.exitCode === 0) {
+      const found = ccoItems(r.stdout)
+      items.push(...found)
+      proxied = found.length > 0
+    }
   } catch {
-    // ccproxy missing or hung: leave it out
+    // cco missing or hung: try ccproxy
+  }
+  if (!proxied) {
+    try {
+      const r = await $.process.run(['ccproxy', 'status', '--offline', '--json'], { timeoutMs: 8000 })
+      // An older ccproxy rejects --json with a usage error: show nothing then.
+      if (r.exitCode === 0) items.push(...ccproxyItems(r.stdout))
+    } catch {
+      // ccproxy missing or hung: leave it out
+    }
   }
   await $.store.set(K.radar, { at: now, items })
   await update($, authA, () => items)
@@ -3137,9 +3151,14 @@ async function loadUsage($: any) {
   void bridge($, 'jev_usage', { now: Date.now() / 1000 }).then((j: any) => update($, usageA, (s) => ({ ...s, jev: parseJev(j) ?? s.jev })))
   try {
     // Quota beside usage: the Usage tab draws each account's windows and resets.
-    void $.process.run(['ccproxy', 'status', '--offline', '--json'], { timeoutMs: 8000 }).then((q: any) =>
-      update($, usageA, (s) => ({ ...s, quota: q.exitCode === 0 ? parseQuota(q.stdout) : s.quota })),
-    ).catch(() => undefined)
+    // cco first, ccproxy when cco has no accounts or is absent.
+    void (async () => {
+      const c = await $.process.run(['cco', 'quota', '--json'], { timeoutMs: 8000 }).catch(() => undefined)
+      const cq = c && c.exitCode === 0 ? parseCcoQuota(c.stdout) : []
+      if (cq.length) return update($, usageA, (s) => ({ ...s, quota: cq }))
+      const q = await $.process.run(['ccproxy', 'status', '--offline', '--json'], { timeoutMs: 8000 })
+      await update($, usageA, (s) => ({ ...s, quota: q.exitCode === 0 ? parseQuota(q.stdout) : s.quota }))
+    })().catch(() => undefined)
     let r = await $.process.run(['ccproxy', 'usage', '--session', sid, '--json', '--bucket', win.bucket, '--buckets', String(win.buckets)], { timeoutMs: 8000 })
     // `--bucket session` is ccproxy PR #265; an older one rejects it as a duration.
     const noSession = win.bucket === 'session' && r.exitCode !== 0 && /--bucket/.test(r.stderr)
