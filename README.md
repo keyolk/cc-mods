@@ -174,6 +174,15 @@ sessions from Bash, which the tmux guard keeps in its own window):
 - `coord_close`: closes an owned worker's window and removes its worktree
   (refused with uncommitted changes); an adopted one is handed back.
 
+Each side gets its own session policy. `/coord on` saves this session's
+policy and sets the coordinator's: merge only in the repositories its live
+workers are in (added at each spawn), keep going (auto_continue), no prod
+write, Slack or other windows; `/coord off` puts the saved one back. Under god
+mode the coordinator's policy becomes what god restores when it ends. Each
+worker's policy is written under its session id before its window opens: no
+merge, prod write, Slack or other windows, keep going, and no effort or model
+routing (the coordinator chose them).
+
 Every 10 s it reads the workers' panes and tells the coordinator when one
 asks something, finishes a turn, exits, or when you typed in it yourself. A
 worker you typed in is **held** for 10 minutes: the coordinator sends it

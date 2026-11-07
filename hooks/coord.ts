@@ -7,9 +7,22 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { HOLD_MS, PANES_FMT, active, coordSection, held, logged, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, active, coordSection, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, spawnRefusal, workerArgv, workerPrompt, type Ledger, type PaneSeen, type Worker } from './lib/coord'
+import { restoreArgvs } from './lib/rca'
+import { repoFromRemote } from './lib/prs'
+import type { Policy } from './lib/policy'
 
-type Ctx = { sid: () => string; home: () => string; pane: () => string | undefined }
+// What register.ts lends: the session, and its policy. God mode keeps "the
+// policy before" and puts it back when it ends, so while god is on the
+// coordinator's policy goes there instead of being applied over god.
+export type CoordPolicy = {
+  now: () => Promise<Policy | null>
+  run: (argv: string[], sessionId?: string) => Promise<boolean>
+  godBefore: () => Policy | undefined
+  setGodBefore: (p: Policy) => Promise<void>
+  reload: () => Promise<void>
+}
+type Ctx = { sid: () => string; home: () => string; pane: () => string | undefined; policy: CoordPolicy }
 
 const TOOLS = {
   roster: {
@@ -128,8 +141,14 @@ async function registerTools($: any) {
 async function turnOn($: any, fresh: boolean) {
   const l = ledger!
   const n = await names($)
-  const next = { ...l, on: true, pane: ctx!.pane(), name: n.get(l.sid) ?? l.name }
-  await save($, fresh ? logged(next, 'order', 'coordinator mode on', Date.now()) : next)
+  let next: Ledger = { ...l, on: true, pane: ctx!.pane(), name: n.get(l.sid) ?? l.name }
+  if (fresh && !l.on) {
+    // What /coord off puts back: god's "before" while god is on, else now.
+    const before = ctx!.policy.godBefore() ?? (await ctx!.policy.now())
+    if (before) next = { ...next, policyBefore: before }
+    await save($, logged(next, 'order', 'coordinator mode on', Date.now()))
+    await coordPolicy($)
+  } else await save($, next)
   await registerTools($)
   watch?.cancel()
   watch = $.clock.every(10_000, () => void tick($))
@@ -163,13 +182,19 @@ export async function coordCommand($: any, args: string): Promise<string> {
   const now = Date.now()
   if (verb === 'on') {
     await turnOn($, true)
-    return 'Coordinator mode on as `' + ledger.name + '`. Limits: models ' + ledger.limits.models.join(', ') + ', effort up to ' + ledger.limits.maxEffort + ', ' + ledger.limits.maxWorkers + ' workers (/coord limits to change). The coord_* tools are there from the next prompt.'
+    return 'Coordinator mode on as `' + ledger.name + '`, with its own policy: merge only in its workers\' repositories, auto-continue, no prod write, Slack or other windows' + (ctx.policy.godBefore() ? ' (applied when god mode ends)' : '') + '. Limits: models ' + ledger.limits.models.join(', ') + ', effort up to ' + ledger.limits.maxEffort + ', ' + ledger.limits.maxWorkers + ' workers (/coord limits to change). The coord_* tools are there from the next prompt.'
   }
   if (verb === 'off') {
     watch?.cancel()
     watch = undefined
-    await save($, logged({ ...ledger, on: false }, 'order', 'coordinator mode off', now))
-    return 'Coordinator mode off. Workers keep running in their windows; the ledger stays for the next /coord on.'
+    const before = ledger.policyBefore
+    await save($, logged({ ...ledger, on: false, policyBefore: undefined }, 'order', 'coordinator mode off', now))
+    if (before) {
+      if (ctx.policy.godBefore()) await ctx.policy.setGodBefore(before)
+      else for (const argv of restoreArgvs(before)) await ctx.policy.run(argv)
+      await ctx.policy.reload()
+    }
+    return 'Coordinator mode off; this session\'s policy is back to what it was. Workers keep running in their windows; the ledger stays for the next /coord on.'
   }
   if (verb === 'limits') {
     if (!arg) return 'Limits: models ' + ledger.limits.models.join(', ') + '; effort up to ' + ledger.limits.maxEffort + '; ' + ledger.limits.maxWorkers + ' workers.'
@@ -243,12 +268,15 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   let worktree: string | undefined
   let repoName: string | undefined
   let repoTop = ''
+  let ghRepo: string | undefined
   const seen = await panes($)
   if (req.repoDir) {
     const top = await sh($, ['git', '-C', expand(req.repoDir), 'rev-parse', '--show-toplevel'])
     if (!top.ok) return { deny: 'repo_dir is not a git checkout: ' + top.err }
     repoTop = top.out
     repoName = top.out.split('/').pop()!
+    const origin = await sh($, ['git', '-C', repoTop, 'remote', 'get-url', 'origin'])
+    ghRepo = origin.ok ? repoFromRemote(origin.out) : undefined
     worktree = home + '/worktrees/' + repoName + '/' + req.slug
     cwd = worktree
   }
@@ -276,12 +304,18 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   const uuid = (await sh($, ['uuidgen'])).out.toLowerCase()
   const sess = await sh($, ['tmux', 'display-message', '-p', '-t', ctx!.pane() ?? '', '#{session_name}'], { timeoutMs: 3000 })
   if (!uuid || !sess.ok) return { deny: 'could not find this tmux session or make a session id' }
+  // The worker's policy is written under its session id before it starts,
+  // so its first tool call already runs under it.
+  for (const argv of policyArgvs(WORKER_CAPS)) {
+    if (!(await ctx!.policy.run(argv, uuid))) return { deny: 'could not write the worker policy (' + argv.join(' ') + '); nothing was started' }
+  }
   const r = await sh($, ['tmux', ...workerArgv({ target: sess.out + ':', slug: req.slug, cwd, model: req.model, effort: req.effort, sid: uuid, promptFile })], { timeoutMs: 5000 })
   if (!r.ok) return { deny: 'tmux new-window failed: ' + r.err }
   const [window, pane] = r.out.split(' ')
   const now = Date.now()
-  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd, worktree, repoDir: repoTop || undefined, repo: repoName, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, at: now }
+  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, at: now }
   await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + cwd, now))
+  if (ghRepo) await coordPolicy($)
   return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + cwd + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
 }
 
@@ -327,4 +361,16 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
   }
   await save($, logged({ ...ledger!, workers: ledger!.workers.map((x) => (x === w ? { ...x, endedAt: now } : x)) }, 'close', w.slug, now))
   return { result: 'Closed ' + w.slug + "'s window" + note + '.' }
+}
+
+// The coordinator's own policy: COORD_CAPS plus a merge scope for each
+// repository its live workers are in. Under god mode, it becomes what god
+// puts back.
+async function coordPolicy($: any) {
+  const l = ledger!
+  const repos = mergeRepos(l)
+  const god = ctx!.policy.godBefore()
+  if (god) await ctx!.policy.setGodBefore(policyOf(COORD_CAPS, repos, god))
+  else for (const argv of policyArgvs(COORD_CAPS, repos)) await ctx!.policy.run(argv)
+  await ctx!.policy.reload()
 }

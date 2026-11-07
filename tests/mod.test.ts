@@ -13,7 +13,7 @@ const TEST_ORG = JSON.stringify({
   argocdDomains: { 'tools.acme.io': '', 'edge.acme.io': ' (edge)' },
 })
 
-function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined } = {}) {
+function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined; seen?: (e: any) => void } = {}) {
   const runs = opts.runs ?? []
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? opts.pane : undefined }))
@@ -41,6 +41,7 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
     return { value: undefined }
   })
   on('process.run', (_$: any, e: any) => {
+    opts.seen?.(e)
     runs.push(e.argv)
     const own = opts.run?.(e.argv)
     if (own) return { value: { exitCode: own.code, stdout: own.out, stderr: own.err ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -2817,12 +2818,17 @@ test('/office restarts a server left over from older code and keeps a current on
 
 test('coordinator: /coord on registers the tools; a spawn reads its arguments off the call and starts a worker window', async ($, on) => {
   const written: Record<string, string> = {}
+  const policyEnvs: { sid: string; argv: string[]; at: number }[] = []
   const runs = baseStubs(on, {
     pane: '%42',
     written,
+    seen: (e) => {
+      if (e.argv[0] === 'python3' && String(e.argv[1]).endsWith('session_policy.py') && e.argv[2] !== 'show') policyEnvs.push({ sid: e.init?.env?.CLAUDE_CODE_SESSION_ID, argv: e.argv.slice(2), at: runs.length })
+    },
     run: (a) => {
       if (a[0] === 'git' && a.includes('--show-toplevel')) return { code: 0, out: '/src/tmc' }
       if (a[0] === 'git' && a.includes('symbolic-ref')) return { code: 0, out: 'origin/main' }
+      if (a[0] === 'git' && a.includes('get-url')) return { code: 0, out: 'git@github.com:keyolk/tmc.git' }
       if (a[0] === 'git') return { code: 0, out: '' }
       if (a[0] === 'uuidgen') return { code: 0, out: 'ABC-1' }
       if (a[0] === 'tmux' && a[1] === 'display-message') return { code: 0, out: 'main' }
@@ -2855,5 +2861,16 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   expect(written['/home/u/research/tmc-x/prompt.txt']).toContain('worker `tmc-x`')
   const ledger = JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
   expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane])).toEqual([['tmc-x', 'owned', '%90']])
+  // The worker's policy was written under its own session id before its window opened.
+  const pol = (argv: string[]) => argv[0] === 'python3' && String(argv[1]).endsWith('session_policy.py')
+  const nwAt = runs.indexOf(nw)
+  const workerPol = policyEnvs.filter((x) => x.sid === 'abc-1')
+  expect(workerPol.map((x) => x.argv.join(' '))).toContain('block slack_send')
+  expect(workerPol.every((x) => x.at < nwAt)).toBe(true)
+  // The coordinator: its own policy, and a merge scope for the worker's repository.
+  const mine = policyEnvs.filter((x) => x.sid === 'sid-1').map((x) => x.argv.join(' '))
+  expect(mine).toContain('allow auto_continue')
+  expect(mine).toContain('allow gh_merge --repo keyolk/tmc')
+  expect(runs.filter((a) => pol(a) && a[2] !== 'show').length).toBe(policyEnvs.length)
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
 })

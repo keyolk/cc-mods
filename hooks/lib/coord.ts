@@ -17,6 +17,8 @@
 // exception, so it goes through code that checks the person's limits first.
 // Pure: the mod does the I/O.
 
+import type { Cap, CapValue, Policy } from './policy'
+
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
 export const MODELS = ['haiku', 'sonnet', 'opus'] as const
@@ -57,6 +59,7 @@ export type Ledger = {
   workers: Worker[]
   log: LogEntry[]
   at: number
+  policyBefore?: Policy // this session's policy before /coord on, put back by /coord off
 }
 
 export const LOG_MAX = 200
@@ -91,6 +94,7 @@ export function parseLedger(json: string | undefined, sid: string, name: string,
     },
     workers: Array.isArray(raw.workers) ? raw.workers.filter((w: any) => w && typeof w.slug === 'string' && typeof w.sid === 'string') : [],
     log: Array.isArray(raw.log) ? raw.log.slice(-LOG_MAX) : [],
+    policyBefore: raw.policyBefore && typeof raw.policyBefore === 'object' ? raw.policyBefore : undefined,
     at: Number(raw.at) || now,
   }
 }
@@ -255,4 +259,47 @@ export function parseLimits(args: string, cur: Limits): Limits | string {
     return Number.isInteger(n) && n > 0 && n <= 12 ? { ...cur, maxWorkers: n } : 'workers: 1 to 12'
   }
   return 'limits: models <list> | effort <level> | workers <n>'
+}
+
+// ---- policy -------------------------------------------------------------------
+// The coordinator and its workers each get their own session policy
+// (~/.claude/hooks/session_policy.py, keyed by session id). The coordinator
+// merges and keeps going but touches no prod, Slack or other windows (it
+// reads workers through coord tools); a repository it starts a worker in is
+// added to its merge scopes. A worker keeps going on its brief and does
+// nothing outward: no merge, no prod write, no Slack, no other windows, and
+// the model and effort the coordinator chose stay put (no routing).
+
+export const COORD_CAPS: Partial<Record<Cap, CapValue>> = {
+  gh_merge: 'block',
+  prod_eks_write: 'block',
+  slack_send: 'block',
+  tmux_window_escape: 'block',
+  auto_continue: 'allow',
+}
+export const WORKER_CAPS: Partial<Record<Cap, CapValue>> = {
+  gh_merge: 'block',
+  prod_eks_write: 'block',
+  slack_send: 'block',
+  tmux_window_escape: 'block',
+  auto_continue: 'allow',
+  auto_effort: 'block',
+  auto_model: 'block',
+}
+
+// session_policy.py argvs: `mode default` first (it clears scopes), then each
+// capability, then the merge scopes.
+export function policyArgvs(caps: Partial<Record<Cap, CapValue>>, mergeRepos: readonly string[] = []): string[][] {
+  return [['mode', 'default'], ...Object.entries(caps).map(([c, v]) => [v as string, c]), ...mergeRepos.map((r) => ['allow', 'gh_merge', '--repo', r])]
+}
+
+// The same, as a Policy value: what god mode puts back when it ends while the
+// coordinator is on (god keeps "the policy before" and restores that).
+export function policyOf(caps: Partial<Record<Cap, CapValue>>, mergeRepos: readonly string[], base: Policy): Policy {
+  const explicit = { ...caps }
+  return { mode: 'custom', caps: { ...base.caps, ...caps }, explicit, scopes: mergeRepos.length ? { gh_merge: [...mergeRepos] } : {} }
+}
+
+export function mergeRepos(l: Ledger): string[] {
+  return [...new Set(active(l).map((w) => w.repo).filter((r): r is string => !!r && r.includes('/')))]
 }

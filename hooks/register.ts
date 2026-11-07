@@ -969,10 +969,12 @@ async function loadPolicy($: any) {
   return p
 }
 
-async function runPolicy($: any, argv: string[]): Promise<{ ok: boolean; out: string }> {
+// `sessionId`: another session's policy (a coordinator's worker, written
+// before the worker starts); this session's otherwise.
+async function runPolicy($: any, argv: string[], sessionId = sid): Promise<{ ok: boolean; out: string }> {
   try {
     const r = await $.process.run(['python3', home + HOME_HOOKS + 'session_policy.py', ...argv], {
-      env: { CLAUDE_CODE_SESSION_ID: sid },
+      env: { CLAUDE_CODE_SESSION_ID: sessionId },
       timeoutMs: 8000,
     })
     return { ok: r.exitCode === 0, out: (r.stdout || r.stderr).trim() }
@@ -3245,7 +3247,22 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     setOrg(parseOrg(await readText($, home + ORG_PATH)))
     pane = await $.env.get('TMUX_PANE')
     sid = await $.session.id()
-    await coordStart($, { sid: () => sid, home: () => home, pane: () => pane }).catch((err: unknown) => $.ui.log('coord: ' + String(err)))
+    await coordStart($, {
+      sid: () => sid,
+      home: () => home,
+      pane: () => pane,
+      policy: {
+        now: () => loadPolicy($),
+        run: async (argv, sessionId) => (await runPolicy($, argv, sessionId)).ok,
+        godBefore: () => god?.before,
+        setGodBefore: async (p) => {
+          if (!god) return
+          god = { ...god, before: p }
+          await $.store.set(K.god(sid), { until: god.until, before: p })
+        },
+        reload: async () => void (await loadPolicy($)),
+      },
+    }).catch((err: unknown) => $.ui.log('coord: ' + String(err)))
     // Panes from before the single cockpit (cc-flow, cc-outputs, …) survive a
     // reload as tabs; their tabs are where the ring escaped to. Close them.
     try {

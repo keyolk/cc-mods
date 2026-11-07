@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { HOLD_MS, coordSection, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, HOLD_MS, WORKER_CAPS, coordSection, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
 
 const NOW = 1_800_000_000_000
 const on = (over: Partial<Ledger> = {}): Ledger => ({ ...emptyLedger('coord-sid', 'cc-mods-d9', NOW), on: true, ...over })
@@ -98,4 +98,16 @@ test('coord: a turn that ended between two ticks still wakes the coordinator', (
   expect(observe(on({ workers: [worker({ state: undefined, at: NOW - 5_000 })] }), seen, NOW).changes).toEqual([])
   // Already idle last time: nothing new.
   expect(observe(on({ workers: [worker({ state: 'done' })] }), seen, NOW).changes).toEqual([])
+})
+
+test('coord: the coordinator merges only in its workers\' repositories; a worker does nothing outward', () => {
+  expect(policyArgvs(COORD_CAPS, ['keyolk/tmc'])).toEqual([['mode', 'default'], ['block', 'gh_merge'], ['block', 'prod_eks_write'], ['block', 'slack_send'], ['block', 'tmux_window_escape'], ['allow', 'auto_continue'], ['allow', 'gh_merge', '--repo', 'keyolk/tmc']])
+  expect(WORKER_CAPS).toMatchObject({ gh_merge: 'block', slack_send: 'block', auto_model: 'block', auto_effort: 'block', auto_continue: 'allow' })
+  const l = on({ workers: [worker({ repo: 'keyolk/tmc' }), worker({ slug: 'b', repo: 'keyolk/tmc' }), worker({ slug: 'c', repo: undefined }), worker({ slug: 'd', repo: 'keyolk/tweb', endedAt: NOW })] })
+  expect(mergeRepos(l)).toEqual(['keyolk/tmc'])
+  const base = { mode: 'custom', caps: { gh_merge: 'allow', prod_eks_access: 'allow', prod_eks_write: 'allow', slack_send: 'allow', tmux_window_escape: 'allow', auto_continue: 'inherit', auto_effort: 'inherit', auto_model: 'inherit' }, explicit: {}, scopes: {} } as any
+  const p = policyOf(COORD_CAPS, ['keyolk/tmc'], base)
+  expect(p.caps.gh_merge).toBe('block')
+  expect(p.caps.prod_eks_access).toBe('allow')
+  expect(p.scopes).toEqual({ gh_merge: ['keyolk/tmc'] })
 })
