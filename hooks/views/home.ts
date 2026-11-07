@@ -10,7 +10,7 @@
 // A status bar and the tab row sit above every tab; digits 1-5 switch tabs,
 // Esc on any tab but 지금 comes back to it.
 
-import { ICON as AUTH_ICON, foldLogins, type AuthItem } from '../lib/auth'
+import { ICON as AUTH_ICON, foldLogins, isProxyId, proxyAccountName, type AuthItem } from '../lib/auth'
 import type { MonitorState } from '../lib/monitor'
 import type { Policy } from '../lib/policy'
 import type { SlackThreadState } from '../lib/slack'
@@ -606,12 +606,12 @@ function modelGroup(els: Els, v: HomeView, w: number): Node {
   } else {
     body.push(quiet(els, v.usageNote ?? 'No requests through ccproxy yet.'))
   }
-  const quota = v.auth.filter((a) => a.id.startsWith('ccproxy:'))
+  const quota = v.auth.filter((a) => isProxyId(a.id))
   if (quota.length) {
     body.push(sub(els, 'Quota'))
     const lastAccount = u?.last?.account
     for (const q of quota) {
-      const name = q.id.slice('ccproxy:'.length)
+      const name = proxyAccountName(q.id)
       const tone = q.state === 'expired' ? C.bad : q.state === 'soon' ? C.warn : name === lastAccount ? C.accent : C.muted
       body.push(line(els, name === lastAccount ? '●' : '○', tone, clip(name + '  ' + (q.detail ?? ''), w - 4)))
     }

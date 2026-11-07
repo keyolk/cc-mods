@@ -468,3 +468,29 @@ export function sha1Hex(text: string): string {
   }
   return [a, b, c, d, e].map((x) => x.toString(16).padStart(8, '0')).join('')
 }
+
+// Rows from the ccproxy and cco proxies share one id prefix family: the views
+// treat both as "proxy account" rows that carry their own state and quota line.
+export const isProxyId = (id: string): boolean => id.startsWith('ccproxy:') || id.startsWith('cco:')
+export const proxyAccountName = (id: string): string => id.replace(/^(ccproxy|cco):/, '')
+
+// `cco quota --json`: one AccountReport per login. cco reports used percent
+// (`utilization`) where ccproxy reports left percent, and a live `availability`
+// instead of a state word. Windows are named by the upstream's own label.
+export function ccoItems(json: string | undefined): AuthItem[] {
+  let raw: any
+  try { raw = json ? JSON.parse(json) : undefined } catch { return [] }
+  if (!Array.isArray(raw?.accounts)) return []
+  return raw.accounts.filter((a: any) => !a.removed).map((a: any): AuthItem => {
+    const wins = (Array.isArray(a.windows) ? a.windows : []).filter((w: any) => typeof w?.utilization === 'number')
+    const left = wins.map((w: any) => ({ label: String(w.label), pct: Math.max(0, Math.round(100 - w.utilization)) }))
+    const quota = left.length ? left.map((w: any) => w.label + ' ' + w.pct + '%').join(' · ') + ' left' : (a.reason ?? 'no usage reading')
+    const dead = a.oauth_status === 'expired' || a.oauth_status === 'reauth-required' || a.oauth_status === 'missing'
+    const st: AuthState = dead ? 'expired'
+      : a.availability === 'cooling' || a.availability === 'exhausted' || left.some((w: any) => w.pct <= 10) ? 'soon'
+      : a.availability === 'offline' || a.availability === 'not-loaded' ? 'unknown' : 'ok'
+    const lead = dead ? String(a.oauth_status) : a.availability && a.availability !== 'available' && a.availability !== 'unknown' ? String(a.availability) : ''
+    const name = String(a.name ?? a.account_id ?? '?')
+    return { id: 'cco:' + a.provider + '/' + name, label: 'cco ' + a.provider + ' ' + name, state: st, detail: (lead ? lead + ' · ' : '') + quota }
+  })
+}

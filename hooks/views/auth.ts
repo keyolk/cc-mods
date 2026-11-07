@@ -3,7 +3,7 @@
 // Policy tab, but a login is not a permission: policy says what Claude may do,
 // this says whether the tools it would do it with still work.
 
-import { ICON as AUTH_ICON, foldLogins, type AuthItem } from '../lib/auth'
+import { ICON as AUTH_ICON, foldLogins, isProxyId, type AuthItem } from '../lib/auth'
 import type { McpLogin } from '../lib/mcpauth'
 import { C, field, section, type Els, type Node } from './common'
 
@@ -25,7 +25,7 @@ const GROUPS: { title: string; test: (id: string) => boolean; note?: string }[] 
   { title: 'Cloud and clusters', test: (id) => id === 'aws-sso' || id.startsWith('argocd:') },
   { title: 'Coder', test: (id) => id.startsWith('coder:') },
   { title: 'GitHub', test: (id) => id.startsWith('gh:') },
-  { title: 'Claude', test: (id) => id === 'daemon' || id.startsWith('ccproxy:') },
+  { title: 'Claude', test: (id) => id === 'daemon' || isProxyId(id) },
 ]
 
 export function renderAuthTab(els: Els, v: AuthView): Node {
@@ -86,7 +86,7 @@ function authRow(els: Els, a: AuthItem, v: AuthView): Node {
   const left = a.expiresAt ? Math.round((a.expiresAt - v.now) / 60000) : undefined
   // ccproxy rows carry their own state and quota line; a bare "expired"
   // would drop the why (auth-failed vs expired) and the remaining quota.
-  const own = a.id.startsWith('ccproxy:')
+  const own = isProxyId(a.id)
   const meta = own ? (a.detail ?? '') : a.state === 'expired' ? 'expired' : left !== undefined && left > 0 ? (left >= 120 ? Math.round(left / 60) + 'h' : left + 'm') + ' left' : (a.detail ?? '')
   // A row with a second way out carries why in its detail: show it beside the time.
   const why = (a.alt || a.batch) && a.detail && !meta.includes(a.detail) ? ' · ' + a.detail : ''
