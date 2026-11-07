@@ -63,6 +63,7 @@ export const LOG_MAX = 200
 // The person typing in a worker's pane holds it this long after the last
 // prompt: the coordinator sends it nothing meanwhile.
 export const HOLD_MS = 10 * 60_000
+export const SPAWN_GRACE_MS = 60_000
 
 export function emptyLedger(sid: string, name: string, now: number): Ledger {
   return { on: false, sid, name, limits: { ...DEFAULT_LIMITS }, workers: [], log: [], at: now }
@@ -185,7 +186,11 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
       return { ...w, endedAt: now }
     }
     const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention }
-    const held = s.humanAt && (!w.heldAt || s.humanAt > w.heldAt) ? s.humanAt : undefined
+    // The brief itself arrives as the worker's first composer prompt (it is
+    // claude's command-line argument), so a mark from the spawn's first
+    // minute is that, not the person.
+    const human = s.humanAt && s.humanAt > w.at + SPAWN_GRACE_MS ? s.humanAt : undefined
+    const held = human && (!w.heldAt || human > w.heldAt) ? human : undefined
     if (held) {
       next.heldAt = held
       changes.push({ slug: w.slug, text: w.slug + ': the person is typing in it; send it nothing until ' + new Date(held + HOLD_MS).toTimeString().slice(0, 5), wake: true })

@@ -79,3 +79,11 @@ test('coord: /coord limits', () => {
   expect(parseLimits('workers 99', cur)).toContain('1 to 12')
   expect(parseLimits('', cur)).toContain('limits:')
 })
+
+test('coord: the brief, the worker\'s first prompt, does not count as the person typing', () => {
+  const l = on({ workers: [worker({ at: NOW - 30_000 })] })
+  const seen = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW - 29_000) / 1000))
+  expect(observe(l, seen, NOW).changes).toEqual([])
+  const later = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW + 60_000) / 1000))
+  expect(observe(l, later, NOW + 61_000).changes.map((c) => c.text)[0]).toContain('the person is typing')
+})
