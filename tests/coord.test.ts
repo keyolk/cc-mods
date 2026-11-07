@@ -87,3 +87,15 @@ test('coord: the brief, the worker\'s first prompt, does not count as the person
   const later = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW + 60_000) / 1000))
   expect(observe(l, later, NOW + 61_000).changes.map((c) => c.text)[0]).toContain('the person is typing')
 })
+
+test('coord: a turn that ended between two ticks still wakes the coordinator', () => {
+  // Live: the ledger went from no state straight to waiting; the worker had
+  // already sent READY.
+  const l = on({ workers: [worker({ state: undefined, at: NOW - 300_000 })] })
+  const seen = parsePanes('%1\t@1\tw1\twaiting\tnone\t/w/tmc-layout\t')
+  expect(observe(l, seen, NOW).changes.map((c) => c.text)).toEqual(['tmc-layout: finished its turn'])
+  // Just started, not yet working: nothing.
+  expect(observe(on({ workers: [worker({ state: undefined, at: NOW - 5_000 })] }), seen, NOW).changes).toEqual([])
+  // Already idle last time: nothing new.
+  expect(observe(on({ workers: [worker({ state: 'done' })] }), seen, NOW).changes).toEqual([])
+})
