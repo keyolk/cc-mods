@@ -28,7 +28,7 @@ import type { McpLogin } from '../lib/mcpauth'
 import { mcpLoginCard } from './auth'
 import { C, field, keys, prTone, rule, type Els, type Node } from './common'
 
-export type View = 'home' | 'flow' | 'graph' | 'outputs' | 'policy' | 'web' | 'usage' | 'auth' | 'settings'
+export type View = 'home' | 'flow' | 'graph' | 'outputs' | 'policy' | 'web' | 'usage' | 'auth' | 'settings' | 'coord'
 
 export const TABS: { id: View; label: string; hotkey: string }[] = [
   { id: 'home', label: 'Now', hotkey: '1' },
@@ -40,6 +40,7 @@ export const TABS: { id: View; label: string; hotkey: string }[] = [
   { id: 'usage', label: 'Usage', hotkey: '7' },
   { id: 'auth', label: 'Auth', hotkey: '8' },
   { id: 'settings', label: 'Settings', hotkey: '9' },
+  { id: 'coord', label: 'Coord', hotkey: '0' },
 ]
 
 // Views that used to be their own areas, and the tab that holds them now.
@@ -90,6 +91,7 @@ export type HomeView = {
   policy: Policy | null
   webOn?: boolean // a Web tab page is running
   webLink?: 'ok' | 'down' | 'driving' // the TWeb pane beside: tweb answered, did not, or Claude is driving it
+  decisions?: number // briefs waiting on the person's pick, as the Coord tab last read them
   onView: (v: View) => void
   onFix: (a: AuthItem) => void
   onPr: (pr: PrStatus, action: 'open' | 'followup') => void // a press opens the PR page
@@ -395,6 +397,7 @@ function tabBar(els: Els, v: HomeView, active: View): Node {
     usage: { n: v.usage?.last?.account ? shortModel(v.usage.last.model) : '' },
     auth: { n: authBad ? '✗' + authBad : authSoon ? '⏳' + authSoon : '', tone: authBad ? C.bad : authSoon ? C.warn : undefined },
     settings: {},
+    coord: { n: v.decisions ? '⏳' + v.decisions : '', tone: v.decisions ? C.warn : undefined },
   }
   return Box({
     flexDirection: 'row',

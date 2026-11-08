@@ -237,7 +237,8 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it removes the worktree and the window).',
-    '- When the person must decide, show the worker\'s visual brief and ask with AskUserQuestion, the recommended option first. The person may also answer or instruct from the office; those arrive here as prompts.',
+    '- When the person must decide, put the question on a brief (the worker\'s visual brief, or make one): `brief ask <brief>` with the options, the recommended one marked, and this session as coordinator. It shows in the office\'s 지휘 view; you may also ask with AskUserQuestion, the recommended option first.',
+    '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`.',
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): models ' + l.limits.models.join(', ') + '; effort up to ' + l.limits.maxEffort + '; ' + l.limits.maxWorkers + ' workers.',
     rows.length ? '| worker | relation | model/effort | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
@@ -302,4 +303,36 @@ export function policyOf(caps: Partial<Record<Cap, CapValue>>, mergeRepos: reado
 
 export function mergeRepos(l: Ledger): string[] {
   return [...new Set(active(l).map((w) => w.repo).filter((r): r is string => !!r && r.includes('/')))]
+}
+
+// A decision a brief waits on (office/command.py pending), for the cockpit's
+// Coord tab. The sidecar schema is the brief CLI's; anything off is dropped.
+export type Decision = {
+  file: string
+  title: string
+  question: string
+  options: { label: string; detail: string }[]
+  recommended: number | null
+  coordinator?: string
+  worker?: string
+  asked?: string
+}
+
+export function parsePending(json: string): Decision[] {
+  let raw: unknown
+  try {
+    raw = JSON.parse(json)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(raw)) return []
+  const out: Decision[] = []
+  for (const it of raw as any[]) {
+    const d = it?.decision
+    if (!it || typeof it.file !== 'string' || !d || typeof d.question !== 'string') continue
+    const options = (Array.isArray(d.options) ? d.options : []).filter((o: any) => o && typeof o.label === 'string').map((o: any) => ({ label: o.label, detail: typeof o.detail === 'string' ? o.detail : '' }))
+    const rec = Number.isInteger(d.recommended) && d.recommended >= 0 && d.recommended < options.length ? d.recommended : null
+    out.push({ file: it.file, title: typeof it.title === 'string' ? it.title : it.file, question: d.question, options, recommended: rec, coordinator: it.coordinatorName ?? undefined, worker: d.worker ?? undefined, asked: d.asked ?? undefined })
+  }
+  return out
 }

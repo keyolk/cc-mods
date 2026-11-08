@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, HOLD_MS, WORKER_CAPS, coordSection, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, HOLD_MS, WORKER_CAPS, coordSection, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
 
 const NOW = 1_800_000_000_000
 const on = (over: Partial<Ledger> = {}): Ledger => ({ ...emptyLedger('coord-sid', 'cc-mods-d9', NOW), on: true, ...over })
@@ -69,6 +69,10 @@ test('coord: a ledger from disk keeps sane limits; the prompt names the workers'
   const text = coordSection(l, NOW)
   expect(text).toContain('`n`, the coordinator')
   expect(text).toContain('| a | owned |')
+  // The office's two prompts are named, so the coordinator knows what to do with them.
+  expect(text).toContain('`brief ask <brief>`')
+  expect(text).toContain('[brief answer]')
+  expect(text).toContain('[office→coord]')
 })
 
 test('coord: /coord limits', () => {
@@ -110,4 +114,15 @@ test('coord: the coordinator merges only in its workers\' repositories; a worker
   expect(p.caps.gh_merge).toBe('block')
   expect(p.caps.prod_eks_access).toBe('allow')
   expect(p.scopes).toEqual({ gh_merge: ['keyolk/tmc'] })
+})
+
+test('coord: pending decisions from command.py keep only what the tab can draw', () => {
+  const got = parsePending(JSON.stringify([
+    { file: 'a.html', title: 'A', coordinatorName: 'c', decision: { question: 'q?', options: [{ label: 'x' }, { nope: 1 }, { label: 'y', detail: 'd' }], recommended: 5, worker: 'w', asked: 't' } },
+    { file: 'b.html', decision: { options: [] } },
+    'junk',
+  ]))
+  expect(got).toEqual([{ file: 'a.html', title: 'A', question: 'q?', options: [{ label: 'x', detail: '' }, { label: 'y', detail: 'd' }], recommended: null, coordinator: 'c', worker: 'w', asked: 't' }])
+  expect(parsePending('{oops')).toEqual([])
+  expect(parsePending('{}')).toEqual([])
 })
