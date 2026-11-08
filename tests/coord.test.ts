@@ -1,7 +1,8 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, HOLD_MS, WORKER_CAPS, coordSection, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, HOLD_MS, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
+import { canonicalOf, parseProjects, trustTarget, trustedBy } from '../hooks/lib/trust'
 
 const NOW = 1_800_000_000_000
 const on = (over: Partial<Ledger> = {}): Ledger => ({ ...emptyLedger('coord-sid', 'cc-mods-d9', NOW), on: true, ...over })
@@ -35,6 +36,12 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   expect(p.startsWith('fix it\n')).toBe(true)
   expect(p).toContain('SendMessage (to: "cc-mods-d9")')
   expect(p).toContain('READY <sha>')
+  expect(p).not.toContain('coord-report')
+  // Live: a worker's READY failed with "No agent named 'cc-mods-d9' is
+  // reachable" (the coordinator's /tmp/cc-socks file was gone): the inbox
+  // reaches it anyway.
+  const fb = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', 'python3 /p/bin/coord-report coord-sid')
+  expect(fb).toContain("python3 /p/bin/coord-report coord-sid '[worker tmc-layout] <report>'")
 })
 
 test('coord: the watch wakes the coordinator for a question, an exit and the person taking over', () => {
@@ -59,6 +66,68 @@ test('coord: the watch wakes the coordinator for a question, an exit and the per
 test('coord: sessions already in a directory or the repository around it are found', () => {
   const seen = parsePanes(['%1\t@1\ts1\tdone\tnone\t/src/tmc', '%2\t@2\ts2\tdone\tnone\t/src/tmc/crates', '%3\t@3\ts3\tdone\tnone\t/src/tmcx', '%4\t@4\tcoord-sid\tdone\tnone\t/src/tmc'].join('\n'))
   expect(overlaps(seen, on(), '/src/tmc/').map((s) => s.sid)).toEqual(['s1', 's2'])
+})
+
+test('coord: a session in a parent directory is not in the repository; one in its worktree is', () => {
+  // Live: a spawn in ~/src/keyolk/briefs named 13 sessions sitting in ~ and
+  // one in ~/src as "other live sessions in this repository".
+  const seen = parsePanes(['%1\t@1\thome\tdone\tnone\t/Users/g', '%2\t@2\tsrc\tdone\tnone\t/Users/g/src', '%3\t@3\twt\tdone\tnone\t/Users/g/worktrees/briefs/old', '%4\t@4\tsub\tdone\tnone\t/Users/g/src/keyolk/briefs/docs', '%5\t@5\tother\tdone\tnone\t/Users/g/worktrees/tmc/x'].join('\n'))
+  const of = new Map([['/Users/g/worktrees/briefs/old', '/Users/g/src/keyolk/briefs/.git'], ['/Users/g/src/keyolk/briefs/docs', '/Users/g/src/keyolk/briefs/.git'], ['/Users/g/worktrees/tmc/x', '/Users/g/src/tmc/.git']])
+  expect(overlaps(seen, on(), '/Users/g/src/keyolk/briefs', { common: '/Users/g/src/keyolk/briefs/.git', of }).map((s) => s.sid)).toEqual(['wt', 'sub'])
+  // Git unknown: only the directory and what is under it.
+  expect(overlaps(seen, on(), '/Users/g/src/keyolk/briefs').map((s) => s.sid)).toEqual(['sub'])
+})
+
+test('coord: an approval the auto classifier settles between ticks is neither a question nor a finished turn', () => {
+  // Live: a worker read code; its Bash call was an ask the classifier
+  // allowed, and the pane showed waiting/action. The watch said "finished
+  // its turn".
+  const l = on({ workers: [worker()] })
+  const asking = parsePanes('%1\t@1\tw1\twaiting\taction\t/w/tmc-layout\t')
+  const first = observe(l, asking, NOW)
+  expect(first.changes).toEqual([])
+  // Settled by the next tick: nothing.
+  expect(observe(first.ledger, parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t'), NOW + 10_000).changes).toEqual([])
+  // Still asking a tick later: the person's dialog. Once.
+  const second = observe(first.ledger, asking, NOW + 10_000)
+  expect(second.changes.map((c) => c.text)).toEqual(['tmc-layout: waiting on an approval in its pane'])
+  expect(observe(second.ledger, asking, NOW + 20_000).changes).toEqual([])
+  // The turn's real end is still seen after it.
+  const done = observe(second.ledger, parsePanes('%1\t@1\tw1\tdone\tnone\t/w/tmc-layout\t'), NOW + 30_000)
+  expect(done.changes.map((c) => c.text)).toEqual(['tmc-layout: finished its turn'])
+})
+
+test('coord: a wake held through the coordinator\'s turn is delivered only while still true', () => {
+  // Live: "its session is gone" was queued behind the coordinator's turn and
+  // arrived two minutes later, after it had found out and respawned.
+  const l = on({ workers: [worker({ state: 'done', attention: 'none' }), worker({ slug: 'b', sid: 'w2', endedAt: NOW }), worker({ slug: 'c', sid: 'w3', state: 'working', attention: 'none' })] })
+  const c = (sid: string, kind: 'ask' | 'held' | 'turn' | 'gone') => ({ slug: sid, sid, kind, text: '', wake: true })
+  expect(current(c('w1', 'turn'), l, NOW)).toBe(true)
+  expect(current(c('w2', 'gone'), l, NOW)).toBe(true)
+  // Working again (the coordinator sent it more): no longer finished.
+  expect(current(c('w3', 'turn'), l, NOW)).toBe(false)
+  expect(current(c('w3', 'ask'), l, NOW)).toBe(false)
+  expect(current(c('w1', 'held'), l, NOW)).toBe(false)
+  expect(current(c('nobody', 'gone'), l, NOW)).toBe(false)
+})
+
+test('trust: Claude Code\'s rule, read only', () => {
+  const projects = parseProjects(JSON.stringify({ projects: { '/Users/g': { hasTrustDialogAccepted: true }, '/Users/g/src/keyolk/cc-mods': { hasTrustDialogAccepted: true }, '/Users/g/src': { hasTrustDialogAccepted: false }, '/odd': [] } }))
+  // A worktree shares its main checkout's trust.
+  const ccWt = { dir: '/Users/g/worktrees/cc-mods/x', top: '/Users/g/worktrees/cc-mods/x', canonical: canonicalOf('/Users/g/src/keyolk/cc-mods/.git') }
+  expect(trustedBy(projects, ccWt)).toBe('/Users/g/src/keyolk/cc-mods')
+  // Live: ~ was trusted and the dialog still came: inside git the walk
+  // stops at the toplevel.
+  const briefsWt = { dir: '/Users/g/worktrees/briefs/b', top: '/Users/g/worktrees/briefs/b', canonical: canonicalOf('/Users/g/src/keyolk/briefs/.git') }
+  expect(trustedBy(projects, briefsWt)).toBeUndefined()
+  expect(trustTarget(briefsWt)).toBe('/Users/g/src/keyolk/briefs')
+  // A trusted folder between the directory and its toplevel counts.
+  expect(trustedBy(projects, { dir: '/Users/g/src/keyolk/cc-mods/hooks', top: '/Users/g/src/keyolk/cc-mods', canonical: '/elsewhere' })).toBe('/Users/g/src/keyolk/cc-mods')
+  // Outside git, any parent.
+  expect(trustedBy(projects, { dir: '/Users/g/research/x' })).toBe('/Users/g')
+  expect(trustedBy(projects, { dir: '/odd/x' })).toBeUndefined()
+  expect(parseProjects('{oops')).toEqual({})
+  expect(canonicalOf('/srv/repo.git/')).toBe('/srv/repo.git')
 })
 
 test('coord: a ledger from disk keeps sane limits; the prompt names the workers', () => {

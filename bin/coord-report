@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""coord-report <coordinator sid> <text>: a worker's report to its coordinator
+through the office inbox, for when SendMessage cannot reach it.
+
+SendMessage finds a session by its socket in /tmp/cc-socks; when that file is
+gone the coordinator still runs but no one can message it. Its cc-mods reads
+~/.claude/state/office/inbox/<sid>.json every 2 s and submits the text there
+as a prompt, so the report arrives all the same. Appends the way office.py's
+inbox_put does, so a message not yet taken is kept.
+"""
+import json
+import os
+import re
+import sys
+import time
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3 or not re.fullmatch(r"[0-9a-fA-F-]{8,64}", argv[1]) or not argv[2].strip():
+        print("usage: coord-report <coordinator session id> <text>", file=sys.stderr)
+        return 2
+    inbox = os.path.expanduser("~/.claude/state/office/inbox")
+    os.makedirs(inbox, exist_ok=True)
+    path = os.path.join(inbox, argv[1] + ".json")
+    try:
+        with open(path) as f:
+            old = str((json.load(f) or {}).get("text") or "")
+    except (OSError, ValueError):
+        old = ""
+    text = argv[2].strip()
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time()}, f)
+    os.replace(tmp, path)
+    print("queued for " + argv[1])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
