@@ -78,7 +78,7 @@ import { renderCoordTab } from './views/coord'
 import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
-import { coordCommand, coordPrompt, coordStart, coordTool, isCoordTool } from './coord'
+import { coordCommand, coordIdle, coordPrompt, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -1485,6 +1485,17 @@ let mainTurnAt = 0
 // What the previous main step was sent with (routing's cache gate, lib/route.ts).
 let routeLast: RouteLast | undefined
 let mainTurnRunning = false
+// The call tool.check last marked ❗ for. Its ask goes to the permission mode
+// first: under auto mode the classifier allows most with no dialog shown,
+// and nothing else would put the pane back to working before the turn ends
+// (a coordinator read that waiting as the worker's turn being over).
+let askedCall: string | undefined
+async function settleAsk($: any, id: string | undefined) {
+  if (!id || id !== askedCall) return
+  askedCall = undefined
+  // An abort at the dialog ends the turn: turn.complete publishes that.
+  if (mainTurnRunning) await publish($, 'working', 'none')
+}
 // Engine-clock ms of the last turn or keystroke in this session (see QUIET_MS).
 // Undefined until the session starts: the engine clock may start at 0.
 let activeAt: number | undefined
@@ -3263,6 +3274,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       sid: () => sid,
       home: () => home,
       pane: () => pane,
+      busy: () => mainTurnRunning,
       policy: {
         now: () => loadPolicy($),
         run: async (argv, sessionId) => (await runPolicy($, argv, sessionId)).ok,
@@ -3553,6 +3565,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       if (unblockPending.length) $.clock.after(500, () => flushUnblocked($))
       // An answered turn ends the streak: the next failure starts fresh.
       if (e.reason === 'answer') await update($, resumeA, () => null)
+      // Coordinator mode: what its workers did while this turn ran.
+      $.clock.after(500, () => void coordIdle($))
     }
     const result = await next(e)
     if (e.agentId) {
@@ -3688,6 +3702,15 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       }
       if (isWrite(e.tool, e)) quietTurn.wrote = true
     }
+    const result = await next(e)
+    await settleAsk($, e.tool_use_id)
+    return result
+  })
+
+  // A foreground Bash past its first seconds draws its background pill: it
+  // runs, so whatever was asked about it is settled.
+  on('ui.render', { component: 'ToolProgress' }, async ($: any, e: any, next: any) => {
+    void settleAsk($, e.props?.tool_use_id)
     return next(e)
   })
 
@@ -3921,7 +3944,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // when a Notification eventually fires.
   on('tool.check', async ($: any, e: any, next: any) => {
     const decided = await next(e)
-    if (decided?.decision === 'ask' && !e.agentId) await publish($, 'waiting', 'action')
+    if (decided?.decision === 'ask' && !e.agentId) {
+      askedCall = e.tool_use_id
+      await publish($, 'waiting', 'action')
+    }
     return decided
   })
 

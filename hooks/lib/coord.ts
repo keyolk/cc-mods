@@ -44,6 +44,7 @@ export type Worker = {
   at: number
   state?: string // the last @cc_pane_state seen
   attention?: string
+  asked?: string // the attention the coordinator was last woken for
   heldAt?: number // the person typed in the worker's own pane
   endedAt?: number
 }
@@ -141,12 +142,17 @@ export function spawnRefusal(l: Ledger, r: SpawnRequest): string | undefined {
 }
 
 // What every worker is told about reporting, after the coordinator's brief.
-export function workerPrompt(brief: string, coordName: string, slug: string): string {
+// `fallback`: the command that queues a report in the coordinator's office
+// inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
+// socket in /tmp/cc-socks, and a coordinator whose socket file is gone still
+// runs but cannot be messaged: the inbox reaches it all the same.
+export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string): string {
   return (
     brief.trim() +
     '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. Report to it with SendMessage (to: "' + coordName + '"), and never wait on the person:\n' +
     '- `READY <sha>` when the work is pushed, tests pass, and the PR body has a live run; add the PR URL and, when the person must decide or understand something, a brief made with the doc:visual-brief skill (its path).\n' +
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
+    (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     'Messages from the coordinator arrive as prompts starting with `[coordinator]`. The person may also type in this pane; their words win.'
   )
 }
@@ -168,9 +174,11 @@ export function parsePanes(out: string): PaneSeen[] {
     .filter((p) => p.length >= 6 && p[2])
     .map(([pane, window, sid, state, attention, cwd, human]) => ({ pane: pane!, window: window!, sid: sid!, state: state ?? '', attention: attention ?? '', cwd: cwd ?? '', humanAt: Number(human) ? Number(human) * 1000 : undefined }))
 }
-export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{@cc_pane_attention}\t#{pane_current_path}\t#{@cc_human_at}'
+// Attention from the pane's own copy, else the window's (a session from
+// before the pane copy publishes only @cc_attention).
+export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}'
 
-export type Change = { slug: string; text: string; wake: boolean }
+export type Change = { slug: string; sid: string; kind: 'ask' | 'held' | 'turn' | 'gone'; text: string; wake: boolean }
 
 // What changed for the ledger's workers since the last look, and the ledger
 // with the new states. `wake`: worth a message to the coordinator now (a
@@ -186,7 +194,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
       // Not yet published: a worker just started has no @cc_pane_session for
       // its first seconds.
       if (now - w.at < 60_000) return w
-      changes.push({ slug: w.slug, text: w.slug + ': its session is gone (window closed or claude exited)', wake: true })
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': its session is gone (window closed or claude exited)', wake: true })
       return { ...w, endedAt: now }
     }
     const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention }
@@ -197,32 +205,63 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
     const held = human && (!w.heldAt || human > w.heldAt) ? human : undefined
     if (held) {
       next.heldAt = held
-      changes.push({ slug: w.slug, text: w.slug + ': the person is typing in it; send it nothing until ' + new Date(held + HOLD_MS).toTimeString().slice(0, 5), wake: true })
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'held', text: w.slug + ': the person is typing in it; send it nothing until ' + new Date(held + HOLD_MS).toTimeString().slice(0, 5), wake: true })
     }
+    // waiting with ask or action is not a turn's end: ask is a question its
+    // turn ended on, action a tool call put to the permission mode. Under
+    // --permission-mode auto the classifier settles most of those in seconds
+    // with no dialog, so an action wakes the coordinator only when a second
+    // tick still sees it; a question at once.
     const asks = s.attention === 'ask' || s.attention === 'action'
-    if (asks && w.attention !== s.attention) changes.push({ slug: w.slug, text: w.slug + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane', wake: true })
-    // cc-mods publishes done at a turn's end and waiting (attention none)
-    // when the session idles after it; a watch tick can miss the done, and
-    // can miss the working too when the whole turn fits between two ticks.
-    // So any move into an idle state from a non-idle one is a finished turn.
-    else if (!asks && idle(s.state) && !idle(w.state) && (w.state === 'working' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, text: w.slug + ': finished its turn', wake: true })
+    const open = s.attention === 'ask' || (s.attention === 'action' && w.attention === 'action')
+    if (!asks) next.asked = undefined
+    if (open && w.asked !== s.attention) {
+      next.asked = s.attention
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'ask', text: w.slug + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane', wake: true })
+    }
+    // cc-mods publishes done (attention none) at a turn's end, and waiting
+    // with none only when the session has idled 30 min after that done. A
+    // watch tick can miss the done, and the working too when the whole turn
+    // fits between two ticks: so done, or that idle waiting, after anything
+    // else is a finished turn.
+    else if (!asks && idle(s.state) && !rested(w) && (w.state === 'working' || w.state === 'waiting' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, sid: w.sid, kind: 'turn', text: w.slug + ': finished its turn', wake: true })
     return next
   })
   return { ledger: { ...l, workers }, changes }
 }
 
 const idle = (state: string | undefined) => state === 'done' || state === 'waiting'
+// Idle as last seen: a waiting that asked something was mid-turn or put a
+// question, so a done after it is a turn's end.
+const rested = (w: Worker) => idle(w.state) && w.attention !== 'ask' && w.attention !== 'action'
 
 export function held(w: Worker, now: number): boolean {
   return !!w.heldAt && now - w.heldAt < HOLD_MS
 }
 
-// Live sessions that already work where a new worker would: same directory,
-// or the same repository checkout. Asked about before starting another.
-export function overlaps(seen: PaneSeen[], l: Ledger, dir: string): PaneSeen[] {
+// Whether a wake held while the coordinator's turn ran still says something
+// true now that it can be delivered: the worker still asks, is still held,
+// is still idle after its turn. A gone worker stays gone.
+export function current(c: Change, l: Ledger, now: number): boolean {
+  const w = l.workers.find((x) => x.sid === c.sid)
+  if (!w) return false
+  if (c.kind === 'gone') return true
+  if (w.endedAt) return false
+  if (c.kind === 'ask') return w.attention === 'ask' || w.attention === 'action'
+  if (c.kind === 'held') return held(w, now)
+  return rested(w)
+}
+
+// Live sessions that already work in the repository a new worker would:
+// under its directory, or in the same git repository (its main checkout or
+// any worktree, which share one common git dir). A session in a parent
+// directory (~, ~/src) is not working in it. `git` maps a session's cwd to
+// its common git dir, the target's under `common`.
+export function overlaps(seen: PaneSeen[], l: Ledger, dir: string, git?: { common?: string; of: Map<string, string> }): PaneSeen[] {
   const norm = (p: string) => p.replace(/\/+$/, '')
   const d = norm(dir)
-  return seen.filter((s) => s.sid !== l.sid && s.cwd && (norm(s.cwd) === d || norm(s.cwd).startsWith(d + '/') || d.startsWith(norm(s.cwd) + '/')))
+  const same = (cwd: string) => !!git?.common && git.of.get(cwd) === git.common
+  return seen.filter((s) => s.sid !== l.sid && s.cwd && (norm(s.cwd) === d || norm(s.cwd).startsWith(d + '/') || same(s.cwd)))
 }
 
 // What the coordinator reads every turn: its role, its limits, its workers.

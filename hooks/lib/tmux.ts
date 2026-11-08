@@ -6,8 +6,8 @@
 //   @cc_since      epoch seconds
 //   @cc_session    session id (the join key; never join on cwd)
 //
-// plus pane-scoped copies (@cc_pane_*) because several sessions can share a
-// window. New options this mod adds, which no existing reader depends on:
+// plus pane-scoped copies (@cc_pane_state, @cc_pane_since, @cc_pane_attention,
+// @cc_pane_session) because several sessions can share a window. New options this mod adds, which no existing reader depends on:
 //
 //   @cc_ctx     context window percent used, e.g. "42"
 //   @cc_agents  running subagents + background tasks, e.g. "2"
@@ -40,7 +40,10 @@ export function publishArgv(pane: string, p: Publish, nowSec: number): string[][
     pn('@cc_pane_state', p.state)
     pn('@cc_pane_since', String(nowSec))
   }
-  if (p.attention) win('@cc_attention', p.attention)
+  if (p.attention) {
+    win('@cc_attention', p.attention)
+    pn('@cc_pane_attention', p.attention)
+  }
   if (p.session) {
     win('@cc_session', p.session)
     pn('@cc_pane_session', p.session)

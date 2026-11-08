@@ -7,7 +7,8 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, active, coordSection, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, spawnRefusal, workerArgv, workerPrompt, type Ledger, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, active, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from './lib/coord'
+import { canonicalOf, parseProjects, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
 import type { Policy } from './lib/policy'
@@ -22,7 +23,9 @@ export type CoordPolicy = {
   setGodBefore: (p: Policy) => Promise<void>
   reload: () => Promise<void>
 }
-type Ctx = { sid: () => string; home: () => string; pane: () => string | undefined; policy: CoordPolicy }
+// busy: the coordinator's own turn is running (a prompt submitted then waits
+// for its end).
+type Ctx = { sid: () => string; home: () => string; pane: () => string | undefined; busy: () => boolean; policy: CoordPolicy }
 
 const TOOLS = {
   roster: {
@@ -162,15 +165,49 @@ async function tick($: any) {
   if (ticking || !ledger?.on || !active(ledger).length) return
   ticking = true
   try {
-    const { ledger: l, changes } = observe(ledger, await panes($), Date.now())
-    const woke = changes.filter((c) => c.wake)
+    // Panes first: a coord tool (close, spawn) may save the ledger while
+    // tmux answers, and observing the ledger from before that would undo it.
+    const seen = await panes($)
+    const { ledger: l, changes } = observe(ledger, seen, Date.now())
     let out = l
     for (const c of changes) out = logged(out, 'event', c.text, Date.now())
     if (changes.length || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
-    if (woke.length) await $.prompt.submit({ text: '[coord] ' + woke.map((c) => c.text).join('\n[coord] ') }).catch(() => undefined)
+    // A worker coord_close is closing: its window went first, its endedAt
+    // comes when the close saves. Not news to the coordinator that closed it.
+    pending.push(...changes.filter((c) => c.wake && !closing.has(c.sid)))
+    await flush($)
   } finally {
     ticking = false
   }
+}
+
+// Wakes not yet delivered. A prompt submitted while the coordinator's turn
+// runs waits for that turn's end, by when the coordinator has often found
+// out itself (a worker gone two minutes before it heard). So they wait
+// here: a coord tool's result carries them, and at the turn's end the ones
+// still true go as one prompt.
+let pending: Change[] = []
+const closing = new Set<string>()
+
+async function flush($: any) {
+  if (!pending.length || !ctx || ctx.busy()) return
+  const now = Date.now()
+  const due = pending.filter((c) => ledger && current(c, ledger, now))
+  pending = []
+  if (due.length) await $.prompt.submit({ text: '[coord] ' + due.map((c) => c.text).join('\n[coord] ') }).catch(() => undefined)
+}
+
+// register.ts: the coordinator's turn ended.
+export async function coordIdle($: any) {
+  if (ledger?.on) await flush($)
+}
+
+function withPending(r: { result: string } | { deny: string }): { result: string } | { deny: string } {
+  if (!pending.length || !('result' in r)) return r
+  const now = Date.now()
+  const due = pending.filter((c) => ledger && current(c, ledger, now))
+  pending = []
+  return due.length ? { result: r.result + '\n\nMeanwhile:\n[coord] ' + due.map((c) => c.text).join('\n[coord] ') } : r
 }
 
 // ---- the person's command ---------------------------------------------------
@@ -236,10 +273,10 @@ export async function coordTool($: any, tool: string, input: any): Promise<{ res
   const kind = toolNames[tool]
   if (!ledger || !ctx) return { deny: 'coordinator mode is not ready' }
   if (!ledger.on) return { deny: 'coordinator mode is off; only the person turns it on (/coord on)' }
-  if (kind === 'roster') return { result: await roster($) }
-  if (kind === 'spawn') return spawn($, input ?? {})
-  if (kind === 'send') return send($, input ?? {})
-  if (kind === 'close') return close($, input ?? {})
+  if (kind === 'roster') return withPending({ result: await roster($) })
+  if (kind === 'spawn') return withPending(await spawn($, input ?? {}))
+  if (kind === 'send') return withPending(await send($, input ?? {}))
+  if (kind === 'close') return withPending(await close($, input ?? {}))
   return { deny: 'unknown coordinator tool' }
 }
 
@@ -280,6 +317,12 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
     worktree = home + '/worktrees/' + repoName + '/' + req.slug
     cwd = worktree
   }
+  // Claude Code stops a new session in an untrusted folder at its safety
+  // dialog, and its default answer exits: refuse before any worktree is made.
+  const common = await commonDir($, repoTop || cwd)
+  const place = req.repoDir ? { dir: cwd, top: worktree, canonical: canonicalOf(common) ?? repoTop } : await placeOf($, cwd, common)
+  if (!trustedBy(parseProjects(await readText($, home + '/.claude.json')), place))
+    return { deny: trustTarget(place) + ' is not trusted yet: Claude Code would stop the worker at its "Is this a project you trust?" dialog. The person must open claude in that folder once and choose "Yes, I trust this folder"; nothing was started.' }
   // A session in the very directory is refused until the person decides; one
   // elsewhere in the same repository (its checkout or another worktree) is
   // only named, so the coordinator knows who else is in there.
@@ -288,7 +331,7 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   const busy = seen.filter((s) => s.sid !== ledger!.sid && s.cwd.replace(/\/+$/, '') === cwd.replace(/\/+$/, ''))
   if (busy.length && !i.overlap_ok)
     return { deny: 'live sessions already work in ' + cwd + ': ' + who(busy) + '. Ask the person whether to adopt one (/coord adopt <pane>) or start another anyway (overlap_ok).' }
-  const near = req.repoDir ? [...overlaps(seen, ledger!, repoTop), ...overlaps(seen, ledger!, home + '/worktrees/' + repoName)].filter((s, k, a) => a.findIndex((x) => x.sid === s.sid) === k && !busy.includes(s)) : []
+  const near = req.repoDir ? overlaps(seen, ledger!, repoTop, { common, of: await commonDirs($, seen) }).filter((s) => !busy.includes(s)) : []
   if (req.repoDir) {
     const top = repoTop
     await sh($, ['git', '-C', top, 'fetch', '-q', 'origin'], { timeoutMs: 60_000 })
@@ -300,7 +343,7 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   const research = home + '/research/' + req.slug
   await sh($, ['mkdir', '-p', research])
   const promptFile = research + '/prompt.txt'
-  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug))
+  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid))
   const uuid = (await sh($, ['uuidgen'])).out.toLowerCase()
   const sess = await sh($, ['tmux', 'display-message', '-p', '-t', ctx!.pane() ?? '', '#{session_name}'], { timeoutMs: 3000 })
   if (!uuid || !sess.ok) return { deny: 'could not find this tmux session or make a session id' }
@@ -317,6 +360,29 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + cwd, now))
   if (ghRepo) await coordPolicy($)
   return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + cwd + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
+}
+
+// The absolute common git dir of a checkout or worktree, undefined outside git.
+async function commonDir($: any, d: string): Promise<string | undefined> {
+  if (!d) return undefined
+  const r = await sh($, ['git', '-C', d, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { timeoutMs: 3000 })
+  return r.ok && r.out ? r.out.replace(/\/+$/, '') : undefined
+}
+
+async function commonDirs($: any, seen: PaneSeen[]): Promise<Map<string, string>> {
+  const cwds = [...new Set(seen.filter((s) => s.sid !== ledger!.sid && s.cwd).map((s) => s.cwd))]
+  const m = new Map<string, string>()
+  await Promise.all(cwds.map(async (c) => {
+    const d = await commonDir($, c)
+    if (d) m.set(c, d)
+  }))
+  return m
+}
+
+async function placeOf($: any, dir: string, common: string | undefined) {
+  if (!common) return { dir }
+  const top = await sh($, ['git', '-C', dir, 'rev-parse', '--show-toplevel'], { timeoutMs: 3000 })
+  return { dir, top: top.ok && top.out ? top.out : undefined, canonical: canonicalOf(common) }
 }
 
 async function send($: any, i: any): Promise<{ result: string } | { deny: string }> {
@@ -352,6 +418,7 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
     const dirty = await sh($, ['git', '-C', w.worktree, 'status', '--porcelain'])
     if (dirty.ok && dirty.out) return { deny: w.worktree + ' has uncommitted changes; nothing was closed:\n' + dirty.out.split('\n').slice(0, 10).join('\n') }
   }
+  closing.add(w.sid)
   if (w.window) await sh($, ['tmux', 'kill-window', '-t', w.window], { timeoutMs: 3000 })
   let note = ''
   if (w.worktree) {
@@ -359,7 +426,8 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
     const rm = await sh($, ['git', '-C', w.repoDir ?? w.worktree, 'worktree', 'remove', w.worktree])
     note = rm.ok ? ' and removed ' + w.worktree : '; the worktree stays (' + rm.err + ')'
   }
-  await save($, logged({ ...ledger!, workers: ledger!.workers.map((x) => (x === w ? { ...x, endedAt: now } : x)) }, 'close', w.slug, now))
+  await save($, logged({ ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid ? { ...x, endedAt: x.endedAt ?? now } : x)) }, 'close', w.slug, now))
+  closing.delete(w.sid)
   return { result: 'Closed ' + w.slug + "'s window" + note + '.' }
 }
 

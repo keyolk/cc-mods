@@ -120,6 +120,30 @@ test('a turn publishes working, then the classified attention, on this pane only
   expect(tmux.some((a) => a.includes('@cc_attention') && a[a.length - 1] === 'ask')).toBe(true)
 })
 
+test('an asked tool call that runs (auto mode allowed it) puts the pane back to working', async ($, on) => {
+  // Live: an auto-mode worker read code; its compound Bash was an ask the
+  // classifier allowed with no dialog, and the pane said waiting/action until
+  // the turn ended. Its coordinator read that as the turn being over.
+  const runs = baseStubs(on, { pane: '%42' })
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('tool.check', () => ({ decision: 'ask' }))
+  on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.prompt.submit({ text: 'read the readme and the office code', origin: { kind: 'composer' }, wait: false } as any)
+  await $.turn.start({ turnId: 't1', text: 'read the readme and the office code' })
+  await $.tool.check({ tool: 'Bash', input: { command: 'sed -n 1,9p README.md && ls' }, tool_use_id: 'tu-1' } as any)
+  const attention = () => runs.filter((a) => a[0] === 'tmux' && a.includes('@cc_pane_attention')).map((a) => a[a.length - 1])
+  expect(attention()).toEqual(['none', 'action'])
+  // Another call ending does not settle this one.
+  await $.tool.call({ tool: 'Read', file_path: '/work/a', tool_use_id: 'tu-0' } as any)
+  expect(attention()).toEqual(['none', 'action'])
+  await $.tool.call({ tool: 'Bash', command: 'sed -n 1,9p README.md && ls', tool_use_id: 'tu-1' } as any)
+  expect(attention()).toEqual(['none', 'action', 'none'])
+  const states = runs.filter((a) => a[0] === 'tmux' && a.includes('@cc_pane_state')).map((a) => a[a.length - 1])
+  expect(states).toEqual(['working', 'waiting', 'working'])
+})
+
 test('auto_continue answers a plain proceed question after a pause the person can type over', async ($, on) => {
   const submitted: string[] = []
   const asked: any[] = []
@@ -2840,14 +2864,17 @@ test('/office restarts a server left over from older code and keeps a current on
 test('coordinator: /coord on registers the tools; a spawn reads its arguments off the call and starts a worker window', async ($, on) => {
   const written: Record<string, string> = {}
   const policyEnvs: { sid: string; argv: string[]; at: number }[] = []
+  const trust = { json: JSON.stringify({ projects: { '/home/u': { hasTrustDialogAccepted: true }, '/src/tmc': { hasTrustDialogAccepted: true }, '/src/odd': [] } }) }
   const runs = baseStubs(on, {
     pane: '%42',
     written,
+    files: { '/home/u/.claude.json': trust.json },
     seen: (e) => {
       if (e.argv[0] === 'python3' && String(e.argv[1]).endsWith('session_policy.py') && e.argv[2] !== 'show') policyEnvs.push({ sid: e.init?.env?.CLAUDE_CODE_SESSION_ID, argv: e.argv.slice(2), at: runs.length })
     },
     run: (a) => {
-      if (a[0] === 'git' && a.includes('--show-toplevel')) return { code: 0, out: '/src/tmc' }
+      if (a[0] === 'git' && a.includes('--show-toplevel')) return { code: 0, out: String(a[2]).startsWith('/src/briefs') ? '/src/briefs' : '/src/tmc' }
+      if (a[0] === 'git' && a.includes('--git-common-dir')) return { code: 0, out: String(a[2]).startsWith('/src/briefs') ? '/src/briefs/.git' : '/src/tmc/.git' }
       if (a[0] === 'git' && a.includes('symbolic-ref')) return { code: 0, out: 'origin/main' }
       if (a[0] === 'git' && a.includes('get-url')) return { code: 0, out: 'git@github.com:keyolk/tmc.git' }
       if (a[0] === 'git') return { code: 0, out: '' }
@@ -2873,6 +2900,14 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', ...input } as any).catch((err: unknown) => ({ error: String(err) }))
   const over: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'max', brief: 'b', repo_dir: '/src/tmc' })
   expect(JSON.stringify(over)).toContain('above the limit high')
+  // A repository nobody trusted yet: Claude Code would stop the worker at its
+  // safety dialog. A trusted home above it does not count (git stops the
+  // walk at the toplevel). Refused before any worktree is made.
+  const untrusted: any = await call({ slug: 'brief-x', model: 'sonnet', effort: 'low', brief: 'b', repo_dir: '/src/briefs' })
+  expect(JSON.stringify(untrusted)).toContain('/src/briefs is not trusted yet')
+  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
+  expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'new-window')).toBe(false)
+  expect(Object.keys(written).some((k) => k.includes('brief-x'))).toBe(false)
   const ok: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc' })
   expect(JSON.stringify(ok)).toContain('Started worker tmc-x in window @9 (pane %90)')
   const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
@@ -2880,6 +2915,7 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   expect(nw.slice(-6)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt'])
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes('/home/u/worktrees/tmc/tmc-x'))).toBe(true)
   expect(written['/home/u/research/tmc-x/prompt.txt']).toContain('worker `tmc-x`')
+  expect(written['/home/u/research/tmc-x/prompt.txt']).toMatch(/python3 \S+\/bin\/coord-report sid-1 '\[worker tmc-x\]/)
   const ledger = JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
   expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane])).toEqual([['tmc-x', 'owned', '%90']])
   // The worker's policy was written under its own session id before its window opened.

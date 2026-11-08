@@ -169,8 +169,14 @@ sessions from Bash, which the tmux guard keeps in its own window):
 - `coord_spawn`: a worktree off origin at `~/worktrees/<repo>/<slug>`, the
   brief in `~/research/<slug>/prompt.txt`, and `claude --model --effort
   --permission-mode auto --disallowedTools AskUserQuestion --session-id` in a
-  new window `w:<slug>` of your tmux session. Refused above your limits, and
-  when a live session already works in that directory until you decide.
+  new window `w:<slug>` of your tmux session. Refused above your limits,
+  when a live session already works in that directory until you decide, and
+  when Claude Code has not been trusted there yet (it would stop the worker at
+  its safety dialog): you open `claude` in that repository once and pick "Yes,
+  I trust this folder". A worktree shares its main checkout's trust; a trusted
+  parent such as `~` does not cover a repository under it. The result names
+  the other sessions in the same repository (its checkout, a worktree, or a
+  folder under it), not the ones in a parent folder.
 - `coord_send`: an instruction to an owned or adopted worker, through the
   office inbox (it arrives as `[coordinator] …`).
 - `coord_close`: closes an owned worker's window and removes its worktree
@@ -187,9 +193,15 @@ routing (the coordinator chose them).
 
 Every 10 s it reads the workers' panes and tells the coordinator when one
 asks something, finishes a turn, exits, or when you typed in it yourself. A
+turn's end is the worker's `done`; a permission ask counts only when a second
+look still sees it (auto mode settles most in seconds). While the
+coordinator's own turn runs these wait: the next coord tool result carries
+them, and at the turn's end the ones still true arrive as one prompt. A
 worker you typed in is **held** for 10 minutes: the coordinator sends it
 nothing. Workers report back with SendMessage (`READY <sha>`, `BLOCKED`,
-`QUESTION`). The ledger is `~/.claude/state/office/coord/<sid>.json`; the
+`QUESTION`); when SendMessage cannot reach the coordinator (its socket in
+`/tmp/cc-socks` is gone), with `bin/coord-report <sid> <text>`, which the
+brief names: it goes through the coordinator's office inbox. The ledger is `~/.claude/state/office/coord/<sid>.json`; the
 office reads it (`/coord` on the office server) to show who works for whom.
 
 **Deciding from the office (🎖 지휘).** When the person must choose, the

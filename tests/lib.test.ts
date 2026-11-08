@@ -259,6 +259,7 @@ test('tmux: publish argv stays on one pane and keeps the contract', async () => 
     ['set', '-p', '-t', '%7', '@cc_pane_state', 'waiting'],
     ['set', '-p', '-t', '%7', '@cc_pane_since', '100'],
     ['set-window-option', '-t', '%7', '@cc_attention', 'ask'],
+    ['set', '-p', '-t', '%7', '@cc_pane_attention', 'ask'],
     ['set-window-option', '-t', '%7', '@cc_session', 's1'],
     ['set', '-p', '-t', '%7', '@cc_pane_session', 's1'],
     ['set-window-option', '-t', '%7', '@cc_ctx', '42'],
