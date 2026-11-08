@@ -34,13 +34,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resources  # noqa: E402 - office/resources.py, beside this file
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
+import command  # noqa: E402 - office/command.py, briefs waiting on a decision
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py")
 
 
 def code_stamp() -> str:
@@ -795,10 +796,13 @@ VIEW_MAX = 20 * 1024 * 1024
 
 
 def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
+    # A brief (~/briefs/*.html) is anyone's to read: a coordinator's question
+    # is shown beside every session it is about.
+    brief = command.brief_path(path)
     path = os.path.realpath(os.path.expanduser(path))
-    known = [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
+    known = [] if brief else [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
     known.append(os.path.realpath(MEET_DIR))  # meeting minutes are anyone's to read
-    if not any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known):
+    if not brief and not any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known):
         return 403, b"not one of this session's files", "text/plain", {}
     if os.path.isdir(path):
         readme = os.path.join(path, "README.md")
@@ -847,7 +851,7 @@ def detail(sid: str, kind: str | None = None) -> dict:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid, "all", 60), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid, "all", 60), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "brief": command.latest_by_session().get(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
 
 
 # ---- the card's other tabs: cc-mods' Chat, Work, Policy and Web -----------
@@ -1318,6 +1322,8 @@ def act(body: dict) -> tuple[int, dict]:
     sid, kind, value = str(body.get("sid") or ""), body.get("kind"), body.get("value")
     if kind in ("meeting", "meeting_end", "broadcast"):
         return group_act(body)
+    if kind in command.KINDS:
+        return command.act(body, inbox_put)
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return 404, {"error": "no such session"}
@@ -1663,11 +1669,13 @@ class Handler(BaseHTTPRequestHandler):
 
             sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
             return self.send(200, json.dumps(panels(sid)).encode(), "application/json")
+        if self.path == "/command" or self.path.startswith("/command?"):  # not /command.js
+            return self.send(200, json.dumps(command.view(snapshot())).encode(), "application/json")
         if self.path.startswith("/coord"):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "decisions": len(command.pending())}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
@@ -1679,7 +1687,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/command.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")

@@ -1129,6 +1129,27 @@ test('the Now tab shows the Model card from ccproxy usage, and says when ccproxy
   await ui2.unmount()
 })
 
+test('the Coord tab lists the decisions briefs wait on, the recommended option marked', async ($, on) => {
+  const runs: string[][] = []
+  const pending = JSON.stringify([{ file: '2026-11-08-x.html', title: '머지 순서', coordinatorName: 'cc-mods-d9', decision: { question: '어느 PR 먼저?', options: [{ label: 'A 먼저', detail: '작다' }, { label: 'B 먼저', detail: '' }], recommended: 1, worker: 'w1', asked: '2026-11-08T01:00Z', answer: null } }])
+  baseStubs(on, { runs, run: (a) => (a[0] === 'python3' && String(a[1]).endsWith('/office/command.py') ? { code: 0, out: pending } : undefined) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await clock.advance(0)
+  const ui = await $.ui.mount({ ...COCKPIT, surface: 'terminal' } as any)
+  await ui.press({ key: 'cockpit-coord' })
+  await clock.advance(0)
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toMatch(/머지 순서/)
+  expect(drawn).toMatch(/어느 PR 먼저\?/)
+  expect(drawn).toMatch(/2\. ★ B 먼저/)
+  expect(drawn).toMatch(/→ cc-mods-d9 · worker w1/)
+  expect(drawn).toMatch(/⏳1/)
+  expect(runs.some((a) => a[0] === 'python3' && a.at(-1) === 'pending')).toBe(true)
+  await ui.unmount()
+})
+
 test('the Usage tab draws accounts with quota windows, models and trend; w switches to 6h', async ($, on) => {
   const runs: string[][] = []
   const usage = JSON.stringify({
@@ -2782,8 +2803,8 @@ test('a command that ran and printed a policy block message is not a block: a la
 
 test('/office restarts a server left over from older code and keeps a current one', async ($, on) => {
   // fs.stat answers mtimeMs 1 for every file, so the code on disk is
-  // office.py:0,resources.py:0,coord.py:0. The server is "old" until it is restarted.
-  let stamp = 'office.py:-1,resources.py:-1,coord.py:-1'
+  // office.py:0,resources.py:0,coord.py:0,command.py:0. The server is "old" until it is restarted.
+  let stamp = 'office.py:-1,resources.py:-1,coord.py:-1,command.py:-1'
   let alive = true
   const runs = baseStubs(on, {
     pane: '%42',
@@ -2791,7 +2812,7 @@ test('/office restarts a server left over from older code and keeps a current on
       if (a[0] === '/usr/bin/curl' && String(a.at(-1)).endsWith('/version')) return alive ? { code: 0, out: JSON.stringify({ stamp, pid: 4242 }) } : { code: 7, out: '' }
       if (a[0] === '/usr/bin/curl') return alive ? { code: 0, out: '200' } : { code: 7, out: '000' }
       if (a[0] === 'sh' && String(a[2]).includes('kill')) { alive = false; return { code: 0, out: '' } }
-      if (a[0] === 'sh' && String(a[2]).includes('nohup')) { alive = true; stamp = 'office.py:0,resources.py:0,coord.py:0'; return { code: 0, out: '' } }
+      if (a[0] === 'sh' && String(a[2]).includes('nohup')) { alive = true; stamp = 'office.py:0,resources.py:0,coord.py:0,command.py:0'; return { code: 0, out: '' } }
       if (a[0] === 'sh') return { code: 0, out: '' }
       return undefined
     },

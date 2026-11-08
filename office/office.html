@@ -284,6 +284,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 #card button.snz { background: #e4e0f5; }
 #ask .next { background: #fff; color: #2a2033; border: 2px solid var(--line); border-radius: 12px; padding: 3px 10px; box-shadow: 0 2px 0 var(--line); }
 #card .key { display: inline-block; min-width: 16px; margin-right: 4px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; }
+#card .briefb { display: block; max-width: 100%; margin: 0 0 6px; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 2px solid var(--line); border-radius: 999px; background: #ffe9a8; color: #2a2033; padding: 1px 10px; cursor: pointer; }
 #hint { position: absolute; right: 14px; top: 52px; color: var(--muted); font-size: 11px; z-index: 2; }
 </style>
 </head>
@@ -335,6 +336,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
       <dt><kbd>0</kbd> · 더블클릭</dt><dd>전체 보기</dd>
       <dt><kbd>V</kbd> · <kbd>⇧</kbd>클릭·드래그</dt><dd>세션 고르기 → 창 옮기기 · 회의 · 공지 · 미루기</dd>
       <dt><kbd>K</kbd></dt><dd>🔑 인증 상태</dd>
+      <dt><kbd>D</kbd></dt><dd>🎖 지휘 화면 ↔ 🏢 사무실 (지휘에서: <kbd>j</kbd><kbd>k</kbd> 결정 고르기 · <kbd>1-9</kbd> 선택지 · <kbd>Enter</kbd> 보내기 · <kbd>M</kbd> 메모 · <kbd>Esc</kbd> 사무실)</dd>
       <dt><kbd>,</kbd></dt><dd>⚙ 설정</dd>
       <dt><kbd>?</kbd></dt><dd>이 도움말</dd>
     </dl></section>
@@ -344,6 +346,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <script src="brands.js"></script>
 <script src="skins.js"></script>
 <script src="resources.js"></script>
+<script src="command.js"></script>
 <script>
 // The page's choices live in office.py's prefs.json as well as here (see
 // PREFS_FILE there): the browser's copy can be lost, so the server's is laid
@@ -989,6 +992,8 @@ function officeKey(e) {
   const open = card.style.display === 'block'
   const k = keyName(e)
   const hit = (fn) => { e.preventDefault(); fn() }
+  // The command view (command.js) takes the keys while it is up, and D.
+  if (typeof commandKey === 'function' && commandKey(e, k, typing)) return
   if (quietMenu.id_ && menuKey(quietMenu, k, (b) => pickQuiet(b.dataset.v), hideQuiet, hit)) return
   if (placeMenu.v && menuKey(placeMenu, k, (b) => pickPlace(b.dataset.k), hidePlaces, hit)) return
   // ⌥ works everywhere, the reply box and TWeb's normal mode included: TWeb
@@ -1510,6 +1515,11 @@ async function openCard(sid, kind = null) {
   card.keys = []
   // One line: what it is doing now first, the persona after (full in the tooltip).
   const sub = add('div', 'sub', (DOING[me.doing || d.doing] || esc(d.state)) + ' · ' + persona(me).replace(/<br>/g, ' · ')); sub.title = sub.textContent
+  // The newest brief this session is recorded on (~/briefs sidecar), one press to read.
+  if (d.brief) {
+    const bb = add('button', 'briefb', (d.brief.pending ? '⏳ 결정 대기 · ' : '📄 브리프 · ') + esc(d.brief.title))
+    bb.title = d.brief.path; bb.onclick = () => viewFile(d.brief.path, sid)
+  }
   // Busy or a reply already on its way: said first, before anything to press.
   card.busy = add('div', 'busy')
   if (!kind) { const ts = talkSection(sid); if (ts) add('div', '', ts) }
@@ -3495,7 +3505,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; renderAuthChip(); renderMcpChip(j.people); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

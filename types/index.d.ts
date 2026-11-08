@@ -24,6 +24,7 @@ declare module 'claude-code' {
       monitors: any[]
       route: { last?: any }
       usage: { usage?: any; note?: string; quota: any[]; window: '1h' | '6h' | 'session'; jev?: any }
+      decisions: { items: any[]; note?: string }
       goal: any
       blocked: any[]
       mcpLogin: any

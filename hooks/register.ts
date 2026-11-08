@@ -74,6 +74,8 @@ import { renderSettings } from './views/settings'
 import { col, tabRow, type Els } from './views/common'
 import { FRAME_BOTTOM, FRAME_TOP, SPACER_ROWS, TABS, frame, renderHome, renderNarwhalRuns, renderWatch, tabOf, type HomeView, type View } from './views/home'
 import { renderAuthTab } from './views/auth'
+import { renderCoordTab } from './views/coord'
+import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
 import { coordCommand, coordPrompt, coordStart, coordTool, isCoordTool } from './coord'
@@ -162,6 +164,9 @@ const DRIVING_MS = 8000
 const paletteA = atom({ plugin: 'cc-mods', key: 'palette' }, PALETTE_CLOSED as PaletteState)
 // The key help (alt+/) is open; a session starts with it closed, as the palette.
 const helpA = atom({ plugin: 'cc-mods', key: 'help' }, false as boolean)
+// The Coord tab's decisions (office/command.py pending), read while it is drawn.
+const decisionsA = atom({ plugin: 'cc-mods', key: 'decisions' }, { items: [] } as { items: Decision[]; note?: string })
+let decisionsAt = 0
 const usageA = atom({ plugin: 'cc-mods', key: 'usage' }, { note: 'loading…', quota: [], window: 'session' } as { usage?: Usage; note?: string; quota: Quota[]; window: UsageWindow; jev?: JevUsage })
 const goalA = atom({ plugin: 'cc-mods', key: 'goal' }, null as Goal | null)
 const forkA = atom({ plugin: 'cc-mods', key: 'fork' }, null as ForkOffer | null)
@@ -3149,6 +3154,13 @@ function loadGoalSoon($: any, delays: number[]) {
 // This session through ccproxy's eyes (ccproxy usage): read at
 // start and after each main turn. An older ccproxy answers a usage error; the
 // card then says to update it rather than going blank.
+async function loadDecisions($: any) {
+  decisionsAt = Date.now()
+  const r = await $.process.run(['python3', $.plugin.root + '/office/command.py', 'pending'], { timeoutMs: 8000 }).catch(() => undefined)
+  const note = !r ? 'python3 did not run' : r.exitCode !== 0 ? 'command.py pending failed: ' + clip(String(r.stderr).trim(), 120) : undefined
+  await update($, decisionsA, (s) => ({ items: r && r.exitCode === 0 ? parsePending(r.stdout) : s.items, note }))
+}
+
 async function loadUsage($: any) {
   const win = USAGE_WINDOWS[((await read($, usageA)) as { window: UsageWindow }).window]
   void bridge($, 'jev_usage', { now: Date.now() / 1000 }).then((j: any) => update($, usageA, (s) => ({ ...s, jev: parseJev(j) ?? s.jev })))
@@ -4203,7 +4215,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // asks for routes it does not have (live: resources.js 404, an empty
     // office). The stamp is office.py's code_stamp(); an old server has no
     // /version and answers 404, which also counts as old.
-    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
+    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
     const ver = (await $.process.run(['/usr/bin/curl', '-s', '-m', '2', url + 'version'], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout
     let running: { stamp?: string; pid?: number } | undefined
     try { running = JSON.parse(ver) } catch { running = undefined }
@@ -4704,6 +4716,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       onExp: (o) => void loadPreview($, o).then(() => setUi({ view: 'outputs', outTab: 'exp', outSide: 'out', outSel: o.id })),
       webOn: ((await read($, webA)) as WebState).running,
       webLink: embedOn ? undefined : await webLinkBadge($),
+      decisions: ((await read($, decisionsA)) as { items: Decision[] }).items.length,
       usage: ((await read($, usageA)) as { usage?: Usage }).usage,
       usageNote: ((await read($, usageA)) as { note?: string }).note,
       goal: (await read($, goalA)) as Goal | null,
@@ -5021,6 +5034,16 @@ export function register(on: any, options: Record<string, unknown> = {}) {
           onRoute: (which, enabled) => void applyPolicy($, [enabled ? 'allow' : 'inherit', which === 'effort' ? 'auto_effort' : 'auto_model']),
         }),
       )
+    }
+
+    if (id === 'coord') {
+      const ds = (await read($, decisionsA)) as { items: Decision[]; note?: string }
+      // On the clock, not inline: drawing may not write state.
+      if (Date.now() - decisionsAt > 5000) {
+        decisionsAt = Date.now()
+        $.clock.after(0, () => void loadDecisions($).then(() => $.ui.invalidate('ui.render')))
+      }
+      return wrap(renderCoordTab(E, { width, items: ds.items, note: ds.note, onRefresh: () => void loadDecisions($).then(() => $.ui.invalidate('ui.render')) }), [['r', 'refresh']])
     }
 
     if (id === 'usage') {

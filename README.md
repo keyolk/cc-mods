@@ -48,9 +48,11 @@ Web     the TWeb pane beside this one: its tabs and controls (/web <url>);
         with browserEmbed on, the page drawn in the cockpit (bin/cc-browser)
 Usage   ccproxy: last request's account/model/effort, accounts with quota
         windows and resets, models, output/request trend (h 1h · w 6h)
+Coord   briefs waiting on your decision (question, options, ★ recommended,
+        which coordinator asked); answer them in the office's 지휘 view
 ```
 
-Digits 1-7 switch tabs. Esc hands the keyboard back to the prompt and leaves
+Digits 1-9 and 0 switch tabs. Esc hands the keyboard back to the prompt and leaves
 the cockpit open. All commands are `immediate` and open the cockpit at their
 tab (`/side` → Chat, `/watch` → Work); the same command again closes it, as
 does ctrl+x x.
@@ -189,6 +191,26 @@ worker you typed in is **held** for 10 minutes: the coordinator sends it
 nothing. Workers report back with SendMessage (`READY <sha>`, `BLOCKED`,
 `QUESTION`). The ledger is `~/.claude/state/office/coord/<sid>.json`; the
 office reads it (`/coord` on the office server) to show who works for whom.
+
+**Deciding from the office (🎖 지휘).** When the person must choose, the
+coordinator puts the question on a brief (`~/briefs/*.html`): `brief ask`
+writes a `decision` (question, options, the recommended one, the coordinator's
+session) into its sidecar `<brief>.brief.json`. The office's 지휘 view
+(`D`, or the header's `🏢 사무실 | 🎖 지휘` switch; `office/command.py`,
+`office/command.js`) lists the decisions nobody has answered, longest waiting
+first, beside each coordinator's workers (model/effort, state, attention, the
+brief each is on). The picked brief shows in the same sandboxed frame as the
+card's viewer; under it, the options (★ recommended in green, `1-9` arms one,
+Enter sends) and a note. A pick runs `brief answer <brief> <label> --by
+office` (an older `brief` without it: the office writes the same `answer` into
+the sidecar) and puts `[brief answer] <file>: <label> — <note>` in the inbox
+of the coordinator that asked (else the worker, else the session that made the
+brief). Picking a worker row gives a box for an instruction to it, which goes
+to its coordinator as `[office→coord] <slug>: <text>` for `coord_send` to
+relay; the office never writes to a worker from this view (typing to a worker
+yourself is the floor's card, as before). The cockpit's Coord tab (0) lists
+the same decisions as text. A session's card shows the newest brief it is
+recorded on (`sessions[].id` in the sidecar) as a badge that opens it.
 
 ## Archive folders (`~/exp/<date>_<topic>/`)
 
@@ -403,6 +425,10 @@ else the first name of your account's full name, else your login name.
   merge|send` (the TUI's `x m` / `x s`; keyolk/tmc#18). The windows are
   resolved from tmux by the sessions they hold, never taken from the page;
   `OFFICE_TMC` points at another tmc.
+- **Briefs**: any `~/briefs/*.html` opens in the viewer from any session's
+  card (the path is resolved first, so a link in that folder pointing
+  elsewhere, or `..`, is refused); the card's badge is that session's newest
+  brief. `D` switches to the 🎖 지휘 view (see Coordinator mode).
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
