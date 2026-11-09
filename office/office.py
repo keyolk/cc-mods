@@ -1179,17 +1179,22 @@ def side_thread(sid: str) -> dict:
     return out
 
 
-def inbox_put(sid: str, text: str) -> None:
+def inbox_put(sid: str, text: str, keep: bool = False) -> None:
+    """keep: the session takes it however late (a decision or an instruction
+    for a coordinator); otherwise one older than two minutes is dropped, as a
+    quick reply that late no longer fits what the session is doing."""
     os.makedirs(INBOX, exist_ok=True)
     path = os.path.join(INBOX, sid + ".json")
     try:
         with open(path) as f:
-            old = str((json.load(f) or {}).get("text") or "")
-    except (OSError, ValueError):
+            prev = json.load(f) or {}
+        old = str(prev.get("text") or "")
+        keep = keep or prev.get("keep") is True
+    except (OSError, ValueError, AttributeError):
         old = ""
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time()}, f)
+        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time(), **({"keep": True} if keep else {})}, f)
     os.replace(tmp, path)
 
 
@@ -1323,7 +1328,9 @@ def act(body: dict) -> tuple[int, dict]:
     if kind in ("meeting", "meeting_end", "broadcast"):
         return group_act(body)
     if kind in command.KINDS:
-        return command.act(body, inbox_put)
+        # A brief answer or a worker instruction must reach the coordinator
+        # even after it was away for a while.
+        return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return 404, {"error": "no such session"}

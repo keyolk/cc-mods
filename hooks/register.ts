@@ -1892,7 +1892,11 @@ async function refreshExp($: any, paths?: string[]) {
 // The office (office/office.py, /office): a reply the person sent this
 // session from its quick-action card waits in a file named by session id;
 // it goes in as their own prompt, so the model reads it as typed. Taken once
-// (removed before submitting); one older than two minutes is dropped.
+// (removed before submitting); one older than two minutes is dropped, unless
+// it is marked keep (a brief answer, an instruction for a coordinator, a
+// worker's coord-report): that one goes in up to a day late, saying how late.
+const INBOX_STALE_S = 120
+const INBOX_KEEP_S = 24 * 3600
 let officeBusy = false
 async function officeInbox($: any) {
   if (officeBusy || !home) return
@@ -1904,14 +1908,16 @@ async function officeInbox($: any) {
   try {
     const raw = await readText($, file)
     await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
-    let msg: { text?: unknown; at?: unknown } = {}
+    let msg: { text?: unknown; at?: unknown; keep?: unknown } = {}
     try {
       msg = JSON.parse(raw ?? '{}')
     } catch {
       return
     }
-    const text = typeof msg.text === 'string' ? msg.text.trim() : ''
-    if (!text || Date.now() / 1000 - Number(msg.at ?? 0) > 120) return
+    let text = typeof msg.text === 'string' ? msg.text.trim() : ''
+    const age = Date.now() / 1000 - Number(msg.at ?? 0)
+    if (!text || age > (msg.keep === true ? INBOX_KEEP_S : INBOX_STALE_S)) return
+    if (age > INBOX_STALE_S) text = '(' + Math.round(age / 60) + '분 전 office inbox에 들어온 메시지)\n' + text
     $.ui.toast('office: "' + clip(text, 60) + '"')
     await $.prompt.submit({ text, asUser: true }).catch(() => $.ui.toast('office: could not send the reply; type it here'))
   } finally {

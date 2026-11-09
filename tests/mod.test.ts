@@ -289,6 +289,14 @@ test('office: a reply left for this session from the office goes in as the perso
   files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'old', at: Date.now() / 1000 - 600 })
   await clock.advance(2_100)
   expect(submitted).not.toContain('old')
+  // A brief answer or a worker's report is kept: it goes in late, saying how late.
+  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: '[brief answer] a.html: A', at: Date.now() / 1000 - 600, keep: true })
+  await clock.advance(2_100)
+  expect(submitted).toContain('(10분 전 office inbox에 들어온 메시지)\n[brief answer] a.html: A')
+  // Not past a day.
+  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'ancient', at: Date.now() / 1000 - 2 * 86400, keep: true })
+  await clock.advance(2_100)
+  expect(submitted).not.toContain('ancient')
 })
 
 test('the policy pane draws a row per capability and applies a mode', async ($, on) => {

@@ -27,6 +27,8 @@ class CoordReportTest(unittest.TestCase):
     def test_a_report_lands_in_the_coordinator_inbox_and_appends(self):
         self.assertEqual(self.run_it(SID, "[worker a] READY abc").returncode, 0)
         self.assertEqual(self.inbox()["text"], "[worker a] READY abc")
+        # Marked keep: the coordinator takes it however late it reads.
+        self.assertIs(self.inbox()["keep"], True)
         # One not yet taken is kept, as office.py's inbox_put does.
         self.run_it(SID, "[worker b] BLOCKED x")
         self.assertEqual(self.inbox()["text"], "[worker a] READY abc\n\n[worker b] BLOCKED x")

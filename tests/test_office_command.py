@@ -45,9 +45,11 @@ class BriefsCase(unittest.TestCase):
         command._pending.update(at=0.0, items=[])
         command._no_pending["until"] = 0.0
         self.sent: list[tuple[str, str]] = []
+        self.kept: list[bool] = []
 
-    def put(self, sid: str, text: str) -> None:
+    def put(self, sid: str, text: str, keep: bool = False) -> None:
         self.sent.append((sid, text))
+        self.kept.append(keep)
 
     def brief(self, name: str, decision: dict | None = None, sessions: tuple = (MAKER,), title: str = "제목") -> str:
         file = name + ".html"
@@ -216,6 +218,19 @@ class SayAndViewTest(BriefsCase):
             code, _ = office.act({"kind": "coord_say", "coord": COORD, "slug": "w", "value": "go"})
         self.assertEqual(code, 200)
         self.assertEqual(self.sent, [(COORD, "[office→coord] w: go")])
+        # Kept however late the coordinator reads its inbox.
+        self.assertEqual(self.kept, [True])
+
+    def test_inbox_put_keeps_the_keep_mark_when_a_plain_message_follows(self):
+        with mock.patch.object(office, "INBOX", str(self.tmp / "inbox")):
+            office.inbox_put(COORD, "[brief answer] a.html: A", keep=True)
+            office.inbox_put(COORD, "ok")
+            with open(os.path.join(self.tmp, "inbox", COORD + ".json")) as f:
+                d = json.load(f)
+            self.assertEqual((d["text"], d.get("keep")), ("[brief answer] a.html: A\n\nok", True))
+            office.inbox_put(WORKER, "quick reply")
+            with open(os.path.join(self.tmp, "inbox", WORKER + ".json")) as f:
+                self.assertNotIn("keep", json.load(f))
 
 
 
