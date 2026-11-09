@@ -28,6 +28,12 @@ canvas.drag { cursor: grabbing; }
 #card .titlebar:active { cursor: grabbing; }
 #card h2 { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .sub { color: #7a7090; font-size: 12px; margin-bottom: 8px; }
+#card .crewbox { border: 2px solid var(--cc, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--cc, #fff) 14%, #fffaf0); padding: 5px 8px; margin: 0 0 8px; font-size: 12px; color: #2a2033; }
+#card .crewbox .h { font-size: 13px; margin-bottom: 3px; }
+#card .crewbox .ws { display: flex; flex-wrap: wrap; gap: 4px; }
+#card .crewbox button { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 2px solid var(--cc, var(--line)); border-radius: 999px; background: #fff; color: #2a2033; padding: 0 8px; cursor: pointer; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#card .crewbox button:hover { filter: brightness(.95); transform: translateY(-1px); }
+#card .crewbox .off { color: #8a8098; border-style: dashed; cursor: default; }
 /* The conversation is the card: everything around it one thin line. */
 #card.panes > .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-height: none !important; font-size: 11px; margin-bottom: 2px !important; }
 #card .x, #card .maxb { flex: 0 0 auto; position: relative; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: #3b2a35; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; padding: 0; }
@@ -572,6 +578,11 @@ const ents = new Map() // id -> a session or a subagent on the floor
 const sessionMisses = new Map()
 const spotTaken = Object.fromEntries(Object.keys(ZONES).map((k) => [k, new Map()]))
 let stats = { total: 0, work: 0, wait: 0, subs: 0 }
+// Coordinators and their workers (office/coord.py), rebuilt each poll so a
+// frame only reads them: one colour a coordinator, shared by its flag, its
+// workers' tags and the floor under them.
+let coordGroups = []
+const coordHue = (sid) => hashOf('coord:' + sid) % 360
 
 function spotFor(zone, id) {
   const taken = spotTaken[zone]
@@ -688,6 +699,14 @@ function apply(people, panes = [], alive = null) {
         live.add(sid)
       })
     })
+  }
+  coordGroups = []
+  for (const p of people) {
+    if (p.boss) { const hu = coordHue(p.boss.sid); p.bossColor = hsl2hex(hu, 70, 52); p.bossSoft = hsl2hex(hu, 75, 84) }
+    if (!p.coord) continue
+    const hu = coordHue(p.id)
+    p.coordColor = hsl2hex(hu, 70, 52); p.coordSoft = hsl2hex(hu, 75, 84)
+    coordGroups.push({ sid: p.id, desk: p.desk, color: p.coordColor, soft: p.coordSoft, crew: (p.crew || []).map((w) => w.sid).filter((id) => id && live.has(id)) })
   }
   for (const [id, e] of ents) {
     if (live.has(id)) continue
@@ -1515,6 +1534,11 @@ async function openCard(sid, kind = null) {
   card.keys = []
   // One line: what it is doing now first, the persona after (full in the tooltip).
   const sub = add('div', 'sub', (DOING[me.doing || d.doing] || esc(d.state)) + ' · ' + persona(me).replace(/<br>/g, ' · ')); sub.title = sub.textContent
+  const role = roleHtml(me)
+  if (role) {
+    const rb = add('div', 'crewbox', role); rb.style.setProperty('--cc', me.coord ? me.coordColor : me.bossColor)
+    rb.onclick = (ev) => { const b = ev.target.closest('button[data-sid]'); if (b) openCard(b.dataset.sid) }
+  }
   // The newest brief this session is recorded on (~/briefs sidecar), one press to read.
   if (d.brief) {
     const bb = add('button', 'briefb', (d.brief.pending ? '⏳ 결정 대기 · ' : '📄 브리프 · ') + esc(d.brief.title))
@@ -1785,7 +1809,7 @@ function hover(e) {
   const p = h.data
   const rows = h.kind === 'sub'
     ? ['<div class="t">🐣 ' + esc(p.desc || p.type) + '</div>', '<div>' + DOING[p.doing] + '</div>', '<div class="m">' + esc(p.parent.window + ' ' + p.parent.name) + '의 ' + esc(p.type) + '</div>', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '']
-    : ['<div class="t">' + esc(p.window + ' ' + p.name) + '</div>', '<div class="m">' + persona(p) + '</div>', '<div>' + DOING[p.doing] + (p.since ? ' · ' + ago(p.since) : '') + '</div>', p.title ? '<div class="m">' + esc(p.title) + '</div>' : '', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '', '<div class="m">' + (p.subs && p.subs.length ? '서브에이전트 ' + p.subs.length + '명 · ' : '') + (p.ctx != null ? 'context ' + p.ctx + '% · ' : '') + '클릭하면 답하기</div>']
+    : ['<div class="t">' + esc(p.window + ' ' + p.name) + '</div>', roleTip(p), '<div class="m">' + persona(p) + '</div>', '<div>' + DOING[p.doing] + (p.since ? ' · ' + ago(p.since) : '') + '</div>', p.title ? '<div class="m">' + esc(p.title) + '</div>' : '', p.tool ? '<div class="m">' + esc(p.tool + (p.detail ? ': ' + p.detail : '')) + '</div>' : '', '<div class="m">' + (p.subs && p.subs.length ? '서브에이전트 ' + p.subs.length + '명 · ' : '') + (p.ctx != null ? 'context ' + p.ctx + '% · ' : '') + '클릭하면 답하기</div>']
   tip.innerHTML = rows.join('')
   tip.style.display = 'block'
   tip.style.left = Math.min(e.clientX + 16, innerWidth - 330) + 'px'
@@ -2722,6 +2746,7 @@ function deskBox(x, y, on, t, mug, label, color, rank = 0, style = 'wood', job =
     deskStuff(x, y, top, who.made || {}, who.id)
   }
   if (mug) { const [ux, uy] = P(x + 0.72, y + 0.55, top); rrect(ux - 3 * cam.s, uy - 7 * cam.s, 6 * cam.s, 7 * cam.s, 1.5 * cam.s, '#fff4e0') }
+  if (who && who.coord) commandFlag(x, y, top, who, t)
 }
 
 // ---------- personality ----------
@@ -3069,6 +3094,113 @@ function drawThreads() {
     rrect((ax + bx) / 2 - 14, Math.min(ay, by) - lift / 2 - 18, 28, 16, 8, '#5b9be8', null); g.fillStyle = '#fff'; g.font = '11px Jua, sans-serif'; g.textAlign = 'center'; g.fillText('💬' + n, (ax + bx) / 2, Math.min(ay, by) - lift / 2 - 10)
   }
 }
+// ---------- coordinators ----------
+// A coordinator stands on a carpet with a gold edge, a flag on its desk with
+// 🎖 and its name, and wears a cape with gold epaulettes. Each of its workers
+// wears a 👷 tag in the coordinator's colour and stands on a ring of it, its
+// desk on a patch of it, and a faint dashed line runs over the floor from the
+// coordinator to each. Hovering any of them (or opening its card) draws the
+// group's lines bold above everything.
+const GOLD = '#e8b423'
+// The floor round a desk and its chair, a little wider than both.
+const deskPatch = (d, fill, stroke, lw) => poly([P(d[0] - 0.22, d[1] - 0.95), P(d[0] + 1.82, d[1] - 0.95), P(d[0] + 1.82, d[1] + 0.95), P(d[0] - 0.22, d[1] + 0.95)], fill, stroke, lw)
+function coordFloor() {
+  for (const gr of coordGroups) {
+    const c = ents.get(gr.sid)
+    for (const id of gr.crew) {
+      const w = ents.get(id)
+      if (w && w.data.desk) { g.globalAlpha = 0.8; g.setLineDash([6 * cam.s, 4 * cam.s]); deskPatch(w.data.desk, gr.soft, gr.color, 2); g.setLineDash([]); g.globalAlpha = 1 }
+      if (!c || !w) continue
+      const [ax, ay] = P(c.x, c.y), [bx, by] = P(w.x, w.y)
+      g.strokeStyle = gr.color; g.globalAlpha = 0.45; g.lineWidth = 2.5 * cam.s; g.setLineDash([7 * cam.s, 6 * cam.s])
+      g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke(); g.setLineDash([]); g.globalAlpha = 1
+    }
+    // The dais: a low platform in the group's colour with a gold rim.
+    if (gr.desk) { const d = gr.desk; box(d[0] - 0.3, d[1] - 1.05, 2.2, 2.1, 5, gr.soft); poly([P(d[0] - 0.3, d[1] - 1.05, 5), P(d[0] + 1.9, d[1] - 1.05, 5), P(d[0] + 1.9, d[1] + 1.05, 5), P(d[0] - 0.3, d[1] + 1.05, 5)], null, GOLD, 3); poly([P(d[0] - 0.15, d[1] - 0.9, 5), P(d[0] + 1.75, d[1] - 0.9, 5), P(d[0] + 1.75, d[1] + 0.9, 5), P(d[0] - 0.15, d[1] + 0.9, 5)], null, gr.color, 1.4) }
+  }
+}
+function coordLinks() {
+  const h = cardSid && ents.get(cardSid)
+  for (const gr of coordGroups) {
+    const c = ents.get(gr.sid)
+    if (!c || c.sx === undefined) continue
+    let on = c.hl || c === h
+    for (const id of gr.crew) { const w = ents.get(id); if (w && (w.hl || w === h)) on = true }
+    if (!on) continue
+    for (const id of gr.crew) {
+      const w = ents.get(id); if (!w || w.sx === undefined) continue
+      const ax = c.sx, ay = c.sy - 30 * cam.s, bx = w.sx, by = w.sy - 30 * cam.s, lift = Math.min(90, Math.hypot(bx - ax, by - ay) * 0.25) * cam.s
+      g.strokeStyle = gr.color; g.lineWidth = 3; g.setLineDash([8, 5]); g.beginPath(); g.moveTo(ax, ay); g.quadraticCurveTo((ax + bx) / 2, Math.min(ay, by) - lift, bx, by); g.stroke(); g.setLineDash([])
+    }
+  }
+}
+// Under the character: a ring of its group's colour; a coordinator's cape.
+function roleUnder(e, p, z0) {
+  const [x, y] = P(e.x, e.y, z0), s = cam.s, k = skin.figure || 1
+  const col = p.coord ? p.coordColor : p.bossColor
+  if (!col) return
+  g.lineWidth = 2.5 * s; g.strokeStyle = col; g.fillStyle = p.coord ? p.coordSoft : p.bossSoft
+  g.globalAlpha = 0.75; g.beginPath(); g.ellipse(x, y, 20 * s, 8 * s, 0, 0, Math.PI * 2); g.fill(); g.stroke(); g.globalAlpha = 1
+  if (p.coord) { g.strokeStyle = GOLD; g.lineWidth = 2 * s; g.beginPath(); g.ellipse(x, y, 24 * s, 10 * s, 0, 0, Math.PI * 2); g.stroke() }
+  // The cape hangs behind the body; walking away, it covers the back (roleOver).
+  if (p.coord && !(e.walking && e.back)) cape(x, y, s, k)
+}
+function cape(x, y, s, k) {
+  const top = y - 25 * s * k, bot = y - 2 * s
+  poly([[x - 9 * s * k, top], [x + 9 * s * k, top], [x + 15 * s * k, bot], [x - 15 * s * k, bot]], '#b8322f', LINE, 1.4)
+  g.strokeStyle = GOLD; g.lineWidth = 2 * s; g.beginPath(); g.moveTo(x - 15 * s * k, bot - 1.5 * s); g.lineTo(x + 15 * s * k, bot - 1.5 * s); g.stroke()
+}
+// Over it: gold epaulettes for a coordinator; and beside the head, where a
+// desk never hides it, a badge: a gold 🎖 or a 👷 in the coordinator's colour.
+function roleOver(e, p, t) {
+  if (e.sx === undefined) return
+  const s = cam.s, k = skin.figure || 1, x = e.sx, y = e.sy, bx = x + 15 * s * k, by = y - 30 * s * k
+  if (p.coord) {
+    if (e.walking && e.back) cape(x, y, s, k)
+    rrect(x - 9 * s * k - 4 * s, y - 25 * s * k - 1.5 * s, 8 * s, 3.5 * s, 1.5 * s, GOLD, LINE, 1)
+    rrect(x + 9 * s * k - 4 * s, y - 25 * s * k - 1.5 * s, 8 * s, 3.5 * s, 1.5 * s, GOLD, LINE, 1)
+    circle(bx, by, 9 * s, GOLD, LINE, 1.4); circle(bx, by, 6.5 * s, p.coordColor, null)
+    text('🎖', bx, by + 0.5 * s, 9.5)
+    return
+  }
+  circle(bx, by, 7.5 * s, p.bossColor, LINE, 1.2)
+  text('👷', bx, by + 0.5 * s, 8.5)
+}
+// The commander's desk: a gold front edge and a flag on a pole at its back
+// corner, waving, with 🎖 and the coordinator's name.
+function commandFlag(x, y, top, p, t) {
+  const [ex0, ey0] = P(x, y + 0.7, top), [ex1, ey1] = P(x + 1.6, y + 0.7, top)
+  g.strokeStyle = GOLD; g.lineWidth = 3 * cam.s; g.beginPath(); g.moveTo(ex0, ey0); g.lineTo(ex1, ey1); g.stroke()
+  const [px, py] = P(x + 1.5, y + 0.08, top), hgt = 64 * cam.s
+  g.strokeStyle = '#6b5a4a'; g.lineWidth = 2.2 * cam.s; g.beginPath(); g.moveTo(px, py); g.lineTo(px, py - hgt); g.stroke()
+  circle(px, py - hgt, 2.8 * cam.s, GOLD, LINE, 1)
+  const fs = Math.max(9, 11 * cam.s), label = '🎖 ' + (p.coordName || p.name || '')
+  g.font = fs + 'px Jua, sans-serif'
+  const w = Math.min(150 * cam.s, g.measureText(label).width + 12 * cam.s), fh = fs + 8 * cam.s, wave = Math.sin(t * 3) * 2.5 * cam.s
+  const fy = py - hgt + 3 * cam.s
+  poly([[px, fy], [px + w * 0.5, fy + wave], [px + w, fy], [px + w + 7 * cam.s, fy + fh / 2 + wave * 0.5], [px + w, fy + fh], [px + w * 0.5, fy + fh + wave], [px, fy + fh]], p.coordColor || '#c0392b', LINE, 1.4)
+  g.fillStyle = '#fff'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(label, px + 5 * cam.s, fy + fh / 2 + wave * 0.5, w - 8 * cam.s)
+}
+const RELATION = { owned: '직접 띄움', adopted: '입양' }
+// The card's role box: a coordinator's workers (a press opens one's card),
+// or the coordinator a worker reports to.
+function roleHtml(p) {
+  let h = ''
+  if (p.coord) {
+    const ws = (p.crew || []).map((w) => {
+      const on = w.sid && ents.get(w.sid), dot = on ? (DOING[on.data.doing] || '').split(' ')[0] + ' ' : ''
+      const tipT = esc((RELATION[w.relation] || w.relation) + (w.model ? ' · ' + w.model + (w.effort ? '/' + w.effort : '') : '') + (on ? '' : ' · 아직 자리에 없음'))
+      return on ? '<button data-sid="' + esc(w.sid) + '" title="' + tipT + '">' + dot + '👷 ' + esc(w.slug || w.sid.slice(0, 8)) + '</button>' : '<button class="off" title="' + tipT + '">👷 ' + esc(w.slug || '?') + '</button>'
+    }).join('')
+    h += '<div class="h">🎖 지휘관 <b>' + esc(p.coordName || p.name) + '</b> · 일꾼 ' + (p.crew || []).length + '명</div>' + (ws ? '<div class="ws">' + ws + '</div>' : '<div class="m">아직 일꾼이 없습니다</div>')
+  }
+  if (p.boss) {
+    const b = p.boss, on = ents.get(b.sid)
+    h += '<div class="h"' + (p.coord ? ' style="margin-top:6px"' : '') + '>👷 ' + esc(b.slug || '') + ' · ' + esc(RELATION[b.relation] || b.relation) + ' 일꾼</div><div class="ws">' + (on ? '<button data-sid="' + esc(b.sid) + '" style="--cc:' + p.bossColor + '">🎖 ' + esc(b.name) + '에게 보고</button>' : '<span class="m">🎖 ' + esc(b.name) + '에게 보고</span>') + '</div>'
+  }
+  return h
+}
+const roleTip = (p) => p.coord ? '<div style="color:' + p.coordColor + '">🎖 지휘관 · 일꾼 ' + (p.crew || []).length + '명</div>' : p.boss ? '<div style="color:' + p.bossColor + '">👷 ' + esc(p.boss.name) + '의 일꾼 (' + esc(RELATION[p.boss.relation] || p.boss.relation) + ')</div>' : ''
 // The card's list: who it talked with, newest first.
 function talkSection(sid) {
   const mine = talkLog.filter((t) => t.from === sid || t.to === sid).slice(-6).reverse()
@@ -3173,8 +3305,11 @@ function reactionOf(e) {
   return 'nervous'
 }
 function drawCharacter(e, t, z0) {
-  if (skin.drawCharacter) return skin.drawCharacter({ g, P, cam, hashOf, hsl2hex, picked, isZipped }, e, t, z0)
-  return vectorChibi(e, t, z0)
+  const p = e.data, crew = e.kind === 'session' && !e.leaving && (p.coord || p.boss)
+  if (crew) roleUnder(e, p, z0)
+  if (skin.drawCharacter) skin.drawCharacter({ g, P, cam, hashOf, hsl2hex, picked, isZipped }, e, t, z0)
+  else vectorChibi(e, t, z0)
+  if (crew) roleOver(e, p, t)
 }
 function vectorChibi(e, t, z0) {
   const p = e.data, sub = e.kind === 'sub'
@@ -3459,6 +3594,7 @@ function frame(now) {
   add(1e9 + 2, () => drawPodDrag())
   add(1e9 + 4, () => drawLasso())
   add(1e9 - 2, () => drawThreads())
+  if (coordGroups.length) { add(-0.5, coordFloor); add(1e9 - 3, coordLinks) }
   add(1e9 + 3, () => drawFlights(t))
   if (hoverZone) add(-1, () => { const z = ZONES[hoverZone]; g.globalAlpha = 0.18 + Math.sin(t * 4) * 0.05; tile(z.x0, 0.35, z.x1 - z.x0, 3.9, '#ffffff', null); g.globalAlpha = 1 })
   drawSorted(items)

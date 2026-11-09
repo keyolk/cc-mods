@@ -483,7 +483,7 @@ def snapshot() -> list[dict]:
                 "born": born(sid),
                 "mcp": mcp_state(sid),
                 "cwd": cwd,
-                "coord": rel.get(sid),
+                **coord.place(rel, sid),
             }
         )
     return people

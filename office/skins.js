@@ -115,6 +115,9 @@ window.OFFICE_SKINS = {
     },
     palette: { ground: '#a78b61', grid: 'rgba(73,46,25,.16)', sectionS: 34, sectionL: 68, podS: 42, podL: 71 },
     deskColor: '#805533', deskLeg: '#49311f',
+    // The sprites stand about half again as tall as the vector chibi: marks
+    // drawn round a character (a coordinator's cape, a worker's tag) scale by it.
+    figure: 1.5,
     css: `
 body {
   --bg: #161715; --ink: #f7e8ba; --muted: #c4b58d; --card: #493722;

@@ -55,6 +55,24 @@ class AliveSessionsTest(unittest.TestCase):
         # The pane itself is still live: the page must not take that as the session being there.
         self.assertEqual(office._live_panes, {"%1", "%2"})
 
+    def test_snapshot_rows_carry_the_coordinator_role(self):
+        out = "\n".join([pane_row("%1", "c1"), pane_row("%2", "w1"), pane_row("%3", "s1")])
+        rel = {"c1": {"name": "lead", "crew": [{"sid": "w1", "slug": "a", "relation": "adopted"}]}, "w1": {"boss": {"sid": "c1", "name": "lead", "relation": "adopted", "slug": "a"}}}
+        with mock.patch.object(office.subprocess, "run", return_value=types.SimpleNamespace(stdout=out)), \
+                mock.patch.object(office.coord, "relations", return_value=rel), \
+                mock.patch.object(office, "alive_sessions", return_value=None), \
+                mock.patch.object(office, "last_tool", return_value={}), \
+                mock.patch.object(office, "tool_counts", return_value={"total": 0, "by": {}, "compacts": 0, "compactAt": None}), \
+                mock.patch.object(office, "desk_items", return_value={}), \
+                mock.patch.object(office, "born", return_value=None):
+            people = {p["id"]: p for p in office.snapshot()}
+        self.assertTrue(people["c1"]["coord"])
+        self.assertEqual(people["c1"]["coordName"], "lead")
+        self.assertEqual(people["c1"]["crew"][0]["sid"], "w1")
+        self.assertFalse(people["w1"]["coord"])
+        self.assertEqual(people["w1"]["boss"], {"sid": "c1", "name": "lead", "relation": "adopted", "slug": "a"})
+        self.assertEqual((people["s1"]["coord"], people["s1"]["boss"], people["s1"]["crew"]), (False, None, []))
+
 
 if __name__ == "__main__":
     unittest.main()
