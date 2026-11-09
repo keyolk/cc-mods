@@ -199,8 +199,14 @@ Every 10 s it reads the workers' panes and tells the coordinator when one
 asks something, finishes a turn, exits, or when you typed in it yourself. A
 turn's end is the worker's `done`; a permission ask counts only when a second
 look still sees it (auto mode settles most in seconds), and at once when its
-dialog is drawn (`classic.PermissionRequest`, or the `permission_prompt`
-Notification). Each worker's cc-mods names the call it waits on in
+dialog is drawn. The drawn dialog is heard by `bin/cc-ask-dialog`, a
+`PermissionRequest` command hook in `hooks/hooks.json`: on a machine with
+managed settings (and for Team and Enterprise organizations) Claude Code
+seats its built-in `cc-plugin-sec-default` outermost, and it sends every
+`classic.*` event past the plugins a person installs, so the module's own
+`classic.PermissionRequest` and `permission_prompt` Notification hooks never
+run there (the transcript says `its classic.PermissionRequest hook was
+skipped`); command hooks still do. Each worker's cc-mods names the call it waits on in
 `@cc_pane_asks`, so the coordinator hears `[coord] <slug> (pane %358, window
 @132): asks: Read ~/worktrees/…/brief.py`, which pane and window to go to and
 what to answer, instead of "finished its turn". Parallel asked calls are kept

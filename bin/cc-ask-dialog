@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""cc-ask-dialog: the classic PermissionRequest command hook (hooks/hooks.json)
+that marks this session's tmux pane `ask` when a permission dialog is drawn,
+naming the call it is for in @cc_pane_asks.
+
+Why a command hook and not the hooks module: on a machine with managed
+settings (and for Team and Enterprise organizations) Claude Code seats its
+built-in cc-plugin-sec-default outermost, and it sends every classic.* event
+past the user tier, where cc-mods' module sits. Live, a worker's transcript
+said: `cc-mods: its classic.PermissionRequest hook was skipped.
+"cc-plugin-sec-default" runs first and sent the event on past it.` Command
+hooks a plugin ships run below that, with the settings hooks, so this one
+runs there. The module's own classic hooks still cover a machine without it.
+
+It writes what hooks/lib/tmux.ts publishArgv writes for (waiting, ask), in one
+tmux call, and the label hooks/lib/asks.ts askLabel makes. It never answers
+the dialog: no output, exit 0, whatever happens. A subagent's dialog is left
+alone, as the module leaves it: nothing would clear its mark.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+ARG_KEYS = ["file_path", "notebook_path", "path", "command", "url", "pattern", "query", "prompt"]
+
+
+# hooks/lib/asks.ts askLabel: "Read ~/x/brief.py", one line, home as ~.
+def ask_label(tool, tool_input, home):
+    i = tool_input if isinstance(tool_input, dict) else {}
+    arg = next((v for v in (i.get(k) for k in ARG_KEYS) if isinstance(v, str) and v.strip()), "")
+    what = re.sub(r"\s+", " ", arg).strip()
+    if home and home != "/" and (what == home or what.startswith(home + "/")):
+        what = "~" + what[len(home):]
+    name = re.sub(r"^mcp__", "", tool).replace("__", " ")
+    s = name + " " + what if what else name
+    return s[:139] + "…" if len(s) > 140 else s
+
+
+# hooks/lib/tmux.ts publishArgv for state waiting, attention ask, and the
+# call's name, joined into one tmux invocation.
+def tmux_argv(pane, label, now):
+    win = lambda k, v: ["set-window-option", "-t", pane, k, v]
+    pn = lambda k, v: ["set", "-p", "-t", pane, k, v]
+    cmds = [
+        win("@cc_state", "waiting"),
+        win("@cc_since", str(now)),
+        pn("@cc_pane_state", "waiting"),
+        pn("@cc_pane_since", str(now)),
+        win("@cc_attention", "ask"),
+        pn("@cc_pane_attention", "ask"),
+    ]
+    if label:
+        cmds.append(pn("@cc_pane_asks", label))
+    argv = ["tmux"]
+    for c in cmds:
+        argv += ([";"] if len(argv) > 1 else []) + c
+    return argv
+
+
+def main():
+    try:
+        e = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    pane = os.environ.get("TMUX_PANE", "")
+    if not isinstance(e, dict) or e.get("agent_id") or not re.fullmatch(r"%\d+", pane):
+        return 0
+    tool = e.get("tool_name")
+    label = ask_label(tool, e.get("tool_input"), os.environ.get("HOME", "")) if isinstance(tool, str) and tool else ""
+    try:
+        subprocess.run(tmux_argv(pane, label, int(time.time())), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        # tmux gone: publishing is best effort, as in the module.
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
