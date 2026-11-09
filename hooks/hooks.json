@@ -1,4 +1,7 @@
 {
   "description": "cc-mods hooks module",
-  "modules": ["./register.ts"]
+  "modules": ["./register.ts"],
+  "hooks": {
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/cc-ask-dialog\"", "timeout": 5 }] }]
+  }
 }

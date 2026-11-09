@@ -167,18 +167,45 @@ test('a dialog for one of two parallel asked calls keeps the pane asking, named,
   const opt = (k: string) => runs.filter((a) => a[0] === 'tmux' && a.includes(k)).map((a) => (a.includes('-u') ? '' : a[a.length - 1]))
   expect(opt('@cc_pane_attention')).toEqual(['none', 'action'])
   expect(opt('@cc_pane_asks')).toEqual(['', 'Read ~/worktrees/briefs/b/bin/brief.py'])
+  // A call that ran writes the other's action again (cc-ask-dialog may have
+  // written over it): still action, not working/none.
   await $.tool.call({ tool: 'Read', file_path: '/home/u/worktrees/briefs/b/README.md', tool_use_id: 'tu-2' } as any)
-  expect(opt('@cc_pane_attention')).toEqual(['none', 'action'])
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'action'])
   // The dialog is drawn: only the person in the pane can answer it.
   await $.classic.PermissionRequest({ tool_name: 'Read', tool_input: brief } as any)
-  await $.classic.Notification({ message: 'Claude needs your permission to use Read', notification_type: 'permission_prompt' } as any)
-  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'ask'])
+  await $.classic.Notification({ message: 'Claude needs your permission', notification_type: 'permission_prompt' } as any)
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'action', 'ask'])
   expect(opt('@cc_pane_asks').at(-1)).toBe('Read ~/worktrees/briefs/b/bin/brief.py')
   // Answered: it runs, the pane is working and names nothing.
   await $.tool.call({ tool: 'Read', ...brief, tool_use_id: 'tu-1' } as any)
-  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'ask', 'none'])
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'action', 'ask', 'none'])
   expect(opt('@cc_pane_asks').at(-1)).toBe('')
-  expect(opt('@cc_pane_state')).toEqual(['working', 'waiting', 'working'])
+  expect(opt('@cc_pane_state')).toEqual(['working', 'waiting', 'waiting', 'working'])
+})
+
+test('a dialog marked outside this process (cc-ask-dialog) does not leave another asked call named ask', async ($, on) => {
+  // Live: cc-plugin-sec-default sent classic.PermissionRequest past cc-mods,
+  // so bin/cc-ask-dialog writes the dialog's ask to tmux and this process
+  // never hears of it. The dialog's call runs; the other is still with the
+  // classifier: the pane must say action for it, not keep the dialog's ask.
+  const runs = baseStubs(on, { pane: '%42' })
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('tool.check', () => ({ decision: 'ask' }))
+  on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.prompt.submit({ text: 'read the two briefs', origin: { kind: 'composer' }, wait: false } as any)
+  await $.turn.start({ turnId: 't1', text: 'read the two briefs' })
+  await $.tool.check({ tool: 'Read', input: { file_path: '/x/a.py' }, tool_use_id: 'tu-1' } as any)
+  await $.tool.check({ tool: 'Read', input: { file_path: '/x/b.py' }, tool_use_id: 'tu-2' } as any)
+  const opt = (k: string) => runs.filter((a) => a[0] === 'tmux' && a.includes(k)).map((a) => (a.includes('-u') ? '' : a[a.length - 1]))
+  // (tmux now says ask for /x/a.py: the command hook wrote it.)
+  await $.tool.call({ tool: 'Read', file_path: '/x/a.py', tool_use_id: 'tu-1' } as any)
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'action'])
+  expect(opt('@cc_pane_asks').at(-1)).toBe('Read /x/b.py')
+  await $.tool.call({ tool: 'Read', file_path: '/x/b.py', tool_use_id: 'tu-2' } as any)
+  expect(opt('@cc_pane_attention').at(-1)).toBe('none')
+  expect(opt('@cc_pane_state').at(-1)).toBe('working')
 })
 
 test('auto_continue answers a plain proceed question after a pause the person can type over', async ($, on) => {

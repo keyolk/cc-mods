@@ -1503,8 +1503,16 @@ async function publishAsks($: any) {
   // An abort at the dialog ends the turn: turn.complete publishes that.
   else if (mainTurnRunning) await publish($, 'working', 'none')
 }
+// bin/cc-ask-dialog (a PermissionRequest command hook) writes ask and the
+// call's name to the same options while a dialog is up, outside this
+// process: once an asked call has run, what `published` says was last
+// written may no longer be in tmux. Unforgotten, a call still deciding after
+// the dialog's call ran wrote nothing (action, as cached) and the pane kept
+// the dialog's ask.
+const ASK_KEYS = ['@cc_state', '@cc_attention', '@cc_pane_asks']
 async function settleAsk($: any, id: string | undefined) {
   if (!id || !asked.delete(id)) return
+  for (const k of ASK_KEYS) published.delete(k)
   await publishAsks($)
 }
 // The permission dialog is drawn: the call it is for now waits on the person.
@@ -3974,7 +3982,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   })
 
   // The mode did not settle it and no hook beneath answered: the dialog is
-  // drawn, and only the person in this pane can answer it.
+  // drawn, and only the person in this pane can answer it. Where Claude Code
+  // seats cc-plugin-sec-default (managed settings, Team and Enterprise) it
+  // sends every classic.* event past this tier and neither hook here runs:
+  // bin/cc-ask-dialog, a command hook in hooks.json, marks the pane there.
   on('classic.PermissionRequest', async ($: any, e: any, next: any) => {
     const r = await next(e)
     if (!r?.decision && !e.agent_id) await dialogShown($, e.tool_name, e.tool_input)
@@ -3983,6 +3994,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
 
   // The same dialog as notify.py sees it (it marks only the window, so a pane
   // reader saw none): a second way in, should the request hook be skipped.
+  // Its message may not name the tool ("Claude needs your permission"):
+  // dialogFor then picks among all the asked calls.
   on('classic.Notification', async ($: any, e: any, next: any) => {
     if (e.notification_type === 'permission_prompt' && !e.agent_id) await dialogShown($, toolOfNotice(e.message))
     return next(e)
