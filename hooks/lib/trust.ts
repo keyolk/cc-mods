@@ -59,3 +59,24 @@ export function canonicalOf(common: string | undefined): string | undefined {
   const c = norm(common)
   return c.endsWith('/.git') ? c.slice(0, -5) || '/' : c
 }
+
+// Where a worker runs, and what its tools reach without a dialog. Its own
+// ~/research/<slug> (the brief, the evidence) is always reachable: an add-dir
+// unless the cwd is it or holds it. Code in a folder Claude Code does not
+// trust is not refused: the worker runs in its research folder (no
+// repository, under a trusted parent such as ~) and reaches the code as an
+// add-dir, which needs no trust (live: briefs PR #1, from a repository like
+// 202 of 251 local ones). `outside`: that code folder. Trust is never written.
+// Undefined: the research folder is not trusted either.
+export type Placement = { cwd: string; addDirs: string[]; outside?: string }
+
+export function placement(o: { code: string; research: string; addDirs: readonly string[]; codeTrusted: boolean; researchTrusted: boolean }): Placement | undefined {
+  const code = norm(o.code)
+  const research = norm(o.research)
+  const within = (d: string, root: string) => d === root || d.startsWith(root === '/' ? '/' : root + '/')
+  let p: Placement
+  if (o.codeTrusted) p = { cwd: code, addDirs: [...o.addDirs, research] }
+  else if (o.researchTrusted) p = { cwd: research, addDirs: [code, ...o.addDirs], outside: code }
+  else return undefined
+  return { ...p, addDirs: [...new Set(p.addDirs.map(norm))].filter((d) => !within(d, p.cwd)) }
+}

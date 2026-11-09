@@ -8,7 +8,7 @@
 // never turned it on can start nothing.
 
 import { COORD_CAPS, HOLD_MS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from './lib/coord'
-import { canonicalOf, parseProjects, trustTarget, trustedBy } from './lib/trust'
+import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
 import type { Policy } from './lib/policy'
@@ -36,7 +36,7 @@ const TOOLS = {
   spawn: {
     name: 'coord_spawn',
     description:
-      "Coordinator mode: start a worker claude in its own tmux window. With repo_dir, a worktree is made off origin's default branch at ~/worktrees/<repo>/<slug> on branch <slug>; with cwd, it runs there as is. The brief is saved to ~/research/<slug>/prompt.txt and reporting instructions are appended. Refused above the person's limits, or when a live session already works in that directory unless overlap_ok (set it only after the person said to start another anyway).",
+      "Coordinator mode: start a worker claude in its own tmux window. With repo_dir, a worktree is made off origin's default branch at ~/worktrees/<repo>/<slug> on branch <slug>; with cwd, it runs there as is. The brief is saved to ~/research/<slug>/prompt.txt (always reachable) and reporting instructions are appended. In a repository (or cwd) Claude Code does not trust, the worker runs in ~/research/<slug> with the code as an add-dir, and its prompt says to use absolute paths and git -C. Refused above the person's limits, or when a live session already works in that directory unless overlap_ok (set it only after the person said to start another anyway).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -46,7 +46,7 @@ const TOOLS = {
         brief: { type: 'string', description: "the worker's prompt: the person's words verbatim, evidence paths, scope, when to send READY" },
         repo_dir: { type: 'string', description: 'a local git checkout to branch a worktree from' },
         cwd: { type: 'string', description: 'run in this directory instead of a new worktree' },
-        add_dirs: { type: 'array', items: { type: 'string' }, description: "existing folders outside its cwd the worker's tools may reach without a permission dialog (claude --add-dir); trust is still checked for cwd only" },
+        add_dirs: { type: 'array', items: { type: 'string' }, description: "existing folders outside its cwd the worker's tools may reach without a permission dialog (claude --add-dir); ~/research/<slug> is always added" },
         overlap_ok: { type: 'boolean' },
       },
       required: ['slug', 'model', 'effort', 'brief'],
@@ -361,19 +361,29 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
     cwd = worktree
   }
   // Claude Code stops a new session in an untrusted folder at its safety
-  // dialog, and its default answer exits: refuse before any worktree is made.
+  // dialog, and its default answer exits. Trust is per repository (a trusted
+  // ~ does not cover one under it), so most repositories here would stop
+  // there: the worker runs in its research folder instead and reaches the
+  // code as an add-dir (lib/trust.ts placement). Decided before any worktree
+  // is made.
+  const code = cwd
+  const research = home + '/research/' + req.slug
   const common = await commonDir($, repoTop || cwd)
   const place = req.repoDir ? { dir: cwd, top: worktree, canonical: canonicalOf(common) ?? repoTop } : await placeOf($, cwd, common)
-  if (!trustedBy(parseProjects(await readText($, home + '/.claude.json')), place))
-    return { deny: trustTarget(place) + ' is not trusted yet: Claude Code would stop the worker at its "Is this a project you trust?" dialog. The person must open claude in that folder once and choose "Yes, I trust this folder"; nothing was started.' }
+  const projects = parseProjects(await readText($, home + '/.claude.json'))
+  const codeTrusted = !!trustedBy(projects, place)
+  const researchTrusted = codeTrusted || !!trustedBy(projects, await placeOf($, research, await commonDir($, research)))
+  const at = placement({ code, research, addDirs, codeTrusted, researchTrusted })
+  if (!at)
+    return { deny: trustTarget(place) + ' is not trusted, and neither is ' + research + ': Claude Code would stop the worker at its "Is this a project you trust?" dialog. The person must open claude in one of them (or a parent of ' + research + ') once and choose "Yes, I trust this folder"; nothing was started.' }
   // A session in the very directory is refused until the person decides; one
   // elsewhere in the same repository (its checkout or another worktree) is
   // only named, so the coordinator knows who else is in there.
   const n = await names($)
   const who = (ss: PaneSeen[]) => ss.map((s) => (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' (' + s.pane + ', ' + s.cwd + ')').join('; ')
-  const busy = seen.filter((s) => s.sid !== ledger!.sid && s.cwd.replace(/\/+$/, '') === cwd.replace(/\/+$/, ''))
+  const busy = seen.filter((s) => s.sid !== ledger!.sid && s.cwd.replace(/\/+$/, '') === code.replace(/\/+$/, ''))
   if (busy.length && !i.overlap_ok)
-    return { deny: 'live sessions already work in ' + cwd + ': ' + who(busy) + '. Ask the person whether to adopt one (/coord adopt <pane>) or start another anyway (overlap_ok).' }
+    return { deny: 'live sessions already work in ' + code + ': ' + who(busy) + '. Ask the person whether to adopt one (/coord adopt <pane>) or start another anyway (overlap_ok).' }
   const near = req.repoDir ? overlaps(seen, ledger!, repoTop, { common, of: await commonDirs($, seen) }).filter((s) => !busy.includes(s)) : []
   if (req.repoDir) {
     const top = repoTop
@@ -383,10 +393,9 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
     const add = await sh($, ['git', '-C', top, 'worktree', 'add', '-q', '-b', req.slug, worktree!, base], { timeoutMs: 60_000 })
     if (!add.ok) return { deny: 'git worktree add failed: ' + add.err }
   }
-  const research = home + '/research/' + req.slug
   await sh($, ['mkdir', '-p', research])
   const promptFile = research + '/prompt.txt'
-  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid))
+  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid, at))
   const uuid = (await sh($, ['uuidgen'])).out.toLowerCase()
   const sess = await sh($, ['tmux', 'display-message', '-p', '-t', ctx!.pane() ?? '', '#{session_name}'], { timeoutMs: 3000 })
   if (!uuid || !sess.ok) return { deny: 'could not find this tmux session or make a session id' }
@@ -395,14 +404,16 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   for (const argv of policyArgvs(WORKER_CAPS)) {
     if (!(await ctx!.policy.run(argv, uuid))) return { deny: 'could not write the worker policy (' + argv.join(' ') + '); nothing was started' }
   }
-  const r = await sh($, ['tmux', ...workerArgv({ target: sess.out + ':', slug: req.slug, cwd, model: req.model, effort: req.effort, sid: uuid, promptFile, addDirs })], { timeoutMs: 5000 })
+  const r = await sh($, ['tmux', ...workerArgv({ target: sess.out + ':', slug: req.slug, cwd: at.cwd, model: req.model, effort: req.effort, sid: uuid, promptFile, addDirs: at.addDirs })], { timeoutMs: 5000 })
   if (!r.ok) return { deny: 'tmux new-window failed: ' + r.err }
   const [window, pane] = r.out.split(' ')
   const now = Date.now()
-  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, addDirs: addDirs.length ? addDirs : undefined, at: now }
-  await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + cwd + (addDirs.length ? ' +' + addDirs.join(' +') : ''), now))
+  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd: at.cwd, code: at.outside, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, addDirs: at.addDirs.length ? at.addDirs : undefined, at: now }
+  await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + at.cwd + (at.addDirs.length ? ' +' + at.addDirs.join(' +') : ''), now))
   if (ghRepo) await coordPolicy($)
-  return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + cwd + (addDirs.length ? ', add-dirs ' + addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
+  const o = at.outside
+  const untrusted = o ? ' ' + trustTarget(place) + ' is not trusted by Claude Code, so the worker runs in ' + at.cwd + ' and reaches the code in ' + o + ' as an add-dir: brief it with absolute paths under ' + o + ' and `git -C ' + o + '`; that repository\'s .claude settings (hooks, permissions, MCP) do not apply there (its prompt says so).' : ''
+  return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
 }
 
 // The absolute common git dir of a checkout or worktree, undefined outside git.

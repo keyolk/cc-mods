@@ -169,18 +169,36 @@ sessions from Bash, which the tmux guard keeps in its own window):
 - `coord_spawn`: a worktree off origin at `~/worktrees/<repo>/<slug>`, the
   brief in `~/research/<slug>/prompt.txt`, and `claude --model --effort
   --permission-mode auto --disallowedTools AskUserQuestion --session-id` in a
-  new window `w:<slug>` of your tmux session. Refused above your limits,
-  when a live session already works in that directory until you decide, and
-  when Claude Code has not been trusted there yet (it would stop the worker at
-  its safety dialog): you open `claude` in that repository once and pick "Yes,
-  I trust this folder". A worktree shares its main checkout's trust; a trusted
-  parent such as `~` does not cover a repository under it. The result names
-  the other sessions in the same repository (its checkout, a worktree, or a
-  folder under it), not the ones in a parent folder. `add_dirs: [...]` starts
-  it with `--add-dir=<dir>` for each: folders outside its cwd its tools may
-  reach without a permission dialog nobody is watching (a worker in
-  `~/research/<slug>` reading a worktree). Each must be an existing directory
-  (`~/` allowed); trust is still checked for the cwd only.
+  new window `w:<slug>` of your tmux session. Refused above your limits, and
+  when a live session already works in that directory until you decide. The
+  result names the other sessions in the same repository (its checkout, a
+  worktree, or a folder under it), not the ones in a parent folder.
+  `add_dirs: [...]` starts it with `--add-dir=<dir>` for each: folders outside
+  its cwd its tools may reach. Each must be an existing directory (`~/`
+  allowed). `~/research/<slug>` (the brief, the evidence) is always one, unless
+  it is the cwd itself.
+
+  **Dialogs nobody answers.** A worker's window has no one watching, so two
+  dialogs would stop it for good:
+
+  | Dialog | When | What `coord_spawn` does |
+  |---|---|---|
+  | "Is this a project you created or one you trust?" | cwd in a folder Claude Code has not trusted. Trust is per git repository: a worktree shares its main checkout's, a trusted `~` does not cover a repository under it (202 of 251 local repositories here) | runs the worker in `~/research/<slug>` (no repository, under the trusted `~`) and passes the worktree as `--add-dir`, which needs no trust |
+  | "Read outside the working directories" | a Read outside the cwd and add-dirs, even under auto mode (sandbox off, managed read paths) | `~/research/<slug>` always an add-dir; the worker is told what its tools reach and to send `QUESTION need <path>` instead of reading anything else |
+
+  In that untrusted case the worktree is still made off origin. The result
+  and the worker's prompt say: the code is in `<worktree>`, by absolute paths;
+  git as `git -C <worktree>`, other commands as `cd <worktree> && …` in one
+  Bash call; that repository's `.claude` settings (hooks, permissions, MCP
+  servers) do not apply, and its `CLAUDE.md` is not loaded (the worker reads
+  it itself). A `cwd` given directly follows the same rule: trusted, the
+  worker runs there; untrusted, it runs in `~/research/<slug>` with that
+  folder as an add-dir. Only when `~/research/<slug>` is not trusted either
+  (no trusted parent) is the spawn refused, before anything is made: you open
+  `claude` there once and pick "Yes, I trust this folder". cc-mods never
+  writes trust (`~/.claude.json`) itself. The coordinator's system prompt
+  says the same: never send a worker to a path outside its cwd and add-dirs;
+  put a folder it needs in `add_dirs`.
 - `coord_send`: an instruction to an owned or adopted worker, through the
   office inbox (it arrives as `[coordinator] …`).
 - `coord_close`: closes an owned worker's window and removes its worktree

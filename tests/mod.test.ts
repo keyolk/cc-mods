@@ -2965,29 +2965,23 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', ...input } as any).catch((err: unknown) => ({ error: String(err) }))
   const over: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'max', brief: 'b', repo_dir: '/src/tmc' })
   expect(JSON.stringify(over)).toContain('above the limit high')
-  // A repository nobody trusted yet: Claude Code would stop the worker at its
-  // safety dialog. A trusted home above it does not count (git stops the
-  // walk at the toplevel). Refused before any worktree is made.
-  const untrusted: any = await call({ slug: 'brief-x', model: 'sonnet', effort: 'low', brief: 'b', repo_dir: '/src/briefs' })
-  expect(JSON.stringify(untrusted)).toContain('/src/briefs is not trusted yet')
-  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
-  expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'new-window')).toBe(false)
-  expect(Object.keys(written).some((k) => k.includes('brief-x'))).toBe(false)
+  // A repository nobody trusted: tests/coord-mod.test.ts.
   // add_dirs: only folders that exist, refused before anything is made.
   const missing: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc', add_dirs: ['/nope'] })
   expect(JSON.stringify(missing)).toContain('add_dirs: /nope is not an existing directory')
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
   const ok: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc', add_dirs: ['~/worktrees/briefs/'] })
   expect(JSON.stringify(ok)).toContain('Started worker tmc-x in window @9 (pane %90)')
-  expect(JSON.stringify(ok)).toContain('add-dirs /home/u/worktrees/briefs')
+  expect(JSON.stringify(ok)).toContain('add-dirs /home/u/worktrees/briefs, /home/u/research/tmc-x')
   const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
   expect(nw).toContain('main:')
-  expect(nw.slice(-7)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt', '--add-dir=/home/u/worktrees/briefs'])
+  // Its research folder (the brief, the evidence) is always reachable.
+  expect(nw.slice(-8)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt', '--add-dir=/home/u/worktrees/briefs', '--add-dir=/home/u/research/tmc-x'])
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes('/home/u/worktrees/tmc/tmc-x'))).toBe(true)
   expect(written['/home/u/research/tmc-x/prompt.txt']).toContain('worker `tmc-x`')
   expect(written['/home/u/research/tmc-x/prompt.txt']).toMatch(/python3 \S+\/bin\/coord-report sid-1 '\[worker tmc-x\]/)
   const ledger = JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
-  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane, w.addDirs])).toEqual([['tmc-x', 'owned', '%90', ['/home/u/worktrees/briefs']]])
+  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane, w.addDirs])).toEqual([['tmc-x', 'owned', '%90', ['/home/u/worktrees/briefs', '/home/u/research/tmc-x']]])
   // The worker's policy was written under its own session id before its window opened.
   const pol = (argv: string[]) => argv[0] === 'python3' && String(argv[1]).endsWith('session_policy.py')
   const nwAt = runs.indexOf(nw)

@@ -42,6 +42,7 @@ export type Worker = {
   effort?: Effort
   brief?: string // the prompt file
   addDirs?: string[] // --add-dir: folders outside cwd its tools may reach
+  code?: string // its code, when that is not its cwd (a repository Claude Code does not trust)
   at: number
   state?: string // the last @cc_pane_state seen
   attention?: string
@@ -150,14 +151,20 @@ export function spawnRefusal(l: Ledger, r: SpawnRequest): string | undefined {
 // inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
 // socket in /tmp/cc-socks, and a coordinator whose socket file is gone still
 // runs but cannot be messaged: the inbox reaches it all the same.
-export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string): string {
+// `where`: what its tools reach (lib/trust.ts placement). A read outside
+// those stops at "Read outside the working directories" even under auto
+// mode (sandbox off, managed read paths), a dialog nobody watches.
+export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string, where?: { cwd: string; addDirs: readonly string[]; outside?: string }): string {
+  const o = where?.outside
   return (
     brief.trim() +
     '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. Report to it with SendMessage (to: "' + coordName + '"), and never wait on the person:\n' +
     '- `READY <sha>` when the work is pushed, tests pass, and the PR body has a live run; add the PR URL and, when the person must decide or understand something, a brief made with the doc:visual-brief skill (its path).\n' +
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
-    'Messages from the coordinator arrive as prompts starting with `[coordinator]`. The person may also type in this pane; their words win.'
+    'Messages from the coordinator arrive as prompts starting with `[coordinator]`. The person may also type in this pane; their words win.' +
+    (where ? '\nYour tools reach `' + [where.cwd, ...where.addDirs].join('`, `') + '` without a permission dialog. A file anywhere else stops you at a dialog nobody answers: do not read it; send the coordinator `QUESTION need <path>` and go on with the rest.' : '') +
+    (o ? '\nThe code is in `' + o + '`, outside your cwd: Claude Code does not trust that repository, so you run in `' + where!.cwd + '` and reach it as an added directory. Read, Edit and Write it by absolute paths under `' + o + '`; run git as `git -C ' + o + ' …` and other commands as `cd ' + o + ' && …` in the same Bash call. That repository\'s .claude settings (hooks, permissions, MCP servers) do not apply here, and its CLAUDE.md is not loaded: read it yourself when it has one.' : '')
   )
 }
 
@@ -314,7 +321,7 @@ export function overlaps(seen: PaneSeen[], l: Ledger, dir: string, git?: { commo
 
 // What the coordinator reads every turn: its role, its limits, its workers.
 export function coordSection(l: Ledger, now: number, language = 'Korean'): string {
-  const rows = active(l).map((w) => '| ' + w.slug + ' | ' + w.relation + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (held(w, now) ? ' HELD by person' : '') + ' | ' + w.cwd + ' |')
+  const rows = active(l).map((w) => '| ' + w.slug + ' | ' + w.relation + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (held(w, now) ? ' HELD by person' : '') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
   return [
     '# Coordinator mode (cc-mods)',
     'You are `' + l.name + '`, the coordinator. You orchestrate, verify, merge, clean up and report; you do not do the work yourself.',
@@ -325,6 +332,8 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it removes the worktree and the window).',
     '- When the person must decide, put the question on a brief (the worker\'s visual brief, or make one): `brief ask <brief>` with the options, the recommended one marked, and this session as coordinator. It shows in the office\'s 지휘 view; you may also ask with AskUserQuestion, the recommended option first.',
+    "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
+    "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
     "- `[coord] <slug> (pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`.',
     '- Report to the person in ' + language + ', briefly, with tables.',
