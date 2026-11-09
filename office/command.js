@@ -1,9 +1,11 @@
 // The command view (지휘): the office seen from the coordinators' side.
 //
-// Left, the decisions waiting on the person (briefs whose sidecar asks a
-// question nobody has answered) and each coordinator's workers. Right, the
-// picked brief in the same sandboxed frame the card's viewer uses, and under
-// it the options to pick and a note. A pick goes to the office server, which
+// A panel on the right of the floor, which stays in sight and live: the
+// decisions waiting on the person (briefs whose sidecar asks a question
+// nobody has answered), each coordinator's workers, who on the floor waits on
+// the person, the briefs lately written, and a box to instruct a coordinator.
+// A picked brief opens beside the panel in the same sandboxed frame the
+// card's viewer uses, with the options to pick and a note under it. A pick goes to the office server, which
 // records it on the brief and hands it to whoever asked (office/command.py).
 // An instruction for a worker goes to its coordinator, never to the worker:
 // typing to a worker yourself is what the office floor's card is for.
@@ -18,8 +20,10 @@ const CMD_CSS = `
 #modes button.on { background: var(--warn); color: #2a2033; }
 #modes b { color: var(--bad); }
 #modes button.on b { color: #a1002b; }
-#command { position: fixed; left: 10px; right: 10px; top: 52px; bottom: 10px; z-index: 3; display: none; gap: 10px; grid-template-columns: minmax(300px, 400px) 1fr; }
-#command.on { display: grid; }
+#command { --cmd-w: clamp(340px, 30vw, 460px); }
+#command .pane.left { position: fixed; right: 10px; top: 52px; bottom: 10px; width: var(--cmd-w); z-index: 3; }
+#command .pane.right { position: fixed; left: 10px; right: calc(var(--cmd-w) + 20px); top: 52px; bottom: 10px; z-index: 3; }
+#command:not(.on) .pane, #command:not(.doc-on) .pane.right { display: none; }
 #command .pane { background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 #command .list { overflow: auto; padding: 10px 12px; flex: 1; }
 #command h3 { font-weight: 400; font-size: 15px; margin: 4px 0 6px; }
@@ -31,7 +35,8 @@ const CMD_CSS = `
 #command table { width: 100%; border-collapse: collapse; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; margin-bottom: 10px; }
 #command th { text-align: left; font-weight: 600; color: #7a7090; border-bottom: 2px solid rgba(59,42,53,.18); padding: 2px 4px; }
 #command td { border-bottom: 1px solid rgba(59,42,53,.1); padding: 3px 4px; vertical-align: top; }
-#command tr.w { cursor: pointer; }
+#command tr.w, #command h3.c { cursor: pointer; }
+#command h3.c.sel { text-decoration: underline; }
 #command tr.w:hover td { background: #f3ecdf; }
 #command tr.w.sel td { background: #fff3c4; }
 #command .st-waiting, #command .st-asking { color: #b7791f; } #command .st-alert { color: #c0392b; } #command .st-working { color: #2f855a; } #command .st-gone { color: #9a93a8; }
@@ -44,7 +49,9 @@ const CMD_CSS = `
 #command .bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 2px solid var(--line); font-size: 13px; }
 #command .bar .m { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #command iframe { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
-#command .empty { flex: 1; display: grid; place-items: center; color: #7a7090; font-size: 14px; padding: 20px; text-align: center; }
+#command .feed { font: 12px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 0 0 10px; padding: 0; list-style: none; }
+#command .feed li { padding: 2px 4px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#command .feed li:hover { background: #f3ecdf; }
 #command .decide { border-top: 2px solid var(--line); padding: 8px 12px 10px; max-height: 45%; overflow: auto; }
 #command .decide .ask { font-size: 14px; margin-bottom: 6px; }
 #command .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
@@ -54,10 +61,10 @@ const CMD_CSS = `
 #command .opt small { display: block; font: 11px -apple-system, sans-serif; color: #5a5070; }
 #command .key { display: inline-block; min-width: 16px; margin-right: 5px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; vertical-align: 1px; }
 #command .row { display: flex; gap: 6px; align-items: center; }
-@media (max-width: 760px) { #command.on { grid-template-columns: 1fr; grid-template-rows: 45% 1fr; } }
+@media (max-width: 760px) { #command { --cmd-w: calc(100vw - 20px); } #command .pane.right { right: 10px; bottom: 50%; } #command.doc-on .pane.left { top: 50%; } }
 `
 
-const cmd = { on: false, data: null, sel: null, worker: null, armed: null, timer: null, frame: null, pendingN: 0 }
+const cmd = { on: false, data: null, sel: null, worker: null, coord: null, armed: null, timer: null, frame: null, pendingN: 0 }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
 document.body.appendChild(cmdEl)
@@ -117,7 +124,7 @@ function cmdPending(file) { return (cmd.data?.pending || []).find((p) => p.file 
 function cmdRender() {
   const d = cmd.data || { pending: [], coordinators: [] }
   // Nothing picked yet: the decision that has waited longest.
-  if (!cmd.sel && d.pending.length) cmd.sel = { file: d.pending[0].file, path: d.pending[0].path, title: d.pending[0].title }
+  if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) cmd.sel = { file: d.pending[0].file, path: d.pending[0].path, title: d.pending[0].title }
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="list"></div><div class="say"></div></div><div class="pane right"><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
@@ -131,7 +138,8 @@ function cmdRender() {
       + cmdEsc([p.coordinatorName ? '🎖 ' + p.coordinatorName : '', p.decision.worker ? '👷 ' + p.decision.worker : '', cmdAgo(p.decision.asked)].filter(Boolean).join(' · ')) + '</div></div>')
   }
   for (const c of d.coordinators) {
-    out.push('<h3>🎖 ' + cmdEsc(c.name) + ' <span class="m">' + cmdEsc([c.window, c.live ? STATE_KO[c.state] || c.state : '창 없음', ATTN_KO[c.attention] || ''].filter(Boolean).join(' · ')) + '</span></h3>')
+    const csel = !cmd.worker && cmdCoord()?.sid === c.sid
+    out.push('<h3 class="c' + (csel ? ' sel' : '') + '" data-coord="' + cmdEsc(c.sid) + '" title="이 coordinator에게 지시">🎖 ' + cmdEsc(c.name) + ' <span class="m">' + cmdEsc([c.window, c.live ? STATE_KO[c.state] || c.state : '창 없음', ATTN_KO[c.attention] || ''].filter(Boolean).join(' · ')) + '</span></h3>')
     if (!c.workers.length) { out.push('<div class="m" style="margin-bottom:10px">worker가 없습니다.</div>'); continue }
     out.push('<table><tr><th>worker</th><th>model/effort</th><th>상태</th><th>브리프</th></tr>')
     for (const w of c.workers) {
@@ -143,7 +151,13 @@ function cmdRender() {
     }
     out.push('</table>')
   }
-  if (!d.coordinators.length) out.push('<div class="m">켜진 coordinator가 없습니다. 세션에서 <code>/coord on</code>.</div>')
+  if (!d.coordinators.length) out.push('<div class="m" style="margin-bottom:10px">켜진 coordinator가 없습니다. 세션에서 <code>/coord on</code>.</div>')
+  const calls = d.calls || []
+  out.push('<h3>🙋 나를 기다리는 세션 <span class="m">' + calls.length + ' · 누르면 카드</span></h3>')
+  out.push(calls.length ? '<ul class="feed">' + calls.map((c) => '<li data-card="' + cmdEsc(c.sid) + '">' + (c.attention === 'alert' ? '❗ ' : '❓ ') + cmdEsc(c.name) + ' <span class="m">' + cmdEsc(c.window || '') + '</span></li>').join('') + '</ul>' : '<div class="m" style="margin-bottom:10px">없습니다.</div>')
+  const recent = d.recent || []
+  out.push('<h3>📄 최근 브리프 <span class="m">누르면 옆에 열림</span></h3>')
+  out.push(recent.length ? '<ul class="feed">' + recent.map((b) => '<li data-brief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.file) + '">' + (b.pending ? '⏳ ' : '') + cmdEsc(b.title) + ' <span class="m">' + cmdEsc([b.by, cmdAgo(new Date(b.at * 1000).toISOString())].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<div class="m">브리프가 없습니다.</div>')
   list.innerHTML = out.join('')
   list.scrollTop = keep
   cmdRenderSay()
@@ -151,10 +165,19 @@ function cmdRender() {
 }
 
 function cmdClick(ev) {
-  const a = ev.target.closest('a[data-brief]')
+  const li = ev.target.closest('li[data-card]')
+  if (li) { if (typeof openCard === 'function') openCard(li.dataset.card); return }
+  const a = ev.target.closest('[data-brief]')
   if (a) { ev.preventDefault(); cmd.sel = { file: a.dataset.brief.split('/').pop(), path: a.dataset.brief, title: a.dataset.title }; cmd.armed = null; return cmdRender() }
   const q = ev.target.closest('.q')
   if (q) { const p = cmdPending(q.dataset.file); if (p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmdRender() } return }
+  const h = ev.target.closest('h3.c')
+  if (h) {
+    cmd.worker = null; cmd.coord = h.dataset.coord
+    cmdRender()
+    cmdEl.querySelector('.say textarea')?.focus()
+    return
+  }
   const tr = ev.target.closest('tr.w')
   if (tr) {
     cmd.worker = { coord: tr.dataset.coord, slug: tr.dataset.slug }
@@ -163,43 +186,54 @@ function cmdClick(ev) {
   }
 }
 
-// The free instruction box: to the picked worker, by way of its coordinator.
+// The coordinator the box speaks to when no worker is picked: the one last
+// clicked, else the first with a live window.
+function cmdCoord() {
+  const cs = cmd.data?.coordinators || []
+  return cs.find((x) => x.sid === cmd.coord) || cs.find((x) => x.live) || cs[0]
+}
+
+// The instruction box, always there: to the coordinator itself, or with a
+// worker row picked, to that worker by way of its coordinator.
 function cmdRenderSay() {
   const box = cmdEl.querySelector('.say'), w = cmd.worker
-  const c = w && (cmd.data?.coordinators || []).find((x) => x.sid === w.coord)
-  if (!c || !c.workers.some((x) => x.slug === w.slug)) {
-    cmd.worker = null
-    box.innerHTML = '<div class="m">worker 행을 누르면 그 worker에 줄 지시를 coordinator에게 보낼 수 있습니다. 직접 지시는 🏢 사무실의 카드에서.</div>'
+  let c = w && (cmd.data?.coordinators || []).find((x) => x.sid === w.coord)
+  if (w && (!c || !c.workers.some((x) => x.slug === w.slug))) { cmd.worker = null; c = null }
+  const slug = cmd.worker ? w.slug : ''
+  c = c || cmdCoord()
+  if (!c) {
+    box.dataset.for = ''
+    box.innerHTML = '<div class="m">켜진 coordinator가 없어 지시할 곳이 없습니다. 세션에서 <code>/coord on</code>.</div>'
     return
   }
-  if (box.dataset.for === c.sid + '/' + w.slug) return // keep what is being typed
-  box.dataset.for = c.sid + '/' + w.slug
-  box.innerHTML = '<div class="m" style="margin-bottom:4px">🎖 ' + cmdEsc(c.name) + '에게 → 👷 <b>' + cmdEsc(w.slug) + '</b> 지시 <span class="m">(coord_send로 전달 · Enter 보내기)</span></div><textarea placeholder="예: 테스트부터 고치고 다시 READY"></textarea><div class="row" style="margin-top:4px"><button class="act go">보내기</button><button class="act cancel">취소</button></div>'
+  if (box.dataset.for === c.sid + '/' + slug) return // keep what is being typed
+  box.dataset.for = c.sid + '/' + slug
+  const to = slug ? '🎖 ' + cmdEsc(c.name) + '에게 → 👷 <b>' + cmdEsc(slug) + '</b> 지시' : '🎖 <b>' + cmdEsc(c.name) + '</b>에게 지시'
+  const hint = slug ? 'coord_send로 전달' : 'worker 행을 누르면 그 worker에게'
+  box.innerHTML = '<div class="m" style="margin-bottom:4px">' + to + ' <span class="m">(' + hint + ' · Enter 보내기 · Shift+Enter 줄바꿈)</span></div><textarea placeholder="' + (slug ? '예: 테스트부터 고치고 다시 READY' : '예: keyolk/briefs에 X 고치는 worker 하나 띄워') + '"></textarea><div class="row" style="margin-top:4px"><button class="act go">보내기</button>' + (slug ? '<button class="act cancel">worker 선택 해제</button>' : '') + '</div>'
   const ta = box.querySelector('textarea')
   const go = async () => {
     const text = ta.value.trim()
     if (!text) return
-    const j = await cmdPost({ kind: 'coord_say', coord: c.sid, slug: w.slug, value: text })
+    const j = await cmdPost({ kind: 'coord_say', coord: c.sid, slug, value: text })
     if (j) { ta.value = ''; toast('📨 ' + (j.sent || '보냈습니다')) }
   }
   box.querySelector('.go').onclick = go
-  box.querySelector('.cancel').onclick = () => { cmd.worker = null; box.dataset.for = ''; cmdRender() }
+  const cancel = box.querySelector('.cancel')
+  if (cancel) cancel.onclick = () => { cmd.worker = null; cmdRender() }
   ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go() } else if (e.key === 'Escape') { e.preventDefault(); ta.blur() } }
 }
 
 function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
-  if (!s) {
-    bar.innerHTML = '<b>📄 브리프</b><span class="m"></span>'
-    doc.className = 'doc empty'; doc.innerHTML = '왼쪽에서 결정이나 worker의 브리프를 고르세요.'
-    dec.style.display = 'none'; cmd.frame = null
-    return
-  }
+  cmdEl.classList.toggle('doc-on', !!s)
+  if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
   // The frame is made once per brief: the 3 s refresh must not reload it.
   if (cmd.frame !== s.path) {
     cmd.frame = s.path
-    bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>'
+    bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.out').onclick = () => openLink(s.path)
+    bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;min-height:0'
     doc.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="/file?sid=command&path=' + encodeURIComponent(s.path) + '"></iframe>'
   }
@@ -224,6 +258,13 @@ function cmdRenderDoc() {
   dec.querySelector('.note').onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.target.blur() } }
 }
 
+// Close the brief beside the panel; the floor shows again. A waiting
+// decision is not picked again on its own until the list changes.
+function cmdShut() {
+  cmd.sel = null; cmd.armed = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
+  cmdRenderDoc()
+}
+
 async function cmdPost(body) {
   try {
     const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify(body) })
@@ -243,7 +284,7 @@ async function cmdAnswer(p, label) {
     // On to the next waiting one.
     const rest = (cmd.data?.pending || []).filter((x) => x.file !== p.file)
     cmd.data.pending = rest
-    cmd.sel = rest[0] ? { file: rest[0].file, path: rest[0].path, title: rest[0].title } : cmd.sel
+    cmd.sel = rest[0] ? { file: rest[0].file, path: rest[0].path, title: rest[0].title } : null
     cmd.armed = null
     commandCount(rest.length)
     cmdRender()
@@ -251,7 +292,8 @@ async function cmdAnswer(p, label) {
 }
 
 // Keys while the command view is up (office.html's officeKey asks first).
-// D or Esc back to the office; j/k or ↑↓ through the waiting decisions; a
+// D or Esc back to the office (Esc first closes an open brief); i to the
+// instruction box; j/k through the waiting decisions; a
 // digit arms an option and Enter sends it, so one stray key never decides.
 function commandKey(e, k, typing) {
   if (e.altKey) return false
@@ -263,20 +305,22 @@ function commandKey(e, k, typing) {
   if (typeof card !== 'undefined' && card.style.display === 'block') return false
   if (typeof viewer !== 'undefined' && viewer.path) return false
   const hit = (fn) => { e.preventDefault(); fn(); return true }
+  if (k === 'Escape' && cmd.sel) return hit(cmdShut)
   if (k === 'Escape' || k === 'd') return hit(() => setCommand(false))
   const list = cmd.data?.pending || []
-  if (k === 'j' || k === 'k' || k === 'ArrowDown' || k === 'ArrowUp') {
-    if (!list.length) return true
+  // j/k only: the arrows walk the floor beside the panel.
+  if ((k === 'j' || k === 'k') && list.length) {
     const i = Math.max(0, list.findIndex((p) => cmd.sel && p.file === cmd.sel.file))
-    const n = list[(i + (k === 'j' || k === 'ArrowDown' ? 1 : -1) + list.length) % list.length]
+    const n = list[(i + (k === 'j' ? 1 : -1) + list.length) % list.length]
     return hit(() => { cmd.sel = { file: n.file, path: n.path, title: n.title }; cmd.armed = null; cmdRender() })
   }
   const p = cmd.sel && cmdPending(cmd.sel.file)
   if (p && /^[1-9]$/.test(k) && +k <= p.decision.options.length) return hit(() => { cmd.armed = +k - 1; cmdRenderDoc(); toast('Enter로 「' + p.decision.options[cmd.armed].label + '」 보내기') })
   if (p && k === 'Enter' && cmd.armed != null) return hit(() => cmdAnswer(p, p.decision.options[cmd.armed].label))
+  if (k === 'i') return hit(() => cmdEl.querySelector('.say textarea')?.focus())
   if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note')?.focus())
-  // Everything else (arrows, zoom, the office's letters) does nothing here.
-  return true
+  // Everything else goes to the floor, which stays in sight beside the panel.
+  return false
 }
 
 cmdSwitch()
