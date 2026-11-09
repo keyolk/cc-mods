@@ -143,6 +143,7 @@ test('coord: a ledger from disk keeps sane limits; the prompt names the workers'
   // The office's two prompts are named, so the coordinator knows what to do with them.
   expect(text).toContain('`brief ask <brief>`')
   expect(text).toContain('[brief answer]')
+  expect(text).toContain('Every task goes to another Claude session, however small')
   expect(text).toContain('[office→coord]')
 })
 
