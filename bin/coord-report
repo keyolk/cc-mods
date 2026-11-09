@@ -25,12 +25,13 @@ def main(argv: list[str]) -> int:
     try:
         with open(path) as f:
             old = str((json.load(f) or {}).get("text") or "")
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         old = ""
     text = argv[2].strip()
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time()}, f)
+        # keep: a report is taken however late the coordinator reads it.
+        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time(), "keep": True}, f)
     os.replace(tmp, path)
     print("queued for " + argv[1])
     return 0
