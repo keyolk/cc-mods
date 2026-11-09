@@ -79,7 +79,7 @@ import { renderCoordTab } from './views/coord'
 import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
-import { coordCommand, coordIdle, coordPrompt, coordStart, coordTool, isCoordTool } from './coord'
+import { coordCommand, coordIdle, coordPrompt, coordRecheck, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -121,6 +121,11 @@ const flowA = atom({ plugin: 'cc-mods', key: 'flow' }, [] as FlowEntry[])
 // which tools it called. Flow entries come only when a turn completes, so a
 // long turn showed nothing past its prompt.
 const liveA = atom({ plugin: 'cc-mods', key: 'live' }, null as LiveTurn | null)
+// The main turn that runs, kept where a module reload does not reset it: a
+// reload mid-turn (a merge on main) left mainTurnRunning false until the next
+// turn.start, and the coordinator's wakes went out mid-turn and sat queued
+// until it ended.
+const turnA = atom({ plugin: 'cc-mods', key: 'turn' }, null as { turnId: string; at: number } | null)
 const answersA = atom({ plugin: 'cc-mods', key: 'answers' }, {} as Record<string, string>)
 const turnsA = atom({ plugin: 'cc-mods', key: 'turns' }, [] as TurnRecord[])
 const agentsA = atom({ plugin: 'cc-mods', key: 'agents' }, [] as AgentNode[])
@@ -3298,6 +3303,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     setOrg(parseOrg(await readText($, home + ORG_PATH)))
     pane = await $.env.get('TMUX_PANE')
     sid = await $.session.id()
+    mainTurnRunning = (await read($, turnA)) !== null
     await coordStart($, {
       sid: () => sid,
       home: () => home,
@@ -3538,6 +3544,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       if (ownResume) ownResume = false
       else mainTurnAt = await clockNow($)
       mainTurnRunning = true
+      await update($, turnA, () => ({ turnId: e.turnId, at: Date.now() }))
     }
     const ev = !e.agentId && e.text ? parseMonitor(e.text) : undefined
     if (ev) {
@@ -3570,6 +3577,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     if (!e.agentId) {
       routeJobs.delete(e.turnId)
       mainTurnRunning = false
+      await update($, turnA, () => null)
       asked.clear()
       activeAt = await clockNow($)
       if (slackFollowQueue.size) {
@@ -4282,6 +4290,16 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // A tool's arguments arrive spread on the event itself (as Bash's command
   // does), not under `input`.
   on('tool.call', { tool: /coord_(roster|spawn|send|close)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
+
+  // The coordinator's [coord] wakes, looked at again where they leave the
+  // queue (a plugin's prompt runs once the session is idle): a worker closed
+  // since is no news.
+  on('prompt.submit', { origin: { kind: 'plugin' } }, async ($: any, e: any, next: any) => {
+    const text = String(e.text ?? '')
+    const now = coordRecheck(text)
+    if (now === undefined) return { drop: 'coord: every worker it named has ended since' }
+    return now === text ? next(e) : next({ ...e, text: now })
+  })
 
   on('command.run', { command: 'office' }, async ($: any) => {
     const url = 'http://127.0.0.1:' + OFFICE_PORT + '/'

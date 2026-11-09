@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -263,4 +263,37 @@ test('coord: a permission dialog in a worker is "asks: <tool> <target>" with its
   expect(ran.changes).toEqual([])
   expect(observe(ran.ledger, parsePanes('%358\t@132\tw1\tdone\tnone\t/r/brief-decision\t\t'), NOW + 40_000).changes.map((c) => c.text)).toEqual(['brief-decision-3: finished its turn'])
   expect(coordSection(l, NOW)).toContain('asks: <tool> <target>')
+})
+
+test('coord: two calls each caught in action on consecutive ticks are not one stuck ask', () => {
+  // Live: coord-ask-order ran a python test (in action at one tick), then a
+  // cp to its own scratchpad (in action at the next); auto mode allowed both
+  // in ~3 s with no dialog, and the coordinator heard "asks: Bash cp …".
+  const l = on({ workers: [worker({ slug: 'coord-ask-order' })] })
+  const at = (asks: string) => parsePanes('%367\t@136\tw1\twaiting\taction\t/w/x\t\t' + asks)
+  const first = observe(l, at('Bash python3 -m unittest discover'), NOW)
+  expect(observe(first.ledger, at('Bash cp hooks/register.ts /private/tmp/claude-502/x/scratchpad/r.ts'), NOW + 10_000).changes).toEqual([])
+  // The same call still deciding a tick later is the ask.
+  const again = observe(first.ledger, at('Bash python3 -m unittest discover'), NOW + 10_000)
+  expect(again.changes.map((c) => c.kind)).toEqual(['ask'])
+})
+
+test('coord: a [coord] prompt that waited in the queue loses the lines about workers closed since', () => {
+  // Live: brief-decision-4's ask went out mid-turn (a reload had reset the
+  // turn flag), sat queued, and arrived a minute after coord_close.
+  const ask = { slug: 'brief-decision-4', sid: 'w4', kind: 'ask' as const, text: 'brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; a dialog there only the person can answer)', wake: true }
+  const turn = { slug: 'tmc-layout', sid: 'w1', kind: 'turn' as const, text: 'tmc-layout: finished its turn', wake: true }
+  const open = on({ workers: [worker({ state: 'done', attention: 'none' }), worker({ slug: 'brief-decision-4', sid: 'w4', state: 'waiting', attention: 'action', asks: 'Read ~/r/prompt.txt' })] })
+  const closed: Ledger = { ...open, workers: open.workers.map((w) => (w.sid === 'w4' ? { ...w, endedAt: NOW } : w)) }
+  const sent = new Map<string, Change>([[ask.text, ask], [turn.text, turn]])
+  const both = '[coord] ' + ask.text + '\n[coord] ' + turn.text
+  expect(recheck(both, open, NOW, sent)).toBe(both)
+  expect(recheck(both, closed, NOW, sent)).toBe('[coord] ' + turn.text)
+  expect(recheck('[coord] ' + ask.text, closed, NOW, sent)).toBeUndefined()
+  // Sent before a reload (no record of it): matched by slug, dropped once ended.
+  expect(recheck('[coord] ' + ask.text, closed, NOW, new Map())).toBeUndefined()
+  expect(recheck('[coord] ' + ask.text, open, NOW, new Map())).toBe('[coord] ' + ask.text)
+  // A gone worker stays news; other prompts pass untouched.
+  expect(recheck('[coord] brief-decision-4: its session is gone (window closed or claude exited)', closed, NOW, new Map())).toContain('gone')
+  expect(recheck('[brief answer] x.html: A', closed, NOW, sent)).toBe('[brief answer] x.html: A')
 })
