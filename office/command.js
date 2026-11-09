@@ -193,8 +193,9 @@ function cmdCoord() {
   return cs.find((x) => x.sid === cmd.coord) || cs.find((x) => x.live) || cs[0]
 }
 
-// The instruction box, always there: to the coordinator itself, or with a
-// worker row picked, to that worker by way of its coordinator.
+// The instruction box, always there: to the coordinator itself, which routes
+// the task to a session (coord_route), or with a worker row picked, to that
+// worker by way of its coordinator.
 function cmdRenderSay() {
   const box = cmdEl.querySelector('.say'), w = cmd.worker
   let c = w && (cmd.data?.coordinators || []).find((x) => x.sid === w.coord)
@@ -209,8 +210,8 @@ function cmdRenderSay() {
   if (box.dataset.for === c.sid + '/' + slug) return // keep what is being typed
   box.dataset.for = c.sid + '/' + slug
   const to = slug ? '🎖 ' + cmdEsc(c.name) + '에게 → 👷 <b>' + cmdEsc(slug) + '</b> 지시' : '🎖 <b>' + cmdEsc(c.name) + '</b>에게 지시'
-  const hint = slug ? 'coord_send로 전달' : 'worker 행을 누르면 그 worker에게'
-  box.innerHTML = '<div class="m" style="margin-bottom:4px">' + to + ' <span class="m">(' + hint + ' · Enter 보내기 · Shift+Enter 줄바꿈)</span></div><textarea placeholder="' + (slug ? '예: 테스트부터 고치고 다시 READY' : '예: keyolk/briefs에 X 고치는 worker 하나 띄워') + '"></textarea><div class="row" style="margin-top:4px"><button class="act go">보내기</button>' + (slug ? '<button class="act cancel">worker 선택 해제</button>' : '') + '</div>'
+  const hint = slug ? 'coord_send로 전달' : 'coordinator가 맡을 세션을 고릅니다 · 직접 고르려면 worker 행을 누르세요'
+  box.innerHTML = '<div class="m" style="margin-bottom:4px">' + to + ' <span class="m">(' + hint + ' · Enter 보내기 · Shift+Enter 줄바꿈)</span></div><textarea placeholder="' + (slug ? '예: 테스트부터 고치고 다시 READY' : '할 일을 쓰면 coordinator가 맡을 세션을 고릅니다 (예: keyolk/briefs의 X 고쳐줘)') + '"></textarea><div class="row" style="margin-top:4px"><button class="act go">보내기</button>' + (slug ? '<button class="act cancel">worker 선택 해제</button>' : '') + '</div>'
   const ta = box.querySelector('textarea')
   const go = async () => {
     const text = ta.value.trim()

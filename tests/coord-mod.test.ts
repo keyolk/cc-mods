@@ -169,3 +169,55 @@ test('coord: a cwd Claude Code does not trust is reached the same way; with the 
   expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'new-window')).toBe(false)
   expect(files['/home/u/research/ar-z/prompt.txt']).toBeUndefined()
 })
+
+test('coord_route: one cheap model call over the live sessions; its answer is checked and handed back, never acted on; a failed or bad answer is an error', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  const runs: string[][] = []
+  // The coordinator, its worker brief-decision-4 at work, and an observed session in autoreview.
+  const panes = ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%365\t@134\tw4\tworking\tnone\t/r/bd\t\t', '%7\t@7\tobs\tdone\tnone\t/src/autoreview\t\t'].join('\n')
+  stubs(on, {
+    files,
+    submitted: [],
+    panes: () => panes,
+    runs,
+    run: (argv) => {
+      if (argv[0] === 'sh' && String(argv[2]).includes('jq')) return JSON.stringify(['obs', 'fix the review bot']) + '\n' + JSON.stringify(['obs', '<task-notification>x'])
+      return spawnRun(argv)
+    },
+  })
+  mock.clock(on)
+  const asked: any[] = []
+  let reply: any = { isAnswered: true, text: '```json\n{"action":"adopt","target":"obs","reason":"already on the review bot"}\n```', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }
+  on('model.complete', (_$: any, e: any) => {
+    asked.push(e)
+    return { value: reply }
+  })
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_route', task: 'the review bot double-posts' } as any)
+  expect(asked.length).toBe(1)
+  expect(asked[0].model).toBe('haiku')
+  const sent = JSON.parse(String(asked[0].prompt))
+  expect(sent.task).toBe('the review bot double-posts')
+  expect(sent.limits).toEqual({ models: ['sonnet'], maxEffort: 'high', maxWorkers: 4, ownedWorkers: 1 })
+  // The coordinator itself is no candidate; the observed session carries its prompts and repository.
+  expect(sent.sessions.map((s: any) => s.relation)).toEqual(['owned', 'observed'])
+  expect(sent.sessions[1]).toMatchObject({ pane: '%7', repo: '/src/autoreview', prompts: ['fix the review bot'] })
+  expect(r.result).toContain('Route: adopt obs')
+  expect(r.result).toContain('/coord adopt %7')
+  // Nothing was started or sent: the coordinator acts.
+  expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'new-window')).toBe(false)
+  expect(Object.keys(files).some((f) => f.includes('/inbox/'))).toBe(false)
+
+  reply = { isAnswered: true, text: '{"action":"spawn","repo_dir":"/src/autoreview","model":"sonnet","effort":"low","reason":"r"}', usage: reply.usage }
+  const s: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_route', task: 'x' } as any)
+  expect(s.result).toContain('coord_spawn repo_dir=/src/autoreview model=sonnet effort=low')
+
+  reply = { isAnswered: true, text: '{"action":"send","target":"obs","reason":"r"}', usage: reply.usage }
+  expect(JSON.stringify(await $.tool.call({ tool: 'mcp__cc-mods__coord_route', task: 'x' } as any))).toContain('observed session')
+  reply = { isAnswered: true, text: 'I would send it to obs.', usage: reply.usage }
+  expect(JSON.stringify(await $.tool.call({ tool: 'mcp__cc-mods__coord_route', task: 'x' } as any))).toContain('did not answer with JSON')
+  reply = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: reply.usage }
+  const f = JSON.stringify(await $.tool.call({ tool: 'mcp__cc-mods__coord_route', task: 'x' } as any))
+  expect(f).toContain('no answer (api-error 529 overloaded)')
+  expect(f).toContain('nothing was decided')
+})
