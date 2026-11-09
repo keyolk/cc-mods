@@ -176,7 +176,11 @@ sessions from Bash, which the tmux guard keeps in its own window):
   I trust this folder". A worktree shares its main checkout's trust; a trusted
   parent such as `~` does not cover a repository under it. The result names
   the other sessions in the same repository (its checkout, a worktree, or a
-  folder under it), not the ones in a parent folder.
+  folder under it), not the ones in a parent folder. `add_dirs: [...]` starts
+  it with `--add-dir=<dir>` for each: folders outside its cwd its tools may
+  reach without a permission dialog nobody is watching (a worker in
+  `~/research/<slug>` reading a worktree). Each must be an existing directory
+  (`~/` allowed); trust is still checked for the cwd only.
 - `coord_send`: an instruction to an owned or adopted worker, through the
   office inbox (it arrives as `[coordinator] …`).
 - `coord_close`: closes an owned worker's window and removes its worktree
@@ -194,7 +198,13 @@ routing (the coordinator chose them).
 Every 10 s it reads the workers' panes and tells the coordinator when one
 asks something, finishes a turn, exits, or when you typed in it yourself. A
 turn's end is the worker's `done`; a permission ask counts only when a second
-look still sees it (auto mode settles most in seconds). While the
+look still sees it (auto mode settles most in seconds), and at once when its
+dialog is drawn (`classic.PermissionRequest`, or the `permission_prompt`
+Notification). Each worker's cc-mods names the call it waits on in
+`@cc_pane_asks`, so the coordinator hears `[coord] <slug> (pane %358, window
+@132): asks: Read ~/worktrees/…/brief.py`, which pane and window to go to and
+what to answer, instead of "finished its turn". Parallel asked calls are kept
+apart: one that runs does not clear another's dialog. While the
 coordinator's own turn runs these wait: the next coord tool result carries
 them, and at the turn's end the ones still true arrive as one prompt. A
 worker you typed in is **held** for 10 minutes: the coordinator sends it

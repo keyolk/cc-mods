@@ -52,6 +52,7 @@ import { ghAccountFor, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, nee
 import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
+import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from './lib/asks'
 import { clip, hhmm } from './lib/text'
 import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
@@ -322,6 +323,9 @@ async function publish($: any, state: CcState | undefined, attention: Attention 
   const want: Record<string, string> = { ...(extra ?? {}) }
   if (state) want['@cc_state'] = state
   if (attention) want['@cc_attention'] = attention
+  // An attention that names no asked call (a turn's end, a question drawn,
+  // working again) clears the last one's name.
+  if (attention && !('@cc_pane_asks' in want)) want['@cc_pane_asks'] = ''
   const changed = Object.entries(want).filter(([k, v]) => published.get(k) !== v)
   if (changed.length === 0) return
   for (const [k, v] of changed) published.set(k, v)
@@ -1485,16 +1489,32 @@ let mainTurnAt = 0
 // What the previous main step was sent with (routing's cache gate, lib/route.ts).
 let routeLast: RouteLast | undefined
 let mainTurnRunning = false
-// The call tool.check last marked ❗ for. Its ask goes to the permission mode
-// first: under auto mode the classifier allows most with no dialog shown,
-// and nothing else would put the pane back to working before the turn ends
-// (a coordinator read that waiting as the worker's turn being over).
-let askedCall: string | undefined
-async function settleAsk($: any, id: string | undefined) {
-  if (!id || id !== askedCall) return
-  askedCall = undefined
+// The calls tool.check marked ❗ for and that have not run (lib/asks.ts).
+// Their ask goes to the permission mode first: under auto mode the
+// classifier allows most with no dialog shown, and nothing else would put the
+// pane back to working before the turn ends (a coordinator read that waiting
+// as the worker's turn being over). A list, not the last one: live, two
+// parallel Reads outside the cwd both asked, the second ran, and the first's
+// dialog sat under working/none (its coordinator heard "finished its turn").
+const asked = new Map<string, Asked>()
+async function publishAsks($: any) {
+  const s = askState([...asked.values()])
+  if (s) await publish($, 'waiting', s.attention, { '@cc_pane_asks': s.label })
   // An abort at the dialog ends the turn: turn.complete publishes that.
-  if (mainTurnRunning) await publish($, 'working', 'none')
+  else if (mainTurnRunning) await publish($, 'working', 'none')
+}
+async function settleAsk($: any, id: string | undefined) {
+  if (!id || !asked.delete(id)) return
+  await publishAsks($)
+}
+// The permission dialog is drawn: the call it is for now waits on the person.
+async function dialogShown($: any, tool?: string, input?: unknown) {
+  const a = dialogFor([...asked.values()], tool, input)
+  if (a) {
+    a.shown = true
+    return publishAsks($)
+  }
+  if (tool) await publish($, 'waiting', 'ask', { '@cc_pane_asks': askLabel(tool, input, home) })
 }
 // Engine-clock ms of the last turn or keystroke in this session (see QUIET_MS).
 // Undefined until the session starts: the engine clock may start at 0.
@@ -3542,6 +3562,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     if (!e.agentId) {
       routeJobs.delete(e.turnId)
       mainTurnRunning = false
+      asked.clear()
       activeAt = await clockNow($)
       if (slackFollowQueue.size) {
         const urls = [...slackFollowQueue]
@@ -3940,15 +3961,31 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     return result
   })
 
-  // A permission prompt is about to be shown: that is ❗ in tmux, now, not
-  // when a Notification eventually fires.
+  // A permission prompt may be shown: that is ❗ in tmux, now, not when a
+  // Notification eventually fires. A query ($.tool.check, no tool_use_id)
+  // runs nothing and shows nothing.
   on('tool.check', async ($: any, e: any, next: any) => {
     const decided = await next(e)
-    if (decided?.decision === 'ask' && !e.agentId) {
-      askedCall = e.tool_use_id
-      await publish($, 'waiting', 'action')
+    if (decided?.decision === 'ask' && !e.agentId && e.tool_use_id) {
+      asked.set(e.tool_use_id, { id: e.tool_use_id, tool: e.tool, label: askLabel(e.tool, e.input, home), key: askKey(e.tool, e.input) })
+      await publishAsks($)
     }
     return decided
+  })
+
+  // The mode did not settle it and no hook beneath answered: the dialog is
+  // drawn, and only the person in this pane can answer it.
+  on('classic.PermissionRequest', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    if (!r?.decision && !e.agent_id) await dialogShown($, e.tool_name, e.tool_input)
+    return r
+  })
+
+  // The same dialog as notify.py sees it (it marks only the window, so a pane
+  // reader saw none): a second way in, should the request hook be skipped.
+  on('classic.Notification', async ($: any, e: any, next: any) => {
+    if (e.notification_type === 'permission_prompt' && !e.agent_id) await dialogShown($, toolOfNotice(e.message))
+    return next(e)
   })
 
   // A question to the user is ❓ the moment it is drawn.

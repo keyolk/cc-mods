@@ -144,6 +144,43 @@ test('an asked tool call that runs (auto mode allowed it) puts the pane back to 
   expect(states).toEqual(['working', 'waiting', 'working'])
 })
 
+test('a dialog for one of two parallel asked calls keeps the pane asking, named, until that call runs', async ($, on) => {
+  // Live: brief-decision-3 read two files outside its cwd at once. Both
+  // asked; README.md ran (the classifier allowed it) and the pane went back
+  // to working/none while brief.py's dialog stayed up. notify.py marked only
+  // the window, so its coordinator heard "finished its turn".
+  const runs = baseStubs(on, { pane: '%42' })
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('tool.check', () => ({ decision: 'ask' }))
+  on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
+  on('classic.PermissionRequest', () => ({}) as any)
+  on('classic.Notification', () => ({}) as any)
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.prompt.submit({ text: 'read the brief tool', origin: { kind: 'composer' }, wait: false } as any)
+  await $.turn.start({ turnId: 't1', text: 'read the brief tool' })
+  const brief = { file_path: '/home/u/worktrees/briefs/b/bin/brief.py' }
+  await $.tool.check({ tool: 'Read', input: brief, tool_use_id: 'tu-1' } as any)
+  await $.tool.check({ tool: 'Read', input: { file_path: '/home/u/worktrees/briefs/b/README.md' }, tool_use_id: 'tu-2' } as any)
+  // A query runs nothing and draws nothing.
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf /' } } as any)
+  const opt = (k: string) => runs.filter((a) => a[0] === 'tmux' && a.includes(k)).map((a) => (a.includes('-u') ? '' : a[a.length - 1]))
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action'])
+  expect(opt('@cc_pane_asks')).toEqual(['', 'Read ~/worktrees/briefs/b/bin/brief.py'])
+  await $.tool.call({ tool: 'Read', file_path: '/home/u/worktrees/briefs/b/README.md', tool_use_id: 'tu-2' } as any)
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action'])
+  // The dialog is drawn: only the person in the pane can answer it.
+  await $.classic.PermissionRequest({ tool_name: 'Read', tool_input: brief } as any)
+  await $.classic.Notification({ message: 'Claude needs your permission to use Read', notification_type: 'permission_prompt' } as any)
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'ask'])
+  expect(opt('@cc_pane_asks').at(-1)).toBe('Read ~/worktrees/briefs/b/bin/brief.py')
+  // Answered: it runs, the pane is working and names nothing.
+  await $.tool.call({ tool: 'Read', ...brief, tool_use_id: 'tu-1' } as any)
+  expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'ask', 'none'])
+  expect(opt('@cc_pane_asks').at(-1)).toBe('')
+  expect(opt('@cc_pane_state')).toEqual(['working', 'waiting', 'working'])
+})
+
 test('auto_continue answers a plain proceed question after a pause the person can type over', async ($, on) => {
   const submitted: string[] = []
   const asked: any[] = []
@@ -2879,6 +2916,7 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
       if (a[0] === 'git' && a.includes('get-url')) return { code: 0, out: 'git@github.com:keyolk/tmc.git' }
       if (a[0] === 'git') return { code: 0, out: '' }
       if (a[0] === 'uuidgen') return { code: 0, out: 'ABC-1' }
+      if (a[0] === 'test' && a[1] === '-d') return { code: a[2] === '/home/u/worktrees/briefs' ? 0 : 1, out: '' }
       if (a[0] === 'tmux' && a[1] === 'display-message') return { code: 0, out: 'main' }
       if (a[0] === 'tmux' && a[1] === 'new-window') return { code: 0, out: '@9 %90' }
       if (a[0] === 'tmux' && a[1] === 'list-panes') return { code: 0, out: '' }
@@ -2908,16 +2946,21 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
   expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'new-window')).toBe(false)
   expect(Object.keys(written).some((k) => k.includes('brief-x'))).toBe(false)
-  const ok: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc' })
+  // add_dirs: only folders that exist, refused before anything is made.
+  const missing: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc', add_dirs: ['/nope'] })
+  expect(JSON.stringify(missing)).toContain('add_dirs: /nope is not an existing directory')
+  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
+  const ok: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc', add_dirs: ['~/worktrees/briefs/'] })
   expect(JSON.stringify(ok)).toContain('Started worker tmc-x in window @9 (pane %90)')
+  expect(JSON.stringify(ok)).toContain('add-dirs /home/u/worktrees/briefs')
   const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
   expect(nw).toContain('main:')
-  expect(nw.slice(-6)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt'])
+  expect(nw.slice(-7)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt', '--add-dir=/home/u/worktrees/briefs'])
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes('/home/u/worktrees/tmc/tmc-x'))).toBe(true)
   expect(written['/home/u/research/tmc-x/prompt.txt']).toContain('worker `tmc-x`')
   expect(written['/home/u/research/tmc-x/prompt.txt']).toMatch(/python3 \S+\/bin\/coord-report sid-1 '\[worker tmc-x\]/)
   const ledger = JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
-  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane])).toEqual([['tmc-x', 'owned', '%90']])
+  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane, w.addDirs])).toEqual([['tmc-x', 'owned', '%90', ['/home/u/worktrees/briefs']]])
   // The worker's policy was written under its own session id before its window opened.
   const pol = (argv: string[]) => argv[0] === 'python3' && String(argv[1]).endsWith('session_policy.py')
   const nwAt = runs.indexOf(nw)

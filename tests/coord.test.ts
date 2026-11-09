@@ -1,8 +1,10 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, HOLD_MS, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, spawnRefusal, workerArgv, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, trustTarget, trustedBy } from '../hooks/lib/trust'
+import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
+import { publishArgv } from '../hooks/lib/tmux'
 
 const NOW = 1_800_000_000_000
 const on = (over: Partial<Ledger> = {}): Ledger => ({ ...emptyLedger('coord-sid', 'cc-mods-d9', NOW), on: true, ...over })
@@ -30,7 +32,7 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   const argv = workerArgv({ target: 'main:', slug: 'tmc-layout', cwd: '/w/tmc-layout', model: 'claude-sonnet-5-5', effort: 'medium', sid: 'u-1', promptFile: '/r/prompt.txt' })
   expect(argv.slice(0, 12)).toEqual(['new-window', '-d', '-P', '-F', '#{window_id} #{pane_id}', '-t', 'main:', '-n', 'w:tmc-layout', '-c', '/w/tmc-layout', 'sh'])
   expect(argv[13]).toContain('--disallowedTools AskUserQuestion')
-  expect(argv[13]).toContain('--session-id "$3"')
+  expect(argv[13]).toContain('--session-id "$s"')
   expect(argv.slice(14)).toEqual(['worker', 'sonnet', 'medium', 'u-1', 'tmc-layout', '/r/prompt.txt'])
   const p = workerPrompt('  fix it  ', 'cc-mods-d9', 'tmc-layout')
   expect(p.startsWith('fix it\n')).toBe(true)
@@ -90,7 +92,7 @@ test('coord: an approval the auto classifier settles between ticks is neither a 
   expect(observe(first.ledger, parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t'), NOW + 10_000).changes).toEqual([])
   // Still asking a tick later: the person's dialog. Once.
   const second = observe(first.ledger, asking, NOW + 10_000)
-  expect(second.changes.map((c) => c.text)).toEqual(['tmc-layout: waiting on an approval in its pane'])
+  expect(second.changes.map((c) => c.text)).toEqual(['tmc-layout (pane %1, window @1): waiting on an approval in its pane'])
   expect(observe(second.ledger, asking, NOW + 20_000).changes).toEqual([])
   // The turn's real end is still seen after it.
   const done = observe(second.ledger, parsePanes('%1\t@1\tw1\tdone\tnone\t/w/tmc-layout\t'), NOW + 30_000)
@@ -194,4 +196,71 @@ test('coord: pending decisions from command.py keep only what the tab can draw',
   expect(got).toEqual([{ file: 'a.html', title: 'A', question: 'q?', options: [{ label: 'x', detail: '' }, { label: 'y', detail: 'd' }], recommended: null, coordinator: 'c', worker: 'w', asked: 't' }])
   expect(parsePending('{oops')).toEqual([])
   expect(parsePending('{}')).toEqual([])
+})
+
+test('coord: a worker spawned with add_dirs runs claude --add-dir=<dir>, never swallowing the brief', () => {
+  // Live: brief-decision-3 ran in ~/research/brief-decision and stopped at a
+  // dialog reading ~/worktrees/briefs/brief-decision/bin/brief.py.
+  const argv = workerArgv({ target: 'main:', slug: 'b', cwd: '/r/b', model: 'opus', effort: 'high', sid: 'u-2', promptFile: '/r/b/prompt.txt', addDirs: ['/w/briefs/b', '/odd dir'] })
+  expect(argv.slice(14)).toEqual(['worker', 'opus', 'high', 'u-2', 'b', '/r/b/prompt.txt', '--add-dir=/w/briefs/b', '--add-dir=/odd dir'])
+  // The shell keeps the first five and hands the rest to claude before its
+  // other options: --add-dir takes several values, so a spaced form before
+  // the prompt would read the prompt as a directory.
+  // Under bun test only: the plugin test runtime has no process to spawn.
+  const bun = (globalThis as any).Bun
+  const run = bun?.spawnSync(['sh', '-c', argv[13]!.replace('exec claude', 'printf "%s\\n" claude').replace('"$(cat "$p")"', '"<$p>"'), ...argv.slice(14)])
+  if (run) expect(run.stdout.toString().trim().split('\n')).toEqual(['claude', '--add-dir=/w/briefs/b', '--add-dir=/odd dir', '--model', 'opus', '--effort', 'high', '--permission-mode', 'auto', '--disallowedTools', 'AskUserQuestion', '--session-id', 'u-2', '-n', 'b', '</r/b/prompt.txt>'])
+  expect(spawnRefusal(on(), { ...req, addDirs: ['~/worktrees/briefs', '/abs'] })).toBeUndefined()
+  expect(spawnRefusal(on(), { ...req, addDirs: ['relative/dir'] })).toContain('add_dirs')
+  expect(spawnRefusal(on(), { ...req, addDirs: '/not/a/list' })).toContain('add_dirs')
+})
+
+test('asks: a call is named by its tool and target; a dialog is matched to its call', () => {
+  expect(askLabel('Read', { file_path: '/Users/g/worktrees/briefs/b/bin/brief.py' }, '/Users/g')).toBe('Read ~/worktrees/briefs/b/bin/brief.py')
+  expect(askLabel('Bash', { command: 'git push\torigin\n main' })).toBe('Bash git push origin main')
+  expect(askLabel('mcp__slack__send', {})).toBe('slack send')
+  expect(askLabel('Bash', { command: 'x'.repeat(300) }).length).toBe(140)
+  expect(toolOfNotice('Claude needs your permission to use Read')).toBe('Read')
+  expect(toolOfNotice('Claude is waiting for your input')).toBeUndefined()
+  const a = (id: string, tool: string, input: unknown, shown?: boolean): Asked => ({ id, tool, label: askLabel(tool, input), key: askKey(tool, input), shown })
+  // Live: two parallel Reads outside the cwd both asked.
+  const brief = a('t1', 'Read', { file_path: '/w/bin/brief.py' })
+  const readme = a('t2', 'Read', { file_path: '/w/README.md' })
+  expect(dialogFor([brief, readme], 'Read', { file_path: '/w/README.md' })).toBe(readme)
+  expect(dialogFor([brief, readme], 'Read')).toBe(brief)
+  // A notice after the request hook marked one: the same one.
+  expect(dialogFor([brief, { ...readme, shown: true }], 'Read')?.id).toBe('t2')
+  expect(dialogFor([brief], 'Bash')).toBeUndefined()
+  expect(askState([])).toBeUndefined()
+  expect(askState([brief, readme])).toEqual({ attention: 'action', label: 'Read /w/bin/brief.py' })
+  expect(askState([brief, { ...readme, shown: true }])).toEqual({ attention: 'ask', label: 'Read /w/README.md' })
+})
+
+test('coord: a permission dialog in a worker is "asks: <tool> <target>" with its pane and window, not a finished turn', () => {
+  // Live: brief-decision-3 (pane %358) sat at a dialog for a Read outside its
+  // cwd; its pane said waiting/none and the coordinator heard "finished its turn".
+  expect(PANES_FMT.split('\t').at(-1)).toBe('#{@cc_pane_asks}')
+  expect(publishArgv('%358', { attention: 'ask', extra: { '@cc_pane_asks': 'Read ~/x.py' } }, 1)).toEqual([
+    ['set-window-option', '-t', '%358', '@cc_attention', 'ask'],
+    ['set', '-p', '-t', '%358', '@cc_pane_attention', 'ask'],
+    ['set', '-p', '-t', '%358', '@cc_pane_asks', 'Read ~/x.py'],
+  ])
+  expect(publishArgv('%358', { extra: { '@cc_pane_asks': '' } }, 1)).toEqual([['set', '-p', '-t', '%358', '-u', '@cc_pane_asks']])
+  const l = on({ workers: [worker({ slug: 'brief-decision-3', sid: 'w1' })] })
+  const dialog = parsePanes('%358\t@132\tw1\twaiting\task\t/r/brief-decision\t\tRead ~/worktrees/briefs/brief-decision/bin/brief.py')
+  const first = observe(l, dialog, NOW)
+  expect(first.changes.map((c) => [c.kind, c.text])).toEqual([['ask', 'brief-decision-3 (pane %358, window @132): asks: Read ~/worktrees/briefs/brief-decision/bin/brief.py (a permission dialog only the person can answer in that pane)']])
+  expect(first.ledger.workers[0]!.asks).toBe('Read ~/worktrees/briefs/brief-decision/bin/brief.py')
+  expect(observe(first.ledger, dialog, NOW + 10_000).changes).toEqual([])
+  // Its action ticks first, then the dialog for the same call: told once.
+  const action = parsePanes('%358\t@132\tw1\twaiting\taction\t/r/brief-decision\t\tRead ~/x.py')
+  const a1 = observe(l, action, NOW)
+  const a2 = observe(a1.ledger, action, NOW + 10_000)
+  expect(a2.changes.map((c) => c.text)).toEqual(['brief-decision-3 (pane %358, window @132): asks: Read ~/x.py (a permission ask still unsettled; a dialog there only the person can answer)'])
+  expect(observe(a2.ledger, parsePanes('%358\t@132\tw1\twaiting\task\t/r/brief-decision\t\tRead ~/x.py'), NOW + 20_000).changes).toEqual([])
+  // Answered: it runs (working), then its turn ends.
+  const ran = observe(a2.ledger, parsePanes('%358\t@132\tw1\tworking\tnone\t/r/brief-decision\t\t'), NOW + 30_000)
+  expect(ran.changes).toEqual([])
+  expect(observe(ran.ledger, parsePanes('%358\t@132\tw1\tdone\tnone\t/r/brief-decision\t\t'), NOW + 40_000).changes.map((c) => c.text)).toEqual(['brief-decision-3: finished its turn'])
+  expect(coordSection(l, NOW)).toContain('asks: <tool> <target>')
 })
