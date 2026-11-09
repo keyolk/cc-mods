@@ -202,6 +202,12 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual(command.say(WORKER, "w", "x", self.put)[0], 404)
         self.assertEqual(command.say(COORD, "w", "  ", self.put)[0], 400)
 
+    def test_without_a_worker_the_instruction_is_for_the_coordinator(self):
+        self.ledger([])
+        self.assertEqual(command.say(COORD, "", "worker 하나 띄워", self.put)[0], 200)
+        self.assertEqual(self.sent, [(COORD, "[office→coord] worker 하나 띄워")])
+        self.assertEqual(command.say(WORKER, "", "x", self.put)[0], 404)
+
     def test_view_joins_ledgers_people_and_briefs(self):
         self.ledger([{"slug": "w", "sid": WORKER, "model": "opus", "effort": "high"}])
         f = self.brief("2026-11-08-a", {"coordinator": COORD, "worker": "w"}, sessions=(WORKER,))
@@ -211,6 +217,9 @@ class SayAndViewTest(BriefsCase):
         w = c["workers"][0]
         self.assertEqual((w["slug"], w["model"], w["state"], w["attention"], w["brief"]["file"]), ("w", "opus", "waiting", "ask", f))
         self.assertEqual((v["pending"][0]["file"], v["pending"][0]["coordinatorName"], v["pending"][0]["to"]), (f, "cc-mods-d9", COORD))
+        # Who waits on the person, and the briefs lately written, newest first.
+        self.assertEqual([c["name"] for c in v["calls"]], ["w"])
+        self.assertEqual((v["recent"][0]["file"], v["recent"][0]["by"], v["recent"][0]["pending"]), (f, "w", True))
 
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
@@ -247,7 +256,7 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "recent"})
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,7 @@ BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
 KINDS = ("brief_answer", "coord_say")
+RECENT = 8  # briefs listed in the command panel
 # file -> (sidecar mtime, sidecar), (html mtime, title): 180 briefs are read
 # on every poll of the view, so only a changed file is read again.
 _side: dict[str, tuple[float, dict]] = {}
@@ -246,7 +247,25 @@ def view(people: list[dict]) -> dict:
     for i in pending():
         d = i["decision"]
         waiting.append({**i, "coordinatorName": _coord_name(d["coordinator"]), "to": _target(d, i["sessions"])})
-    return {"at": time.time(), "pending": waiting, "coordinators": coords}
+    # With nothing to decide the panel still says something: who waits on
+    # the person across the floor, and the briefs written lately.
+    calls = [
+        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "attention": p.get("attention"), "doing": p.get("doing")}
+        for p in people
+        if p.get("attention") in ("ask", "alert")
+    ]
+    names = {p["id"]: p.get("name") or p["id"][:8] for p in people}
+    recent = []
+    for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
+        recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(b["decision"] and not b["decision"]["answer"])})
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "recent": recent}
+
+
+def _mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
 
 
 def _target(d: dict, sessions: list[str]) -> str | None:
@@ -310,18 +329,23 @@ def answer(file: str, label: str, note: str, inbox_put) -> tuple[int, dict]:
 
 def say(coord_sid: str, slug: str, text: str, inbox_put) -> tuple[int, dict]:
     """An instruction for a worker, given to its coordinator (which relays it
-    with coord_send). The office writes to the coordinator only: talking to a
-    worker directly is the office floor's card."""
+    with coord_send), or with no slug one for the coordinator itself (start a
+    worker, report, stop). The office writes to the coordinator only: talking
+    to a worker directly is the office floor's card."""
     text = (text or "").strip()
     if not text or len(text) > 4000:
         return 400, {"error": "empty or too long"}
     led = next((d for d in coord.ledgers() if d["sid"] == coord_sid), None)
     if not led or not SID.match(coord_sid):
         return 404, {"error": "no such coordinator"}
+    name = led.get("name") or coord_sid[:8]
+    if not slug:
+        inbox_put(coord_sid, f"[office→coord] {text}")
+        return 200, {"ok": True, "sent": f"지시 → {name}"}
     if not any(w.get("slug") == slug and not w.get("endedAt") for w in led.get("workers") or []):
         return 404, {"error": "no such worker under it"}
     inbox_put(coord_sid, f"[office→coord] {slug}: {text}")
-    return 200, {"ok": True, "sent": f"{slug} 지시 → {led.get('name') or coord_sid[:8]}"}
+    return 200, {"ok": True, "sent": f"{slug} 지시 → {name}"}
 
 
 def act(body: dict, inbox_put) -> tuple[int, dict]:
