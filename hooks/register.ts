@@ -301,6 +301,10 @@ let settingsEnvBrowser = ''
 let slashHideEnabled = true
 let slashHidCockpit = false
 let slashHideBusy = false
+// When submit last restored a cockpit the slash token hid. Typing `/cockpit`
+// hides the cockpit, so the command must count it as open: hidden, or put
+// back by the submit just before the command runs.
+let slashRestoredAt = 0
 let webRate = 30
 // What this session set the pane's @browser to: the userConfig default, then
 // /browser. 'inherit' means the pane holds no value of its own.
@@ -2124,6 +2128,7 @@ async function setSlashCockpit($: any, hide: boolean) {
     }
     if (!slashHidCockpit) return
     slashHidCockpit = false
+    slashRestoredAt = Date.now()
     await update($, uiA, (u) => ({ ...u, open: true }))
     await openCockpitPane($, {})
   } finally {
@@ -2131,17 +2136,25 @@ async function setSlashCockpit($: any, hide: boolean) {
   }
 }
 
-async function openCockpit($: any, asked: string, columns: number, isFullscreen: boolean, toggle = true) {
+// toggle: true closes an open cockpit already on the asked tab; 'any' (bare
+// /cockpit) closes it on whichever tab; false only opens or switches.
+async function openCockpit($: any, asked: string, columns: number, isFullscreen: boolean, toggle: boolean | 'any' = true) {
   const view: View = tabOf(asked)
   const panes = (await $.ui.panes()) as { id: string; isShown: boolean }[]
-  const open = panes.some((p) => p.id === COCKPIT && p.isShown)
+  const shown = panes.some((p) => p.id === COCKPIT && p.isShown)
+  const slashHid = slashHidCockpit || Date.now() - slashRestoredAt < 2000
+  slashHidCockpit = false
+  slashRestoredAt = 0
+  const open = shown || slashHid
   const ui = (await read($, uiA)) as any
-  if (open && toggle && ui.view === view) {
-    await $.ui.close({ id: COCKPIT })
+  if (open && toggle && (toggle === 'any' || tabOf(ui.view ?? 'home') === view)) {
+    if (shown) await $.ui.close({ id: COCKPIT })
+    else await update($, uiA, (u) => ({ ...u, open: false }))
     return {}
   }
   await update($, uiA, (u) => ({ ...u, view, open: true }))
-  if (open) {
+  // A cockpit the slash token hid is not drawn: it opens again below.
+  if (shown) {
     if (asked === 'side') void $.ui.focus({ requestId: COCKPIT, key: 'side-input' }).catch(() => {})
     return {}
   }
@@ -4453,7 +4466,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
 
   on('command.run', { command: 'cockpit' }, async ($: any, e: any) => {
     await backfillSession($, true)
-    return openCockpit($, 'home', e.presentation.columns, e.presentation.isFullscreen)
+    return openCockpit($, 'home', e.presentation.columns, e.presentation.isFullscreen, 'any')
   })
 
   on('command.run', { command: 'title' }, async ($: any, e: any) => {

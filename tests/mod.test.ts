@@ -1097,6 +1097,44 @@ test('slash-command candidates hide the cockpit; ending or submitting the first 
   expect(opens).toHaveLength(2)
 })
 
+test('/cockpit closes the cockpit it hid while typing, on any tab, whether submit restored it first or not', async ($, on) => {
+  const store: Record<string, unknown> = { 'cockpit-settings': { slashHide: true } }
+  baseStubs(on, { store })
+  mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('prompt.fill', () => ({ isFilled: true }))
+  let shown = true
+  let opens = 0
+  on('ui.panes', () => ({ value: shown ? [{ id: 'cc-cockpit', title: 'cockpit', isShown: true, isFocused: false, isPlaced: true }] : [] }) as any)
+  on('ui.close', () => { shown = false; return { value: undefined } })
+  on('ui.open', () => { shown = true; opens++; return { value: { isPlaced: true } } as any })
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const run = () => $.command.run({ command: 'cockpit', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as any)
+  // The command runs while the token still hides the cockpit.
+  await $.prompt.fill({ text: '/cockpit', mode: 'replace', origin: { kind: 'plugin', name: 'test' } })
+  expect(shown).toBe(false)
+  await run()
+  expect(shown).toBe(false)
+  expect(opens).toBe(0)
+  // Closed, it opens.
+  await run()
+  expect(shown).toBe(true)
+  expect(opens).toBe(1)
+  // Submit puts it back just before the command: still a close.
+  await $.prompt.fill({ text: '/cockpit', mode: 'replace', origin: { kind: 'plugin', name: 'test' } })
+  await $.prompt.submit({ text: '/cockpit', origin: { kind: 'composer' }, wait: false } as any)
+  expect(shown).toBe(true)
+  await run()
+  expect(shown).toBe(false)
+  // Open on another tab than Now, it closes too.
+  await run()
+  const ui = await $.ui.mount({ ...COCKPIT, surface: 'terminal' } as any)
+  await ui.press({ key: 'cockpit-graph' })
+  await ui.unmount()
+  await run()
+  expect(shown).toBe(false)
+})
+
 test('slash-command cockpit hiding can be disabled in Settings, restoring a pane it hid', async ($, on) => {
   const store: Record<string, unknown> = { 'cockpit-settings': { slashHide: true } }
   baseStubs(on, { store })
