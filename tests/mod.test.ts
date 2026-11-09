@@ -3007,7 +3007,7 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   const cmd = (args: string) => ({ command: 'coord', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as any
   await $.command.run(cmd('on'))
-  expect(registered).toEqual(['coord_roster', 'coord_spawn', 'coord_send', 'coord_close'])
+  expect(registered).toEqual(['coord_roster', 'coord_route', 'coord_spawn', 'coord_send', 'coord_close'])
   const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', ...input } as any).catch((err: unknown) => ({ error: String(err) }))
   const over: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'max', brief: 'b', repo_dir: '/src/tmc' })
   expect(JSON.stringify(over)).toContain('above the limit high')

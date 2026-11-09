@@ -11,6 +11,7 @@ import { COORD_CAPS, HOLD_MS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, coord
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
+import { ROUTER_MODEL, candidates, checkRoute, parsePrompts, parseRoute, routeRequest, routeText, type Paths, type Raw } from './lib/coordroute'
 import type { Policy } from './lib/policy'
 
 // What register.ts lends: the session, and its policy. God mode keeps "the
@@ -32,6 +33,12 @@ const TOOLS = {
     name: 'coord_roster',
     description: 'Coordinator mode: every live Claude session in tmux with its relation to this coordinator (owned, adopted, observed), state, attention, directory and SendMessage name. Call before starting a worker.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  route: {
+    name: 'coord_route',
+    description:
+      'Coordinator mode: where a task goes. One cheap model call reads every live session (relation, state, directory, repository, its recent prompts) and your limits, and answers send (an owned or adopted worker), adopt (an observed session that fits; the person hands it over), spawn (a new worker: repo_dir or cwd, model, effort) or unsure, with a reason. It only answers: act on it with coord_send or coord_spawn. Call it first for every task.',
+    inputSchema: { type: 'object', properties: { task: { type: 'string', description: "the task, in the person's words" } }, required: ['task'] },
   },
   spawn: {
     name: 'coord_spawn',
@@ -79,7 +86,7 @@ const READY_WAIT_MS = 20_000
 // The tool by its name, whether or not this module has registered it yet.
 function kindOf(tool: string): keyof typeof TOOLS | undefined {
   if (toolNames[tool]) return toolNames[tool]
-  const m = /^mcp__cc-mods__coord_(roster|spawn|send|close)$/.exec(tool)
+  const m = /^mcp__cc-mods__coord_(roster|route|spawn|send|close)$/.exec(tool)
   return m ? (m[1] as keyof typeof TOOLS) : undefined
 }
 
@@ -310,6 +317,7 @@ export async function coordTool($: any, tool: string, input: any): Promise<{ res
   if (!ledger || !ctx) return { deny: 'coordinator mode is not ready (cc-mods is still loading); call again in a few seconds' }
   if (!ledger.on) return { deny: 'coordinator mode is off; only the person turns it on (/coord on)' }
   if (kind === 'roster') return withPending({ result: await roster($) })
+  if (kind === 'route') return withPending(await route($, input ?? {}))
   if (kind === 'spawn') return withPending(await spawn($, input ?? {}))
   if (kind === 'send') return withPending(await send($, input ?? {}))
   if (kind === 'close') return withPending(await close($, input ?? {}))
@@ -329,6 +337,56 @@ async function roster($: any): Promise<string> {
       return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && held(w, now) ? ' HELD' : '') + ' | ' + s.cwd + ' |'
     })
   return '| name | relation | pane | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n')
+}
+
+// The newest prompts of each session, off the tail of its transcript (the
+// office reads the same files): one shell for all of them, a JSON row per
+// prompt, parsed in lib/coordroute.ts.
+const PROMPTS_SH =
+  'h=$0; for s in "$@"; do f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || continue; ' +
+  'tail -c 300000 "$f" | tail -n +2 | jq -Rc --arg s "$s" \'fromjson? | select(.type == "user" and (.isMeta | not)) | .message.content | (if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end) | select(length > 0) | [$s, .]\' 2>/dev/null | tail -n 12; done'
+
+async function route($: any, i: any): Promise<{ result: string } | { deny: string }> {
+  const task = String(i.task ?? '').trim()
+  if (!task) return { deny: 'coord_route: the task is empty' }
+  const l = ledger!
+  const seen = await panes($)
+  const others = seen.filter((s) => s.sid !== l.sid)
+  const [n, titles, prompts, repos] = await Promise.all([
+    names($),
+    sh($, ['tmux', 'list-panes', '-a', '-F', '#{@cc_pane_session}\t#{@title}'], { timeoutMs: 3000 }).then((r) => new Map(r.out.split('\n').map((x) => x.split('\t') as [string, string]).filter(([s, t]) => s && t))),
+    sh($, ['sh', '-c', PROMPTS_SH, ctx!.home(), ...new Set(others.map((s) => s.sid))], { timeoutMs: 10_000 }).then((r) => parsePrompts(r.out)),
+    commonDirs($, seen).then((m) => new Map([...m].map(([cwd, common]) => [cwd, canonicalOf(common) ?? common]))),
+  ])
+  const cands = candidates(seen, l, n, { titles, prompts, repos }, Date.now())
+  const owned = active(l).filter((w) => w.relation === 'owned').length
+  const ask = routeRequest(task, cands, l.limits, owned)
+  let r: any
+  try {
+    r = await $.model.complete({ model: ROUTER_MODEL, system: ask.system, prompt: ask.prompt, maxTokens: 600, effort: 'low', timeoutMs: 45_000 })
+  } catch (e) {
+    return { deny: 'coord_route: the router call was refused (' + String(e) + '); nothing was decided' }
+  }
+  if (!r?.isAnswered) return { deny: 'coord_route: the router model gave no answer (' + (r?.reason ?? 'unknown') + (r?.status ? ' ' + r.status : '') + (r?.error ? ' ' + r.error : '') + '); nothing was decided, call it again' }
+  const raw = parseRoute(r.text)
+  if ('error' in raw) return { deny: 'coord_route: ' + raw.error }
+  const d = checkRoute(raw, cands, l.limits, owned, await routePaths($, raw))
+  if ('error' in d) return { deny: 'coord_route: ' + d.error + '; nothing was decided, call it again or route with coord_roster' }
+  return { result: routeText(d) }
+}
+
+// The paths the router named, looked at: a repo_dir's toplevel, a cwd's
+// existence.
+async function routePaths($: any, raw: Raw): Promise<Paths> {
+  const home = ctx!.home()
+  const expand = (p: string) => p.trim().replace(/^~(?=\/|$)/, home)
+  const out: Paths = {}
+  if (typeof raw.repo_dir === 'string' && raw.repo_dir.trim()) {
+    const top = await sh($, ['git', '-C', expand(raw.repo_dir), 'rev-parse', '--show-toplevel'], { timeoutMs: 3000 })
+    out.repoTop = top.ok && top.out ? top.out : null
+  }
+  if (typeof raw.cwd === 'string' && raw.cwd.trim()) out.cwdOk = (await sh($, ['test', '-d', expand(raw.cwd)], { timeoutMs: 3000 })).ok
+  return out
 }
 
 async function spawn($: any, i: any): Promise<{ result: string } | { deny: string }> {
