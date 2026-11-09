@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
-import { canonicalOf, parseProjects, trustTarget, trustedBy } from '../hooks/lib/trust'
+import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
 
@@ -296,4 +296,31 @@ test('coord: a [coord] prompt that waited in the queue loses the lines about wor
   // A gone worker stays news; other prompts pass untouched.
   expect(recheck('[coord] brief-decision-4: its session is gone (window closed or claude exited)', closed, NOW, new Map())).toContain('gone')
   expect(recheck('[brief answer] x.html: A', closed, NOW, sent)).toBe('[brief answer] x.html: A')
+})
+
+test('coord: where a worker runs: its research folder always reachable, an untrusted repository reached as an add-dir', () => {
+  const base = { code: '/h/worktrees/ar/x', research: '/h/research/x/', addDirs: ['/h/worktrees/briefs'] }
+  expect(placement({ ...base, codeTrusted: true, researchTrusted: true })).toEqual({ cwd: '/h/worktrees/ar/x', addDirs: ['/h/worktrees/briefs', '/h/research/x'] })
+  // Live: brief-decision-4 was told to read ~/research/<slug>/prompt.txt from
+  // a worktree cwd and stopped at "Read outside the working directories".
+  expect(placement({ ...base, codeTrusted: false, researchTrusted: true })).toEqual({ cwd: '/h/research/x', addDirs: ['/h/worktrees/ar/x', '/h/worktrees/briefs'], outside: '/h/worktrees/ar/x' })
+  expect(placement({ ...base, codeTrusted: false, researchTrusted: false })).toBeUndefined()
+  // The cwd itself, or a folder under it, needs no add-dir.
+  expect(placement({ code: '/h/research/x', research: '/h/research/x', addDirs: ['/h/research/x/ev', '/h/a/', '/h/a'], codeTrusted: true, researchTrusted: true })).toEqual({ cwd: '/h/research/x', addDirs: ['/h/a'] })
+})
+
+test('coord: the worker is told what its tools reach and to ask for anything else; the coordinator never sends it outside them', () => {
+  const p = workerPrompt('fix', 'cc-mods-d9', 'x', undefined, { cwd: '/h/research/x', addDirs: ['/h/worktrees/ar/x'], outside: '/h/worktrees/ar/x' })
+  expect(p).toContain('Your tools reach `/h/research/x`, `/h/worktrees/ar/x` without a permission dialog')
+  expect(p).toContain('do not read it; send the coordinator `QUESTION need <path>`')
+  expect(p).toContain('`git -C /h/worktrees/ar/x …`')
+  expect(p).toContain(".claude settings (hooks, permissions, MCP servers) do not apply")
+  const trusted = workerPrompt('fix', 'cc-mods-d9', 'x', undefined, { cwd: '/w/x', addDirs: ['/h/research/x'] })
+  expect(trusted).toContain('QUESTION need <path>')
+  expect(trusted).not.toContain('git -C')
+  const text = coordSection(on({ workers: [worker({ cwd: '/h/research/x', code: '/h/worktrees/ar/x' })] }), NOW)
+  expect(text).toContain('never tell it to read a path outside them')
+  expect(text).toContain('put a folder it needs in add_dirs at spawn')
+  expect(text).toContain('A repository Claude Code does not trust is not refused')
+  expect(text).toContain('/h/research/x (code /h/worktrees/ar/x)')
 })

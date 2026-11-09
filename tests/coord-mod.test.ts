@@ -9,7 +9,7 @@ const ledgerJson = () => JSON.stringify({ on: true, sid: 'sid-1', name: 'cc-mods
 // The worker's pane as tmux lists it (PANES_FMT): deciding a Read.
 const PANE = '%365\t@134\tw4\twaiting\taction\t/r/bd\t\tRead ~/r/prompt.txt'
 
-function stubs(on: any, o: { files: Record<string, string>; submitted: string[]; panes: () => string }) {
+function stubs(on: any, o: { files: Record<string, string>; submitted: string[]; panes: () => string; run?: (argv: string[]) => string | undefined; runs?: string[][] }) {
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? '%1' : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
@@ -25,7 +25,12 @@ function stubs(on: any, o: { files: Record<string, string>; submitted: string[];
     return { value: undefined }
   })
   const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-  on('process.run', (_$: any, e: any) => (e.argv[0] === 'tmux' && e.argv[1] === 'list-panes' ? ok(o.panes()) : ok('')))
+  on('process.run', (_$: any, e: any) => {
+    o.runs?.push(e.argv)
+    if (e.argv[0] === 'tmux' && e.argv[1] === 'list-panes') return ok(o.panes())
+    const out = o.run?.(e.argv)
+    return out === undefined ? ok('') : out === '!' ? { value: { exitCode: 1, stdout: '', stderr: 'no', isStdoutTruncated: false, isStderrTruncated: false } } : ok(out)
+  })
   on('ui.toast', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
@@ -95,4 +100,72 @@ test('coord: a [coord] prompt taken from the queue after its worker closed is dr
   // Any other plugin prompt goes through.
   await $.prompt.submit({ text: '[brief answer] x.html: A', origin: { kind: 'plugin', name: 'cc-mods' }, wait: false } as any)
   expect(submitted).toEqual(['[brief answer] x.html: A'])
+})
+
+// Spawning into /src/autoreview, a repository Claude Code has not trusted
+// (like 202 of 251 here: a trusted ~ does not cover a repository under it).
+const TRUST = '/home/u/.claude.json'
+const spawnLedger = () => JSON.stringify({ on: true, sid: 'sid-1', name: 'cc-mods-d9', limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 4 }, workers: [], log: [], at: OLD })
+function spawnRun(argv: string[]): string | undefined {
+  const inRepo = (d: string) => d.startsWith('/src/autoreview') || d.startsWith('/home/u/worktrees/autoreview')
+  if (argv[0] === 'git' && argv.includes('--show-toplevel')) return inRepo(argv[2]!) ? '/src/autoreview' : '!'
+  if (argv[0] === 'git' && argv.includes('--git-common-dir')) return inRepo(argv[2]!) ? '/src/autoreview/.git' : '!'
+  if (argv[0] === 'git' && argv.includes('symbolic-ref')) return 'origin/main'
+  if (argv[0] === 'git' && argv.includes('get-url')) return 'git@github.com:keyolk/autoreview.git'
+  if (argv[0] === 'uuidgen') return 'U-1'
+  if (argv[0] === 'tmux' && argv[1] === 'display-message') return 'main'
+  if (argv[0] === 'tmux' && argv[1] === 'new-window') return '@9 %90'
+  return undefined
+}
+
+test('coord: a repository Claude Code does not trust is not refused: the worker runs in its research folder and reaches the worktree as an add-dir', async ($, on) => {
+  // Live: coord_spawn refused briefs; a worker in ~/research/<slug> with the
+  // worktree as --add-dir then finished briefs PR #1 with no dialog.
+  const files: Record<string, string> = { [LEDGER]: spawnLedger(), [TRUST]: JSON.stringify({ projects: { '/home/u': { hasTrustDialogAccepted: true } } }) }
+  const runs: string[][] = []
+  stubs(on, { files, submitted: [], panes: () => '', run: spawnRun, runs })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const trustBefore = files[TRUST]
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/autoreview' } as any)
+  const wt = '/home/u/worktrees/autoreview/ar-x'
+  expect(r.result).toContain('cwd /home/u/research/ar-x, add-dirs ' + wt + '.')
+  expect(r.result).toContain('/src/autoreview is not trusted by Claude Code')
+  expect(r.result).toContain('`git -C ' + wt + '`')
+  expect(r.result).toContain(".claude settings (hooks, permissions, MCP) do not apply")
+  // The worktree is still made, off origin.
+  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes(wt))).toBe(true)
+  const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
+  expect(nw[nw.indexOf('-c') + 1]).toBe('/home/u/research/ar-x')
+  expect(nw.slice(-2)).toEqual(['/home/u/research/ar-x/prompt.txt', '--add-dir=' + wt])
+  const prompt = files['/home/u/research/ar-x/prompt.txt']!
+  expect(prompt).toContain('Your tools reach `/home/u/research/ar-x`, `' + wt + '` without a permission dialog')
+  expect(prompt).toContain('QUESTION need <path>')
+  expect(prompt).toContain('absolute paths under `' + wt + '`')
+  expect(prompt).toContain('git -C ' + wt)
+  expect(prompt).toContain(".claude settings (hooks, permissions, MCP servers) do not apply")
+  const w = JSON.parse(files[LEDGER]!).workers[0]
+  expect([w.cwd, w.code, w.worktree, w.addDirs]).toEqual(['/home/u/research/ar-x', wt, wt, [wt]])
+  // Trust is the person's: never written.
+  expect(files[TRUST]).toBe(trustBefore)
+})
+
+test('coord: a cwd Claude Code does not trust is reached the same way; with the research folder untrusted too, nothing starts', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: spawnLedger(), [TRUST]: JSON.stringify({ projects: { '/home/u': { hasTrustDialogAccepted: true } } }) }
+  const runs: string[][] = []
+  stubs(on, { files, submitted: [], panes: () => '', run: spawnRun, runs })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-y', model: 'sonnet', effort: 'low', brief: 'look', cwd: '/src/autoreview' } as any)
+  expect(r.result).toContain('cwd /home/u/research/ar-y, add-dirs /src/autoreview.')
+  expect(files['/home/u/research/ar-y/prompt.txt']).toContain('git -C /src/autoreview')
+  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
+  // No trusted folder to start in at all: refused before anything is made.
+  files[TRUST] = JSON.stringify({ projects: {} })
+  runs.length = 0
+  const no: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-z', model: 'sonnet', effort: 'low', brief: 'fix', repo_dir: '/src/autoreview' } as any)
+  expect(JSON.stringify(no)).toContain('/src/autoreview is not trusted, and neither is /home/u/research/ar-z')
+  expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
+  expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'new-window')).toBe(false)
+  expect(files['/home/u/research/ar-z/prompt.txt']).toBeUndefined()
 })
