@@ -188,6 +188,7 @@ export function parsePanes(out: string): PaneSeen[] {
 export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}\t#{@cc_pane_asks}'
 
 export type Change = { slug: string; sid: string; kind: 'ask' | 'held' | 'turn' | 'gone'; text: string; wake: boolean }
+const GONE = 'its session is gone'
 
 // What changed for the ledger's workers since the last look, and the ledger
 // with the new states. `wake`: worth a message to the coordinator now (a
@@ -203,7 +204,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
       // Not yet published: a worker just started has no @cc_pane_session for
       // its first seconds.
       if (now - w.at < 60_000) return w
-      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': its session is gone (window closed or claude exited)', wake: true })
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': ' + GONE + ' (window closed or claude exited)', wake: true })
       return { ...w, endedAt: now }
     }
     const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
@@ -222,9 +223,12 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
     // settles most of those in seconds with no dialog, so an action wakes the
     // coordinator only when a second tick still sees it; an ask at once. The
     // call (`asks`) is what is woken for, so its dialog after its action is
-    // not news twice.
+    // not news twice. The second tick must see the same call: every Bash
+    // under auto mode spends its first ~3 s in action (measured), so two
+    // calls 10 s apart each caught there read as one stuck ask (live: a cp to
+    // the worker's scratchpad after a python run, told as a dialog nobody saw).
     const asks = s.attention === 'ask' || s.attention === 'action'
-    const open = s.attention === 'ask' || (s.attention === 'action' && w.attention === 'action')
+    const open = s.attention === 'ask' || (s.attention === 'action' && w.attention === 'action' && w.asks === s.asks)
     const about = s.asks ?? s.attention
     if (!asks) next.asked = undefined
     if (open && w.asked !== about) {
@@ -271,6 +275,29 @@ export function current(c: Change, l: Ledger, now: number): boolean {
   if (c.kind === 'ask') return w.attention === 'ask' || w.attention === 'action'
   if (c.kind === 'held') return held(w, now)
   return rested(w)
+}
+
+export const WAKE_PREFIX = '[coord] '
+
+// The coordinator's [coord] prompt as the session takes it up. A plugin's
+// prompt waits until the session is idle, and a module reloaded mid-turn
+// (a merge on main) does not know a turn runs, so a wake can still sit in
+// the queue when its worker is closed (live: brief-decision-4's ask arrived
+// a minute after coord_close). Each line is checked again: by the change it
+// was sent for (`sent`), else, sent before a reload, by its worker's slug,
+// dropped once that worker has ended. Undefined: no line is left.
+export function recheck(text: string, l: Ledger, now: number, sent: ReadonlyMap<string, Change>): string | undefined {
+  const lines = text.split('\n')
+  if (!lines.every((x) => x.startsWith(WAKE_PREFIX))) return text
+  const kept = lines.filter((line) => {
+    const body = line.slice(WAKE_PREFIX.length)
+    const c = sent.get(body)
+    if (c) return current(c, l, now)
+    const slug = /^([a-z0-9][a-z0-9-]*)[ :]/.exec(body)?.[1]
+    const w = l.workers.filter((x) => x.slug === slug).sort((a, b) => b.at - a.at)[0]
+    return !w?.endedAt || body.includes(GONE)
+  })
+  return kept.length ? kept.join('\n') : undefined
 }
 
 // Live sessions that already work in the repository a new worker would:

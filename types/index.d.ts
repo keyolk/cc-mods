@@ -31,6 +31,7 @@ declare module 'claude-code' {
       rca: any
       moved: { prompt: string; pane: string }[]
       live: any
+      turn: { turnId: string; at: number } | null // the main turn that runs, past a module reload
       palette: { open: boolean; query: string; sel: number }
       help: boolean // the key help (alt+/) is open
       webSettings: { open: boolean; engine: 'electron' | 'chrome' | 'webkit'; device: string; rate: number }

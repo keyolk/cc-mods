@@ -198,8 +198,9 @@ routing (the coordinator chose them).
 Every 10 s it reads the workers' panes and tells the coordinator when one
 asks something, finishes a turn, exits, or when you typed in it yourself. A
 turn's end is the worker's `done`; a permission ask counts only when a second
-look still sees it (auto mode settles most in seconds), and at once when its
-dialog is drawn. The drawn dialog is heard by `bin/cc-ask-dialog`, a
+look still sees the same call (auto mode settles most in seconds: every Bash
+spends its first ~3 s deciding, so two calls caught on two looks are not one
+stuck ask), and at once when its dialog is drawn. The drawn dialog is heard by `bin/cc-ask-dialog`, a
 `PermissionRequest` command hook in `hooks/hooks.json`: on a machine with
 managed settings (and for Team and Enterprise organizations) Claude Code
 seats its built-in `cc-plugin-sec-default` outermost, and it sends every
@@ -212,7 +213,13 @@ skipped`); command hooks still do. Each worker's cc-mods names the call it waits
 what to answer, instead of "finished its turn". Parallel asked calls are kept
 apart: one that runs does not clear another's dialog. While the
 coordinator's own turn runs these wait: the next coord tool result carries
-them, and at the turn's end the ones still true arrive as one prompt. A
+them, and at the turn's end the ones still true arrive as one prompt. That the
+turn runs is kept in `$.state`, so a reload of cc-mods mid-turn (a merge on
+main) still knows it; and when the `[coord]` prompt leaves Claude Code's queue,
+its lines about workers closed since are dropped. Claude Code reloads a
+changed plugin right before one of its tools runs, so a coord tool called
+then waits (up to 20 s) for the new module to read the ledger instead of
+failing with `no tool.call hook answered this call`. A
 worker you typed in is **held** for 10 minutes: the coordinator sends it
 nothing. Workers report back with SendMessage (`READY <sha>`, `BLOCKED`,
 `QUESTION`); when SendMessage cannot reach the coordinator (its socket in

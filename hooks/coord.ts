@@ -7,7 +7,7 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, active, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -68,6 +68,20 @@ let ledger: Ledger | undefined
 let toolNames: Record<string, keyof typeof TOOLS> = {}
 let watch: { cancel: () => void } | undefined
 let ctx: Ctx | undefined
+// A reload (a merge on main) starts this module over while the engine keeps
+// the coord_* tools registered: a call in the next moment met no ledger and
+// no tool names, and went unanswered (live, three times: "no tool.call hook
+// answered this call"). Calls wait for coordStart.
+let started!: () => void
+const ready = new Promise<void>((r) => (started = r))
+const READY_WAIT_MS = 20_000
+
+// The tool by its name, whether or not this module has registered it yet.
+function kindOf(tool: string): keyof typeof TOOLS | undefined {
+  if (toolNames[tool]) return toolNames[tool]
+  const m = /^mcp__cc-mods__coord_(roster|spawn|send|close)$/.exec(tool)
+  return m ? (m[1] as keyof typeof TOOLS) : undefined
+}
 
 const dir = () => ctx!.home() + '/.claude/state/office/coord'
 const file = () => dir() + '/' + ctx!.sid() + '.json'
@@ -125,9 +139,13 @@ export function coordPrompt(now: number): string | undefined {
 
 export async function coordStart($: any, c: Ctx) {
   ctx = c
-  const n = await names($)
-  ledger = parseLedger(await readText($, file()), c.sid(), n.get(c.sid()) ?? c.sid().slice(0, 8), Date.now())
-  if (ledger.on) await turnOn($, false)
+  try {
+    const n = await names($)
+    ledger = parseLedger(await readText($, file()), c.sid(), n.get(c.sid()) ?? c.sid().slice(0, 8), Date.now())
+    if (ledger.on) await turnOn($, false)
+  } finally {
+    started()
+  }
 }
 
 async function registerTools($: any) {
@@ -189,13 +207,25 @@ async function tick($: any) {
 // still true go as one prompt.
 let pending: Change[] = []
 const closing = new Set<string>()
+// What each submitted line was for: the prompt waits in the engine's queue
+// until the session is idle, and coordRecheck looks at it again then.
+const sent = new Map<string, Change>()
 
 async function flush($: any) {
   if (!pending.length || !ctx || ctx.busy()) return
   const now = Date.now()
   const due = pending.filter((c) => ledger && current(c, ledger, now))
   pending = []
-  if (due.length) await $.prompt.submit({ text: '[coord] ' + due.map((c) => c.text).join('\n[coord] ') }).catch(() => undefined)
+  if (!due.length) return
+  for (const c of due) sent.set(c.text, c)
+  while (sent.size > 50) sent.delete(sent.keys().next().value!)
+  await $.prompt.submit({ text: WAKE_PREFIX + due.map((c) => c.text).join('\n' + WAKE_PREFIX) }).catch(() => undefined)
+}
+
+// register.ts, at a plugin prompt's prompt.submit: the [coord] text with the
+// lines no longer true taken out, undefined when none is left (dropped).
+export function coordRecheck(text: string): string | undefined {
+  return ledger && text.startsWith(WAKE_PREFIX) ? recheck(text, ledger, Date.now(), sent) : text
 }
 
 // register.ts: the coordinator's turn ended.
@@ -208,7 +238,7 @@ function withPending(r: { result: string } | { deny: string }): { result: string
   const now = Date.now()
   const due = pending.filter((c) => ledger && current(c, ledger, now))
   pending = []
-  return due.length ? { result: r.result + '\n\nMeanwhile:\n[coord] ' + due.map((c) => c.text).join('\n[coord] ') } : r
+  return due.length ? { result: r.result + '\n\nMeanwhile:\n' + WAKE_PREFIX + due.map((c) => c.text).join('\n' + WAKE_PREFIX) } : r
 }
 
 // ---- the person's command ---------------------------------------------------
@@ -267,12 +297,17 @@ export async function coordCommand($: any, args: string): Promise<string> {
 // ---- the tools --------------------------------------------------------------
 
 export function isCoordTool(tool: string): boolean {
-  return tool in toolNames
+  return kindOf(tool) !== undefined
 }
 
 export async function coordTool($: any, tool: string, input: any): Promise<{ result: string } | { deny: string }> {
-  const kind = toolNames[tool]
-  if (!ledger || !ctx) return { deny: 'coordinator mode is not ready' }
+  const kind = kindOf(tool)
+  if (!ledger || !ctx) {
+    let timer: { cancel: () => void } | undefined
+    await Promise.race([ready, new Promise<void>((r) => (timer = $.clock.after(READY_WAIT_MS, r)))])
+    timer?.cancel()
+  }
+  if (!ledger || !ctx) return { deny: 'coordinator mode is not ready (cc-mods is still loading); call again in a few seconds' }
   if (!ledger.on) return { deny: 'coordinator mode is off; only the person turns it on (/coord on)' }
   if (kind === 'roster') return withPending({ result: await roster($) })
   if (kind === 'spawn') return withPending(await spawn($, input ?? {}))
