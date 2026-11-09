@@ -9,6 +9,7 @@
 // plus pane-scoped copies (@cc_pane_state, @cc_pane_since, @cc_pane_attention,
 // @cc_pane_session) because several sessions can share a window. New options this mod adds, which no existing reader depends on:
 //
+//   @cc_pane_asks  the tool call a permission ask waits on, e.g. "Read ~/x.py"
 //   @cc_ctx     context window percent used, e.g. "42"
 //   @cc_agents  running subagents + background tasks, e.g. "2"
 //   @cc_policy  "1" when this session has any capability unlocked
@@ -50,7 +51,9 @@ export function publishArgv(pane: string, p: Publish, nowSec: number): string[][
   }
   for (const [k, v] of Object.entries(p.extra ?? {})) {
     if (!/^@cc_[a-z_]+$/.test(k)) continue
-    out.push(v === '' ? ['set-window-option', '-t', pane, '-u', k] : ['set-window-option', '-t', pane, k, v])
+    // @cc_pane_*: this session's own, where several share a window.
+    const scope = k.startsWith('@cc_pane_') ? ['set', '-p'] : ['set-window-option']
+    out.push(v === '' ? [...scope, '-t', pane, '-u', k] : [...scope, '-t', pane, k, v])
   }
   return out
 }

@@ -46,6 +46,7 @@ const TOOLS = {
         brief: { type: 'string', description: "the worker's prompt: the person's words verbatim, evidence paths, scope, when to send READY" },
         repo_dir: { type: 'string', description: 'a local git checkout to branch a worktree from' },
         cwd: { type: 'string', description: 'run in this directory instead of a new worktree' },
+        add_dirs: { type: 'array', items: { type: 'string' }, description: "existing folders outside its cwd the worker's tools may reach without a permission dialog (claude --add-dir); trust is still checked for cwd only" },
         overlap_ok: { type: 'boolean' },
       },
       required: ['slug', 'model', 'effort', 'brief'],
@@ -296,11 +297,18 @@ async function roster($: any): Promise<string> {
 }
 
 async function spawn($: any, i: any): Promise<{ result: string } | { deny: string }> {
-  const req = { slug: String(i.slug ?? ''), model: String(i.model ?? ''), effort: String(i.effort ?? ''), brief: String(i.brief ?? ''), repoDir: i.repo_dir ? String(i.repo_dir) : undefined, cwd: i.cwd ? String(i.cwd) : undefined }
+  const req = { slug: String(i.slug ?? ''), model: String(i.model ?? ''), effort: String(i.effort ?? ''), brief: String(i.brief ?? ''), repoDir: i.repo_dir ? String(i.repo_dir) : undefined, cwd: i.cwd ? String(i.cwd) : undefined, addDirs: i.add_dirs }
   const why = spawnRefusal(ledger!, req)
   if (why) return { deny: why }
   const home = ctx!.home()
   const expand = (p: string) => p.replace(/^~(?=\/|$)/, home)
+  // A worker reaching outside its cwd stops at a permission dialog nobody is
+  // watching; --add-dir lets its tools in. Only folders that exist: claude
+  // would refuse to start on one that does not.
+  const addDirs = [...new Set(((req.addDirs as string[] | undefined) ?? []).map((d) => expand(d.trim()).replace(/(.)\/+$/, '$1')))]
+  for (const d of addDirs) {
+    if (!(await sh($, ['test', '-d', d], { timeoutMs: 3000 })).ok) return { deny: 'add_dirs: ' + d + ' is not an existing directory; nothing was started' }
+  }
   let cwd = req.cwd ? expand(req.cwd) : ''
   let worktree: string | undefined
   let repoName: string | undefined
@@ -352,14 +360,14 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   for (const argv of policyArgvs(WORKER_CAPS)) {
     if (!(await ctx!.policy.run(argv, uuid))) return { deny: 'could not write the worker policy (' + argv.join(' ') + '); nothing was started' }
   }
-  const r = await sh($, ['tmux', ...workerArgv({ target: sess.out + ':', slug: req.slug, cwd, model: req.model, effort: req.effort, sid: uuid, promptFile })], { timeoutMs: 5000 })
+  const r = await sh($, ['tmux', ...workerArgv({ target: sess.out + ':', slug: req.slug, cwd, model: req.model, effort: req.effort, sid: uuid, promptFile, addDirs })], { timeoutMs: 5000 })
   if (!r.ok) return { deny: 'tmux new-window failed: ' + r.err }
   const [window, pane] = r.out.split(' ')
   const now = Date.now()
-  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, at: now }
-  await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + cwd, now))
+  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, addDirs: addDirs.length ? addDirs : undefined, at: now }
+  await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + cwd + (addDirs.length ? ' +' + addDirs.join(' +') : ''), now))
   if (ghRepo) await coordPolicy($)
-  return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + cwd + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
+  return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + cwd + (addDirs.length ? ', add-dirs ' + addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
 }
 
 // The absolute common git dir of a checkout or worktree, undefined outside git.

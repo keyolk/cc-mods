@@ -41,10 +41,12 @@ export type Worker = {
   model?: string
   effort?: Effort
   brief?: string // the prompt file
+  addDirs?: string[] // --add-dir: folders outside cwd its tools may reach
   at: number
   state?: string // the last @cc_pane_state seen
   attention?: string
-  asked?: string // the attention the coordinator was last woken for
+  asks?: string // the tool call a permission ask waits on (@cc_pane_asks)
+  asked?: string // what the coordinator was last woken for: the call, or the attention
   heldAt?: number // the person typed in the worker's own pane
   endedAt?: number
 }
@@ -121,7 +123,7 @@ export function active(l: Ledger): Worker[] {
   return l.workers.filter((w) => !w.endedAt)
 }
 
-export type SpawnRequest = { slug: string; model: string; effort: string; cwd?: string; repoDir?: string; brief: string }
+export type SpawnRequest = { slug: string; model: string; effort: string; cwd?: string; repoDir?: string; brief: string; addDirs?: unknown }
 
 // Why the coordinator may not start this worker, or undefined when it may.
 // The limits are the person's; the answer names the command that changes them.
@@ -138,6 +140,8 @@ export function spawnRefusal(l: Ledger, r: SpawnRequest): string | undefined {
     return 'effort ' + r.effort + ' is above the limit ' + l.limits.maxEffort + '; ask the person, who can change it with /coord limits effort <level>'
   if (!r.brief.trim()) return 'the brief is empty'
   if (!r.repoDir && !r.cwd) return 'give repo_dir (a worktree is made off origin) or cwd (the worker runs there as is)'
+  if (r.addDirs !== undefined && (!Array.isArray(r.addDirs) || r.addDirs.some((d) => typeof d !== 'string' || !/^[~/]/.test(d.trim()))))
+    return 'add_dirs: a list of absolute (or ~/) directory paths'
   return undefined
 }
 
@@ -157,26 +161,31 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
   )
 }
 
-export function workerArgv(o: { target: string; slug: string; cwd: string; model: string; effort: string; sid: string; promptFile: string }): string[] {
+export function workerArgv(o: { target: string; slug: string; cwd: string; model: string; effort: string; sid: string; promptFile: string; addDirs?: readonly string[] }): string[] {
   // The prompt is read from its file by the shell in the new window, so a
-  // long brief never rides on tmux's command line.
-  const cmd = 'exec claude --model "$1" --effort "$2" --permission-mode auto --disallowedTools AskUserQuestion --session-id "$3" -n "$4" "$(cat "$5")"'
-  return ['new-window', '-d', '-P', '-F', '#{window_id} #{pane_id}', '-t', o.target, '-n', 'w:' + o.slug, '-c', o.cwd, 'sh', '-c', cmd, 'worker', modelAlias(o.model), o.effort, o.sid, o.slug, o.promptFile]
+  // long brief never rides on tmux's command line. The add-dirs come after
+  // it as `--add-dir=<dir>`, put first on claude's line: --add-dir takes
+  // several values, and in its spaced form the prompt after it would be read
+  // as one more directory.
+  const cmd = 'm=$1 e=$2 s=$3 n=$4 p=$5; shift 5; exec claude "$@" --model "$m" --effort "$e" --permission-mode auto --disallowedTools AskUserQuestion --session-id "$s" -n "$n" "$(cat "$p")"'
+  const dirs = (o.addDirs ?? []).map((d) => '--add-dir=' + d)
+  return ['new-window', '-d', '-P', '-F', '#{window_id} #{pane_id}', '-t', o.target, '-n', 'w:' + o.slug, '-c', o.cwd, 'sh', '-c', cmd, 'worker', modelAlias(o.model), o.effort, o.sid, o.slug, o.promptFile, ...dirs]
 }
 
 // A pane seen in tmux, as the coordinator's watch reads it.
-export type PaneSeen = { pane: string; window: string; sid: string; state: string; attention: string; cwd: string; humanAt?: number }
+export type PaneSeen = { pane: string; window: string; sid: string; state: string; attention: string; cwd: string; humanAt?: number; asks?: string }
 
 export function parsePanes(out: string): PaneSeen[] {
   return out
     .split('\n')
     .map((l) => l.split('\t'))
     .filter((p) => p.length >= 6 && p[2])
-    .map(([pane, window, sid, state, attention, cwd, human]) => ({ pane: pane!, window: window!, sid: sid!, state: state ?? '', attention: attention ?? '', cwd: cwd ?? '', humanAt: Number(human) ? Number(human) * 1000 : undefined }))
+    .map(([pane, window, sid, state, attention, cwd, human, asks]) => ({ pane: pane!, window: window!, sid: sid!, state: state ?? '', attention: attention ?? '', cwd: cwd ?? '', humanAt: Number(human) ? Number(human) * 1000 : undefined, asks: asks?.trim() || undefined }))
 }
 // Attention from the pane's own copy, else the window's (a session from
-// before the pane copy publishes only @cc_attention).
-export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}'
+// before the pane copy publishes only @cc_attention). @cc_pane_asks: the
+// call a permission ask waits on (lib/asks.ts).
+export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}\t#{@cc_pane_asks}'
 
 export type Change = { slug: string; sid: string; kind: 'ask' | 'held' | 'turn' | 'gone'; text: string; wake: boolean }
 
@@ -197,7 +206,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
       changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': its session is gone (window closed or claude exited)', wake: true })
       return { ...w, endedAt: now }
     }
-    const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention }
+    const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
     // The brief itself arrives as the worker's first composer prompt (it is
     // claude's command-line argument), so a mark from the spawn's first
     // minute is that, not the person.
@@ -208,16 +217,19 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
       changes.push({ slug: w.slug, sid: w.sid, kind: 'held', text: w.slug + ': the person is typing in it; send it nothing until ' + new Date(held + HOLD_MS).toTimeString().slice(0, 5), wake: true })
     }
     // waiting with ask or action is not a turn's end: ask is a question its
-    // turn ended on, action a tool call put to the permission mode. Under
-    // --permission-mode auto the classifier settles most of those in seconds
-    // with no dialog, so an action wakes the coordinator only when a second
-    // tick still sees it; a question at once.
+    // turn ended on or a permission dialog drawn, action a tool call put to
+    // the permission mode. Under --permission-mode auto the classifier
+    // settles most of those in seconds with no dialog, so an action wakes the
+    // coordinator only when a second tick still sees it; an ask at once. The
+    // call (`asks`) is what is woken for, so its dialog after its action is
+    // not news twice.
     const asks = s.attention === 'ask' || s.attention === 'action'
     const open = s.attention === 'ask' || (s.attention === 'action' && w.attention === 'action')
+    const about = s.asks ?? s.attention
     if (!asks) next.asked = undefined
-    if (open && w.asked !== s.attention) {
-      next.asked = s.attention
-      changes.push({ slug: w.slug, sid: w.sid, kind: 'ask', text: w.slug + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane', wake: true })
+    if (open && w.asked !== about) {
+      next.asked = about
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'ask', text: askText(w.slug, s), wake: true })
     }
     // cc-mods publishes done (attention none) at a turn's end, and waiting
     // with none only when the session has idled 30 min after that done. A
@@ -228,6 +240,15 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
     return next
   })
   return { ledger: { ...l, workers }, changes }
+}
+
+// The person must act in the worker's pane: the text says which pane and
+// window (`tmux select-window -t @12`), and the call when it is a
+// permission ask.
+export function askText(slug: string, s: Pick<PaneSeen, 'pane' | 'window' | 'attention' | 'asks'>): string {
+  const where = slug + ' (pane ' + s.pane + ', window ' + s.window + ')'
+  if (s.asks) return where + ': asks: ' + s.asks + (s.attention === 'ask' ? ' (a permission dialog only the person can answer in that pane)' : ' (a permission ask still unsettled; a dialog there only the person can answer)')
+  return where + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane'
 }
 
 const idle = (state: string | undefined) => state === 'done' || state === 'waiting'
@@ -277,6 +298,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it removes the worktree and the window).',
     '- When the person must decide, put the question on a brief (the worker\'s visual brief, or make one): `brief ask <brief>` with the options, the recommended one marked, and this session as coordinator. It shows in the office\'s 지휘 view; you may also ask with AskUserQuestion, the recommended option first.',
+    "- `[coord] <slug> (pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`.',
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): models ' + l.limits.models.join(', ') + '; effort up to ' + l.limits.maxEffort + '; ' + l.limits.maxWorkers + ' workers.',
