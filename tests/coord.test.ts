@@ -44,6 +44,13 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   // reaches it anyway.
   const fb = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', 'python3 /p/bin/coord-report coord-sid')
   expect(fb).toContain("python3 /p/bin/coord-report coord-sid '[worker tmc-layout] <report>'")
+  // A choice for the person goes on a decision brief the office can answer,
+  // tagged with the coordinator's session id so the answer comes back to it.
+  const ask = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', undefined, undefined, 'coord-sid')
+  expect(ask).toContain('--coordinator coord-sid --worker tmc-layout')
+  expect(ask).toContain('QUESTION <one line> — <brief path>')
+  expect(ask).toContain('in ~/briefs')
+  expect(ask).toContain('Only a yes/no on one small step that is easy to undo goes as a plain QUESTION')
 })
 
 test('coord: a worker is split off the coordinator\'s pane, the longer side, a third of it; too small either way, a window', () => {
@@ -198,6 +205,13 @@ test('coord: a ledger from disk keeps sane limits; the prompt names the workers'
   expect(text).toContain('| a | owned |')
   // The office's two prompts are named, so the coordinator knows what to do with them.
   expect(text).toContain('`brief ask <brief>`')
+  // A decision is shown on a brief by default; chat alone only for a small yes/no.
+  expect(text).toContain('the default is a decision brief, not a question in chat alone')
+  expect(text).toContain('`--coordinator sid`')
+  expect(text).toContain('`brief show <brief>`')
+  expect(text).toContain('In chat write one line and the brief path')
+  expect(text).toContain('Only a yes/no on one small step that is easy to undo')
+  expect(text).toContain('do not ask it again')
   expect(text).toContain('[brief answer]')
   expect(text).toContain('Every task goes to another Claude session, however small')
   expect(text).toContain('[office→coord]')

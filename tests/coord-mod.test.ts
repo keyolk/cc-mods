@@ -132,7 +132,9 @@ test('coord: a repository Claude Code does not trust is not refused: the worker 
   const trustBefore = files[TRUST]
   const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/autoreview' } as any)
   const wt = '/home/u/worktrees/autoreview/ar-x'
-  expect(r.result).toContain('cwd /home/u/research/ar-x, add-dirs ' + wt + '.')
+  // ~/briefs exists here: it is added so the worker can write a decision brief
+  // where the office finds it.
+  expect(r.result).toContain('cwd /home/u/research/ar-x, add-dirs ' + wt + ', /home/u/briefs.')
   // The coordinator's pane is 100x30: a window instead, and the result says why.
   expect(r.result).toContain('in a new window @9 (pane %90): your pane (100x30) is too small to split')
   expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'split-window')).toBe(false)
@@ -144,15 +146,17 @@ test('coord: a repository Claude Code does not trust is not refused: the worker 
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes(wt))).toBe(true)
   const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
   expect(nw[nw.indexOf('-c') + 1]).toBe('/home/u/research/ar-x')
-  expect(nw.slice(-2)).toEqual(['/home/u/research/ar-x/prompt.txt', '--add-dir=' + wt])
+  expect(nw.slice(-3)).toEqual(['/home/u/research/ar-x/prompt.txt', '--add-dir=' + wt, '--add-dir=/home/u/briefs'])
   const prompt = files['/home/u/research/ar-x/prompt.txt']!
-  expect(prompt).toContain('Your tools reach `/home/u/research/ar-x`, `' + wt + '` without a permission dialog')
+  expect(prompt).toContain('Your tools reach `/home/u/research/ar-x`, `' + wt + '`, `/home/u/briefs` without a permission dialog')
+  // The person's answer to the worker's decision brief comes back to this coordinator.
+  expect(prompt).toContain('--coordinator sid-1 --worker ar-x')
   expect(prompt).toContain('QUESTION need <path>')
   expect(prompt).toContain('absolute paths under `' + wt + '`')
   expect(prompt).toContain('git -C ' + wt)
   expect(prompt).toContain(".claude settings (hooks, permissions, MCP servers) do not apply")
   const w = JSON.parse(files[LEDGER]!).workers[0]
-  expect([w.cwd, w.code, w.worktree, w.addDirs]).toEqual(['/home/u/research/ar-x', wt, wt, [wt]])
+  expect([w.cwd, w.code, w.worktree, w.addDirs]).toEqual(['/home/u/research/ar-x', wt, wt, [wt, '/home/u/briefs']])
   // Trust is the person's: never written.
   expect(files[TRUST]).toBe(trustBefore)
 })
@@ -164,7 +168,7 @@ test('coord: a cwd Claude Code does not trust is reached the same way; with the 
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-y', model: 'sonnet', effort: 'low', brief: 'look', cwd: '/src/autoreview' } as any)
-  expect(r.result).toContain('cwd /home/u/research/ar-y, add-dirs /src/autoreview.')
+  expect(r.result).toContain('cwd /home/u/research/ar-y, add-dirs /src/autoreview, /home/u/briefs.')
   expect(files['/home/u/research/ar-y/prompt.txt']).toContain('git -C /src/autoreview')
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
   // No trusted folder to start in at all: refused before anything is made.

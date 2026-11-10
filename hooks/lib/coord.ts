@@ -159,13 +159,16 @@ export function spawnRefusal(l: Ledger, r: SpawnRequest): string | undefined {
 // `where`: what its tools reach (lib/trust.ts placement). A read outside
 // those stops at "Read outside the working directories" even under auto
 // mode (sandbox off, managed read paths), a dialog nobody watches.
-export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string, where?: { cwd: string; addDirs: readonly string[]; outside?: string }): string {
+// `coordSid`: the coordinator's session id, which `brief ask --coordinator`
+// needs so the office sends the person's answer back to it.
+export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string, where?: { cwd: string; addDirs: readonly string[]; outside?: string }, coordSid?: string): string {
   const o = where?.outside
   return (
     brief.trim() +
     '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. Report to it with SendMessage (to: "' + coordName + '"), and never wait on the person:\n' +
     '- `READY <sha>` when the work is pushed, tests pass, and the PR body has a live run; add the PR URL and, when the person must decide or understand something, a brief made with the doc:visual-brief skill (its path).\n' +
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
+    '- When the person must decide (two or more options, a step hard to undo, a scope call), make a light decision brief with the doc:visual-brief skill in ~/briefs: the background, an options table with each option\'s cost, the recommended one. Then `brief ask <brief> --question Q --option "label: detail" ... --recommend N --coordinator ' + (coordSid ?? '<coordinator sid>') + ' --worker ' + slug + '`, and send `QUESTION <one line> — <brief path>` (or `BLOCKED <why> — <brief path>`). The coordinator shows it to the person; the answer comes back as a `[coordinator]` prompt. Only a yes/no on one small step that is easy to undo goes as a plain QUESTION.\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     'Messages from the coordinator arrive as prompts starting with `[coordinator]`. The person may also type in this pane; their words win.' +
     (where ? '\nYour tools reach `' + [where.cwd, ...where.addDirs].join('`, `') + '` without a permission dialog. A file anywhere else stops you at a dialog nobody answers: do not read it; send the coordinator `QUESTION need <path>` and go on with the rest.' : '') +
@@ -391,7 +394,9 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
-    '- When the person must decide, put the question on a brief (the worker\'s visual brief, or make one): `brief ask <brief>` with the options, the recommended one marked, and this session as coordinator. It shows in the office\'s 지휘 view; you may also ask with AskUserQuestion, the recommended option first.',
+    "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. Keep it light: the background, an options table with each option's cost, the recommended one, at most one small figure; no re-telling of the research. Use the worker's brief when it made one, else make one in ~/briefs. Then `brief ask <brief>` with the options, `--recommend N`, `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker; then `brief show <brief>` puts it in a tweb pane (the office's 지휘 view shows it too). In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
+    '- Only a yes/no on one small step that is easy to undo goes to the person in chat alone, without a brief.',
+    "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: show it (`brief show`) and tell the person in one line; do not ask it again.",
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
     "- `[coord] <slug> (pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",

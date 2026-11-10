@@ -420,6 +420,10 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   for (const d of addDirs) {
     if (!(await sh($, ['test', '-d', d], { timeoutMs: 3000 })).ok) return { deny: 'add_dirs: ' + d + ' is not an existing directory; nothing was started' }
   }
+  // A worker asks the person on a decision brief, which the office finds
+  // only in ~/briefs (brief.py ROOT): writing one there must not stop it at
+  // a dialog.
+  if ((await sh($, ['test', '-d', home + '/briefs'], { timeoutMs: 3000 })).ok && !addDirs.includes(home + '/briefs')) addDirs.push(home + '/briefs')
   let cwd = req.cwd ? expand(req.cwd) : ''
   let worktree: string | undefined
   let repoName: string | undefined
@@ -471,7 +475,7 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   }
   await sh($, ['mkdir', '-p', research])
   const promptFile = research + '/prompt.txt'
-  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid, at))
+  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid, at, ledger!.sid))
   const uuid = (await sh($, ['uuidgen'])).out.toLowerCase()
   const me = ctx!.pane() ?? ''
   const sess = await sh($, ['tmux', 'display-message', '-p', '-t', me, '#{session_name}\t#{pane_width}\t#{pane_height}'], { timeoutMs: 3000 })
