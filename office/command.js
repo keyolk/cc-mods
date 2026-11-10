@@ -10,8 +10,8 @@
 // An instruction for a worker goes to its coordinator, never to the worker:
 // typing to a worker yourself is what the office floor's card is for.
 //
-// The page knows two modes, 사무실 and 지휘; `D` or the header switch flips
-// them. Everything here reads /command; nothing in office.html depends on it
+// The page knows two modes, 사무실 and 지휘; `C` (or `D`) or the header
+// switch flips them. Everything here reads /command; nothing in office.html depends on it
 // beyond the switch, the key hook and the card's brief badge.
 
 const CMD_CSS = `
@@ -86,7 +86,7 @@ function cmdSwitch() {
   let m = document.getElementById('modes')
   if (!m) {
     m = document.createElement('span'); m.id = 'modes'; m.className = 'chip'
-    m.title = '사무실 ↔ 지휘 (D)'
+    m.title = '사무실 ↔ 지휘 (C · TWeb에서는 ⌥C)'
     const h1 = document.getElementById('office-title'); h1.after(m)
     m.onclick = (ev) => { const b = ev.target.closest('button'); if (b) setCommand(b.dataset.m === 'command') }
   }
@@ -94,6 +94,9 @@ function cmdSwitch() {
 }
 
 function setCommand(on) {
+  // Leaving the view is a close as much as ✕ is: the decisions waiting now
+  // do not open their brief again on their own when it is opened next.
+  if (cmd.on && !on) { cmd.sel = null; cmd.armed = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|') }
   cmd.on = on
   cmdEl.classList.toggle('on', on)
   try { localStorage.setItem('office.mode', on ? 'command' : 'office') } catch { /* private window: the mode is only not remembered */ }
@@ -293,17 +296,25 @@ async function cmdAnswer(p, label) {
 }
 
 // Keys while the command view is up (office.html's officeKey asks first).
-// D or Esc back to the office (Esc first closes an open brief); i to the
-// instruction box; j/k through the waiting decisions; a
-// digit arms an option and Enter sends it, so one stray key never decides.
+// C toggles the view from the floor and back, decisions waiting or not.
+// TWeb's normal mode keeps almost every bare letter for itself (c is its
+// command palette, d half a page down), so ⌥C does the same and works
+// everywhere, a text box included, as the office's other ⌥ keys do; a bare
+// C in a box is typing. D still toggles for a browser without TWeb. An open
+// card keeps C and ⌥C for its MCP reconnect. Esc goes back to the office
+// (first closing an open brief); in the instruction box or the note, Esc
+// only leaves the box and the next Esc closes. i to the instruction box;
+// j/k through the waiting decisions; a digit arms an option and Enter
+// sends it, so one stray key never decides.
 function commandKey(e, k, typing) {
-  if (e.altKey) return false
+  const cardUp = typeof card !== 'undefined' && card.style.display === 'block'
+  if (k === 'c' && (e.altKey || !typing) && !cardUp) { e.preventDefault(); setCommand(!cmd.on); return true }
+  if (e.altKey || typing) return false
   if (!cmd.on) {
-    if (!typing && k === 'd' && !e.altKey) { e.preventDefault(); setCommand(true); return true }
+    if (k === 'd') { e.preventDefault(); setCommand(true); return true }
     return false
   }
-  if (typing) return false
-  if (typeof card !== 'undefined' && card.style.display === 'block') return false
+  if (cardUp) return false
   if (typeof viewer !== 'undefined' && viewer.path) return false
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   if (k === 'Escape' && cmd.sel) return hit(cmdShut)
@@ -311,7 +322,9 @@ function commandKey(e, k, typing) {
   const list = cmd.data?.pending || []
   // j/k only: the arrows walk the floor beside the panel.
   if ((k === 'j' || k === 'k') && list.length) {
-    const i = Math.max(0, list.findIndex((p) => cmd.sel && p.file === cmd.sel.file))
+    // Nothing picked (the view was closed on them): j starts at the first, k at the last.
+    const at = list.findIndex((p) => cmd.sel && p.file === cmd.sel.file)
+    const i = at < 0 ? (k === 'j' ? -1 : 0) : at
     const n = list[(i + (k === 'j' ? 1 : -1) + list.length) % list.length]
     return hit(() => { cmd.sel = { file: n.file, path: n.path, title: n.title }; cmd.armed = null; cmdRender() })
   }

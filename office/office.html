@@ -302,7 +302,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   <button id="pickchip" class="chip" title="사람·책상 고르기 (V): 클릭으로 고르고 드래그로 묶기·창 옮기기">☑ 고르기 · V</button>
   <button id="gear" class="chip" title="설정 (,)">⚙</button>
 </header>
-<div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>?</kbd> 단축키</div>
+<div id="hint"><kbd>N</kbd> 다음 대기 · <kbd>1-9</kbd> 답 · <kbd>⌥C</kbd> 지휘 · <kbd>?</kbd> 단축키</div>
 <canvas id="c"></canvas>
 <div id="ask"></div>
 <div id="tip"></div>
@@ -342,12 +342,12 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
       <dt><kbd>0</kbd> · 더블클릭</dt><dd>전체 보기</dd>
       <dt><kbd>V</kbd> · <kbd>⇧</kbd>클릭·드래그</dt><dd>세션 고르기 → 창 옮기기 · 회의 · 공지 · 미루기</dd>
       <dt><kbd>K</kbd></dt><dd>🔑 인증 상태</dd>
-      <dt><kbd>D</kbd></dt><dd>🎖 지휘 화면 ↔ 🏢 사무실 (지휘에서: <kbd>j</kbd><kbd>k</kbd> 결정 고르기 · <kbd>1-9</kbd> 선택지 · <kbd>Enter</kbd> 보내기 · <kbd>M</kbd> 메모 · <kbd>Esc</kbd> 사무실)</dd>
+      <dt><kbd>C</kbd> <kbd>⌥C</kbd></dt><dd>🎖 지휘 화면 열기 ↔ 닫기 (결정이 없어도 열림; <kbd>⌥C</kbd>는 TWeb·입력칸에서도 통함; 대화창이 열렸으면 <kbd>Esc</kbd> 먼저; <kbd>D</kbd>도 됨. 지휘에서: <kbd>I</kbd> 지시칸 · <kbd>j</kbd><kbd>k</kbd> 결정 고르기 · <kbd>1-9</kbd> 선택지 · <kbd>Enter</kbd> 보내기 · <kbd>M</kbd> 메모 · <kbd>Esc</kbd> 브리프 닫기 → 사무실, 입력칸에서는 칸 나가기)</dd>
       <dt><kbd>,</kbd></dt><dd>⚙ 설정</dd>
       <dt><kbd>?</kbd></dt><dd>이 도움말</dd>
     </dl></section>
   </div>
-  <div class="foot">답장을 보내면 다음 대기 agent로 넘어갑니다. TWeb normal 모드는 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd> <kbd>f</kbd> <kbd>j</kbd> <kbd>k</kbd> 같은 글자를 먼저 가져가니 <kbd>i</kbd>로 넘기거나 <kbd>⌥</kbd>를 붙이세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>.</div>
+  <div class="foot">답장을 보내면 다음 대기 agent로 넘어갑니다. TWeb normal 모드는 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd> <kbd>f</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>c</kbd> <kbd>d</kbd> 같은 글자를 먼저 가져가니 <kbd>i</kbd>로 넘기거나 <kbd>⌥</kbd>를 붙이세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>.</div>
 </div>
 <script src="brands.js"></script>
 <script src="skins.js"></script>

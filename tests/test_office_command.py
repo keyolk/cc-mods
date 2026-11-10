@@ -1,10 +1,13 @@
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+import textwrap
 import urllib.request
 from unittest import mock
 
@@ -257,6 +260,75 @@ class RoutesTest(BriefsCase):
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
                 self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "recent"})
+
+
+# command.js run under node with just enough of a page for its keys: the
+# view's toggle, what it leaves to the floor and the card, and what a close
+# remembers. Rendering is stubbed out; only the key logic runs.
+KEYS_HARNESS = textwrap.dedent(r"""
+    const vm = require('vm'), fs = require('fs')
+    const el = () => ({ style: {}, dataset: {}, classList: { toggle() {} }, appendChild() {}, after() {}, querySelector: () => null, querySelectorAll: () => [], set innerHTML(v) {}, get innerHTML() { return '' } })
+    const ctx = { console, JSON, Math, setTimeout: () => 0, clearTimeout() {}, fetch: () => Promise.reject(new Error('no server')),
+      localStorage: { getItem: () => null, setItem() {} },
+      document: { createElement: el, getElementById: el, head: el(), body: el() } }
+    vm.createContext(ctx)
+    vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
+    vm.runInContext(`
+      var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0
+      cmdRender = () => { renders++ }; cmdRenderDoc = () => {}; cmdLoad = () => {}
+      function press(k, typing = false, alt = false) { let stopped = false; const took = commandKey({ altKey: alt, preventDefault: () => { stopped = true } }, k, typing); return took && stopped }
+    `, ctx)
+    const out = vm.runInContext(process.argv[3], ctx)
+    process.stdout.write(JSON.stringify(out))
+""")
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class CommandKeysTest(unittest.TestCase):
+    def run_js(self, body: str):
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(KEYS_HARNESS)
+        self.addCleanup(os.unlink, f.name)
+        js = pathlib.Path(__file__).parents[1] / "office" / "command.js"
+        r = subprocess.run(["node", f.name, str(js), "(() => {" + body + "})()"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_c_opens_the_view_without_a_decision_and_closes_it_again(self):
+        got = self.run_js("const a = press('c'), on1 = cmd.on, b = press('c'); return [a, on1, b, cmd.on]")
+        self.assertEqual(got, [True, True, True, False])
+
+    def test_d_still_toggles_and_esc_still_closes(self):
+        got = self.run_js("press('d'); const on1 = cmd.on; press('Escape'); const on2 = cmd.on; press('c'); press('d'); return [on1, on2, cmd.on]")
+        self.assertEqual(got, [True, False, False])
+
+    def test_c_is_typed_in_a_box_but_alt_c_toggles_anywhere(self):
+        # TWeb's normal mode keeps bare c (its command palette); ⌥C reaches the page.
+        got = self.run_js("const a = press('c', true), on1 = cmd.on; const b = press('c', true, true), on2 = cmd.on; const c = press('Escape', true), on3 = cmd.on; const d = press('c', false, true); return [a, on1, b, on2, c, on3, d, cmd.on]")
+        self.assertEqual(got, [False, False, True, True, False, True, True, False])
+
+    def test_an_open_card_keeps_c_for_itself(self):
+        got = self.run_js("card.style.display = 'block'; const a = press('c'), a2 = press('c', false, true), on1 = cmd.on; card.style.display = 'none'; press('c'); card.style.display = 'block'; const b = press('c'); return [a, a2, on1, b, cmd.on]")
+        self.assertEqual(got, [False, False, False, False, True])
+
+    def test_the_floor_keys_pass_through_while_the_view_is_shut_and_open(self):
+        floor = ["j", "k", "i", "n", "p", "v", "f", "0", "Tab", "ArrowUp", "?", ","]
+        got = self.run_js("const keys = " + json.dumps(floor) + "; const shut = keys.filter((k) => press(k)); press('c'); const open = keys.filter((k) => press(k)); return [shut, open]")
+        # Open, the view takes i (its box) and j/k only when a decision waits; none does here.
+        self.assertEqual(got, [[], ["i"]])
+
+    def test_closing_by_hand_does_not_reopen_the_same_decision(self):
+        got = self.run_js("""
+            cmd.data = { pending: [{ file: 'a.html', path: '/b/a.html', title: 'A', decision: { options: [] } }, { file: 'b.html', path: '/b/b.html', title: 'B', decision: { options: [] } }], coordinators: [] }
+            press('c'); cmd.sel = { file: 'a.html' }
+            press('c')
+            const shut = cmd.shut, sel = cmd.sel
+            press('c')
+            press('j'); const first = cmd.sel.file
+            return [shut, sel, first]
+        """)
+        self.assertEqual(got, ["a.html|b.html", None, "a.html"])
+
 
 if __name__ == "__main__":
     unittest.main()
