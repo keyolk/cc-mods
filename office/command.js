@@ -235,7 +235,9 @@ function cmdRender() {
   // Nothing picked yet: the row that has waited longest, when it holds a decision.
   if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) {
     const first = tblNeeds().find((R) => R.ds.length)
-    if (!(first && tblOpen(first.row.key, 'dec', false))) cmdPick(d.pending[0])
+    // With a table, a brief whose row is set aside (⏰) is not opened on its
+    // own; only a server from before `table` picks the first brief as is.
+    if (!(first && tblOpen(first.row.key, 'dec', false)) && !d.table) cmdPick(d.pending[0])
   }
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="rtabs"></div><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
@@ -258,6 +260,7 @@ function cmdRender() {
 function cmdFold(which) {
   if (which === 'others') tbl.othersOpen = !tbl.othersOpen
   else if (which === 'slx') tbl.slxOpen = !tbl.slxOpen
+  else if (which === 'dfr') tbl.dfrOpen = !tbl.dfrOpen
   cmdRender()
 }
 
@@ -428,12 +431,15 @@ function cmdRenderDoc() {
   // cmd.frame was set, and every redraw after it found no .sbrief.
   if (!bar || !doc || !dec) return
   cmdEl.classList.toggle('doc-on', !!s)
+  // A row whose time came (⏰) is down again once it was opened and left.
+  if (typeof dfrLeave === 'function') dfrLeave(s ? tblCur() : null)
   tblRenderTabs()
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
   if (s.sid) return cmdRenderCall(bar, doc, dec, s)
   if (s.review) return cmdRev() ? revRenderDoc(bar, doc, dec, s) : cmdShut()
   if (s.revs) return cmdRev() ? revRenderList(bar, doc, dec, s) : cmdShut()
   if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
+  if (s.memos) return typeof dfrRenderMemos === 'function' ? dfrRenderMemos(bar, doc, dec, s) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
   // It loads /briefs/<name>, not /file?path=: a link inside the brief
   // (← 모든 브리프, another brief) then resolves beside it in ~/briefs. Against
@@ -554,8 +560,18 @@ function cmdRenderCall(bar, doc, dec, s) {
     + (a.inbox ? '<div class="m" style="margin-bottom:4px">📨 앞서 보낸 답이 아직 전달 전: ' + cmdEsc(a.inbox.text) + '</div>' : '')
     + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div><div class="opts"></div>'
     // A choice drawn on its screen takes a key, not a prompt (as on the card).
-    + (a.dialog ? '<div class="m" style="margin-top:4px">권한 확인 창은 글로 답할 수 없습니다: 위 선택지를 누르거나, 그 pane에서 답하세요 · G로 이동</div>' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다"></div>') + '</div>'
+    + (a.dialog ? '<div class="m" style="margin-top:4px">권한 확인 창은 글로 답할 수 없습니다: 위 선택지를 누르거나, 그 pane에서 답하세요 · G로 이동</div>' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · ⌥Enter 메모로 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다 · ⌥Enter: 보내지 않고 메모로 남깁니다"><button class="act memo" title="보내지 않고 이 세션의 메모로 남기기 (⌥Enter)">📝 메모로</button></div>') + '</div>'
   const opts = dec.querySelector('.opts')
+  // 📝 메모로: the words kept on the session, not sent (defer.js). With a
+  // choice on its screen there is no box: it opens the memo tab instead.
+  const mb = dec.querySelector('.memo')
+  if (mb) mb.onclick = () => { const n = dec.querySelector('.note[data-call]'); if (typeof dfrMemoAdd === 'function') dfrMemoAdd(s.sid, (n?.value || '').trim(), n) }
+  if (a.dialog && typeof dfrMemoAdd === 'function') {
+    const b = document.createElement('button')
+    b.className = 'act'; b.textContent = '📝 메모 남기기'; b.title = '이 세션에 보내지 않고 나중에 볼 메모로'
+    b.onclick = () => { const R = tblAll().find((x) => x.row.sid === s.sid); if (R) tblShow(R, 'memo') }
+    dec.querySelector('.qa').appendChild(b)
+  }
   chs.forEach((ch, i) => {
     const b = document.createElement('button'), armed = cmd.armed && cmd.armed.call === s.sid && cmd.armed.i === i
     b.className = 'act opt' + (armed ? ' armed' : '')
@@ -604,6 +620,8 @@ function cmdCallKey(e, s) {
   if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return true }
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return false
   e.preventDefault()
+  // ⌥Enter: kept as a memo on the session (defer.js), never sent.
+  if (e.altKey) { if (typeof dfrMemoAdd === 'function') dfrMemoAdd(s.sid, e.target.value.trim(), e.target); return true }
   const text = e.target.value.trim(), ch = cmd.armed && cmd.armed.call === s.sid ? cmdChoices(cmd.ask)[cmd.armed.i] : null
   if (text) cmdReply(s, { kind: 'reply', value: text }, '답장')
   else if (ch) cmdReply(s, ch.body, ch.label)
@@ -750,6 +768,8 @@ function commandKey(e, k, typing) {
   // what waits on the person: TWeb's normal mode keeps bare i, j and k.
   if (k === 'i' && e.altKey && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdEl.querySelector('.say textarea')?.focus(); return true }
   if ((k === 'j' || k === 'k') && e.altKey && !typing && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdWalk(e, k)
+  // ⌥Z (Z outside a box): set the open row aside, as the floor's card does (defer.js).
+  if (k === 'z' && e.altKey && cmd.on && typeof dfrKey === 'function' && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); dfr.armed ? (dfr.armed = null, tblRenderTabs()) : dfrArm(); return true }
   // ⌥[ ⌥] (and ⌥Tab): the open row's tabs, where TWeb's normal mode keeps the bare keys.
   if ((k === '[' || k === ']' || k === 'Tab') && e.altKey && !typing && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdTabKey(e, k === '[' || (k === 'Tab' && e.shiftKey) ? -1 : 1)
   if (e.altKey || typing) return false
@@ -760,6 +780,8 @@ function commandKey(e, k, typing) {
   if (cardUp) return false
   if (typeof viewer !== 'undefined' && viewer.path) return false
   const hit = (fn) => { e.preventDefault(); fn(); return true }
+  // ⏰ 나중에's choices, while up, take the digits, Enter and Esc first; Z puts them up.
+  if (typeof dfrKey === 'function' && dfrKey(k, hit)) return true
   // A trigger's armed choice (slx.js) backs out first: 3 and 4 take numbers of their own.
   if (k === 'Escape' && cmd.sel?.slx && cmd.armed?.slx) return hit(() => { cmd.armed = null; cmdRenderDoc() })
   if (k === 'Escape' && cmd.sel) return hit(cmdShut)
@@ -787,6 +809,7 @@ function commandKey(e, k, typing) {
   if (q && /^[1-9]$/.test(k) && +k <= q.options.length) return hit(() => { cmd.armed = { q: q.id, i: +k - 1 }; cmdRenderDoc(); toast('Enter로 「' + q.options[+k - 1].label + '」 보내기') })
   if (q && k === 'Enter' && cmd.armed && cmd.armed.q === q.id) return hit(() => cmdAnswer(p, q, { label: q.options[cmd.armed.i].label }))
   if (k === 'i') return hit(() => cmdEl.querySelector('.say textarea')?.focus())
+  if (k === 'm' && cmd.sel?.memos) return hit(() => cmdEl.querySelector('.memoadd textarea')?.focus())
   if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-q="' + (q ? q.id : '') + '"]')?.focus())
   // Everything else goes to the floor, which stays in sight beside the panel.
   return false

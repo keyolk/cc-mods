@@ -721,8 +721,8 @@ KEYS_HARNESS = textwrap.dedent(r"""
       localStorage: { getItem: () => null, setItem() {} },
       document: { createElement: el, getElementById: el, head: el(), body: el() } }
     vm.createContext(ctx)
-    // review.js, crew.js, look.js, briefline.js, slx.js and table.js come first, as office.html loads them.
-    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js', 'table.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
+    // review.js, crew.js, look.js, briefline.js, slx.js, table.js and defer.js come first, as office.html loads them.
+    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js', 'table.js', 'defer.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
