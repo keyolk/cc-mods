@@ -363,6 +363,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <script src="slx.js"></script>
 <script src="table.js"></script>
 <script src="defer.js"></script>
+<script src="paths.js"></script>
 <script src="command.js"></script>
 <script>
 // The page's choices live in office.py's prefs.json as well as here (see
@@ -1922,7 +1923,7 @@ function md(src) {
 // A file the session made, shown beside the card: HTML, SVG, PDF in a sandboxed
 // frame, images as they are, Markdown rendered, text as text. `↗ 밖으로` opens
 // it where links go (the browser, TWeb, Finder); Esc closes it.
-const VIEW_EXT = /\.(html?|svg|png|jpe?g|gif|webp|pdf|md|txt|log|json|csv|ya?ml)$/i
+const VIEW_EXT = /\.(html?|svg|png|jpe?g|gif|webp|pdf|md|txt|log|json|csv|ya?ml|py|sh|bash|zsh|fish|[mc]?js|tsx?|jsx|go|rs|rb|java|kt|swift|[ch]|cc|cpp|hpp|s?css|sql|toml|ini|conf|cfg|tf|hcl|xml|diff|patch|jsonl|lua|svelte|vue|proto|graphql|rst|tsv)$/i
 const canView = (p) => VIEW_EXT.test(p) || /\/exp\/[^/]+\/?$/.test(p)
 const viewer = document.createElement('div'); viewer.id = 'viewer'; document.body.appendChild(viewer)
 async function viewFile(path, sid = cardSid) {

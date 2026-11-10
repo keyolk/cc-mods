@@ -37,6 +37,7 @@ import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import command  # noqa: E402 - office/command.py, briefs waiting on a decision
 import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 import crew  # noqa: E402 - office/crew.py, ending a session or releasing it from the command view
+import paths  # noqa: E402 - office/paths.py, which files the office may show
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
@@ -789,29 +790,50 @@ def related(sid: str, kind: str | None = None, limit: int = 10) -> list[dict]:
     return out[:limit]
 
 
-# A file a session made or was handed, shown inside the office. Only paths in
-# that session's outputs (or under one of its exp folders) are served, never a
-# path the page makes up. Served in a sandbox (an opaque origin, no access to
-# the office page or its token), so an HTML report can run its scripts without
-# reaching the office's actions.
-VIEW_TYPES = {".html": "text/html", ".htm": "text/html", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-              ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf", ".md": "text/markdown", ".txt": "text/plain", ".log": "text/plain",
-              ".json": "application/json", ".csv": "text/plain", ".yaml": "text/plain", ".yml": "text/plain"}
-VIEW_MAX = 20 * 1024 * 1024
+# A file a session made or was handed, shown inside the office (viewable says
+# which). Served in a sandbox (an opaque origin, no access
+# to the office page or its token), so an HTML report can run its scripts
+# without reaching the office's actions.
+VIEW_TYPES = paths.VIEW_TYPES
+VIEW_MAX = paths.VIEW_MAX
 
 
 NO_FRAME = {"Content-Security-Policy": "frame-ancestors 'none'", "X-Frame-Options": "DENY"}
 
 
+def _said(sid: str) -> bytes:
+    # The session's whole transcript, for paths.mentioned: a path it never
+    # wrote is not one the page may ask for. Read per request (tens of ms for
+    # a long one); a session that is gone has none.
+    t = transcript(sid) if re.fullmatch(r"[0-9a-f-]{8,64}", sid or "") else None
+    try:
+        with open(t, "rb") as f:
+            return f.read()
+    except (OSError, TypeError):
+        return b""
+
+
+def _cwd(sid: str) -> str | None:
+    return (pane_of(sid) or {}).get("cwd") if re.fullmatch(r"[0-9a-f-]{8,64}", sid or "") else None
+
+
 def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
     # A brief (~/briefs/*.html) is anyone's to read: a coordinator's question
-    # is shown beside every session it is about.
+    # is shown beside every session it is about. Any other file is one of the
+    # session's outputs (or under one of its exp folders), the meeting
+    # minutes, or a path its transcript names (a 👁 link in an answer); never
+    # a credential (paths.denied), whichever of these it is.
     brief = command.brief_path(path)
     path = os.path.realpath(os.path.expanduser(path))
-    known = [] if brief else [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
-    known.append(os.path.realpath(MEET_DIR))  # meeting minutes are anyone's to read
-    if not brief and not any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known):
-        return 403, b"not one of this session's files", "text/plain", {}
+    if not brief:
+        known = [os.path.realpath(os.path.expanduser(o.get("path") or "")) for o in related(sid, "all", 1000) if o.get("path")]
+        known.append(os.path.realpath(MEET_DIR))  # meeting minutes are anyone's to read
+        ok = any(path == k or (os.path.isdir(k) and path.startswith(k + os.sep)) for k in known)
+        if not ok:
+            real = paths.resolve(path)
+            ok = bool(real) and paths.mentioned(_said(sid), real, _cwd(sid))
+        if not ok or paths.denied(path):
+            return 403, b"not one of this session's files", "text/plain", {}
     if os.path.isdir(path):
         readme = os.path.join(path, "README.md")
         if not os.path.isfile(readme):
@@ -830,6 +852,25 @@ def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
     if kind.startswith("text/") or kind == "application/json":
         kind += "; charset=utf-8"
     return 200, body, kind, {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
+
+
+# The paths written in an answer that the office would show, each mapped to
+# its real path (paths.js asks once per answer): one paths.resolve passes and
+# the session's transcript names. Relative ones are read from the session's
+# folder. What it leaves out says nothing of why.
+def shown_paths(sid: str, cands: list[str]) -> dict:
+    cwd = _cwd(sid) if any(not (c.startswith("/") or c.startswith("~")) for c in cands) else None
+    said, out = None, {}
+    for c in cands[:200]:
+        real = command.brief_path(c)
+        if not real:
+            real = paths.resolve(c, cwd)
+            if real:
+                said = _said(sid) if said is None else said
+                real = real if paths.mentioned(said, real, cwd) else None
+        if real:
+            out[c] = real
+    return out
 
 
 # Where a pane's links go now (tmux-chrome's answer for it), for the card's
@@ -1681,12 +1722,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/next":
             NEXT["n"] += 1
             return self.send(204, b"", "text/plain")
-        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs"):
+        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs", "/paths"):
             return self.send(403, b"forbidden", "text/plain")
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 20_000)) or b"{}")
         except ValueError:
             return self.send(400, b"bad json", "text/plain")
+        if self.path == "/paths":
+            ok = isinstance(body, dict) and isinstance(body.get("paths"), list)
+            cands = [c for c in body.get("paths") or [] if isinstance(c, str)] if ok else []
+            return self.send(200 if ok else 400, json.dumps(shown_paths(str(body.get("sid") or ""), cands) if ok else {}).encode(), "application/json")
         if self.path == "/prefs":
             ok = isinstance(body, dict) and set_pref(body.get("key"), body.get("value"))
             return self.send(204 if ok else 400, b"", "text/plain")
@@ -1707,6 +1752,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(*command.serve_brief(name))
         if self.path.startswith("/file"):
             from urllib.parse import parse_qs, urlparse
+
+            # Another site's page can point an <img> here: it reads nothing,
+            # but its load or error would tell it which files exist.
+            if self.headers.get("Sec-Fetch-Site") == "cross-site":
+                return self.send(403, b"forbidden", "text/plain")
 
             q = parse_qs(urlparse(self.path).query)
             code, body, kind, extra = viewable((q.get("sid") or [""])[0], (q.get("path") or [""])[0])
@@ -1751,7 +1801,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")
