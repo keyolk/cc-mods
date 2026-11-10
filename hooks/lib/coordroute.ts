@@ -91,7 +91,7 @@ const SYSTEM = [
   '- Choose spawn only when no live session fits, or the one that fits is working (busy).',
   '- Never "send" to an observed session; for those the action is "adopt". "typed": true (the person prompted it lately) does not stop a send.',
   '- spawn is not possible when the owned workers are at maxWorkers: then pick a fitting session, or "unsure". Adopted sessions never count toward maxWorkers.',
-  '- With spawn, also pick "window" from places: a window whose workers (by slug) work on the same repository or task; else the coordinator\'s window; "new" when no listed window fits or the work is unrelated to all of them.',
+  '- With spawn, also pick "window" from places: only a window where every session in its "work" works on the same repository or task folder as the new worker; "new" when no listed window does. A window holding any other work is never right, the coordinator\'s included: one window holds one work. A pick that breaks this is dropped after you answer.',
   'Shape: {"action":"send"|"adopt"|"spawn"|"unsure","target":"<slug or name>","repo_dir":"<path>","cwd":"<path>","model":"haiku|sonnet|opus","effort":"low|medium|high|xhigh|max","window":"<a places window id>|new","reason":"<one sentence>"}. Leave out keys that do not apply.',
 ].join('\n')
 
@@ -136,7 +136,10 @@ const str = (x: unknown) => (typeof x === 'string' ? x.trim() : '')
 
 // A window that is not one of `places` is dropped, not an error: the rest of
 // the answer stands and coord_spawn places the worker by its default.
-export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: number, paths: Paths, places: Place[] = [{ window: 'new', kind: 'new' }]): Decision | { error: string } {
+// `places` here are the ones that fit the repository or folder the router
+// chose (coordplace.ts spots with its work); `away` says why a window it
+// picked does not.
+export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: number, paths: Paths, places: Place[] = [{ window: 'new', kind: 'new' }], away: readonly { window: string; why: string }[] = []): Decision | { error: string } {
   const action = str(raw.action)
   const reason = str(raw.reason)
   if (!reason) return { error: 'the router gave no reason' }
@@ -162,7 +165,8 @@ export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: 
   if (!isEffort(effort)) return { error: 'the router chose effort ' + JSON.stringify(raw.effort) + '; one of ' + EFFORTS.join(', ') }
   if (EFFORTS.indexOf(effort) > EFFORTS.indexOf(limits.maxEffort)) return { error: 'the router chose effort ' + effort + ', above the limit ' + limits.maxEffort }
   const win = str(raw.window)
-  const place = win && places.some((p) => p.window === win) ? { window: win } : win ? { placeNote: 'the router chose window ' + JSON.stringify(win) + ', not one of ' + places.map((p) => p.window).join(', ') + '; coord_spawn places it by default' } : {}
+  const why = away.find((a) => a.window === win)?.why
+  const place = win && places.some((p) => p.window === win) ? { window: win } : win ? { placeNote: 'the router chose window ' + JSON.stringify(win) + ', ' + (why ? 'but ' + why : 'not one of ' + places.map((p) => p.window).join(', ')) + '; coord_spawn places it by default' } : {}
   return repoDir ? { action, repoDir: paths.repoTop!, model, effort, ...place, reason } : { action, cwd, model, effort, ...place, reason }
 }
 

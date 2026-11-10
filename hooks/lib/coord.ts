@@ -24,6 +24,7 @@
 // Pure: the mod does the I/O.
 
 import type { Cap, CapValue, Policy } from './policy'
+import { ONE_BROWSER } from './webpane'
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
@@ -289,6 +290,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     '- Ask the person once per task where you can: early on, list every open question the work raises, and go on with what needs no answer; then ask them together, one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path. Ask alone and at once only what stops the work entirely.\n' +
     '- When a skill you use fails you (a script fails, its guidance is wrong, a case it does not cover), work around it to finish, and add a line to your READY or BLOCKED report: `SKILL <skill name>: <the problem in one line> — <evidence: the command and its error, or file:line>`. Do not edit the skill here: fixing it is a separate task.\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
+    ONE_BROWSER + '\n' +
     'Messages from the coordinator arrive as prompts starting with `[coordinator]`. The person may also type in this pane; their words win.' +
     (where ? '\nYour tools reach `' + [where.cwd, ...where.addDirs].join('`, `') + '` without a permission dialog. A file anywhere else stops you at a dialog nobody answers: do not read it; send the coordinator `QUESTION need <path>` and go on with the rest.' : '') +
     (o ? '\nThe code is in `' + o + '`, outside your cwd: Claude Code does not trust that repository, so you run in `' + where!.cwd + '` and reach it as an added directory. Read, Edit and Write it by absolute paths under `' + o + '`; run git as `git -C ' + o + ' …` and other commands as `cd ' + o + ' && …` in the same Bash call. That repository\'s .claude settings (hooks, permissions, MCP servers) do not apply here, and its CLAUDE.md is not loaded: read it yourself when it has one.' : '')
@@ -341,15 +343,17 @@ export function titleArgv(pane: string, slug: string): string[] {
 // What coord_close kills: the pane (or fallback window) coord_spawn made,
 // never the coordinator's own pane or window. A worker from before `made`
 // was recorded had its own window. A fallback window another live worker
-// was split into since (`others`) loses only this worker's pane. Undefined:
-// nothing of the worker's to kill.
-export function closeArgv(w: Worker, coord: { pane?: string; window?: string }, others: readonly Worker[] = []): string[] | undefined {
+// was split into since (`others`), or any other Claude session's pane is in
+// now (`seen`: a session the person moved or split there), loses only this
+// worker's pane. Undefined: nothing of the worker's to kill.
+export function closeArgv(w: Worker, coord: { pane?: string; window?: string }, others: readonly Worker[] = [], seen: readonly Pick<PaneSeen, 'window' | 'sid'>[] = []): string[] | undefined {
   const m: Made | undefined = w.made ?? (w.relation === 'owned' && w.window ? { kind: 'window', pane: w.pane ?? '', window: w.window } : undefined)
   if (!m) return undefined
   const pane = () => (m.pane && m.pane !== coord.pane ? ['kill-pane', '-t', m.pane] : undefined)
   if (m.kind === 'pane') return pane()
   if (m.window === coord.window || (m.pane && m.pane === coord.pane)) return undefined
   if (others.some((o) => o.sid !== w.sid && (o.made?.window ?? o.window) === m.window)) return pane()
+  if (seen.some((s) => s.window === m.window && s.sid && s.sid !== w.sid)) return pane()
   return ['kill-window', '-t', m.window]
 }
 
@@ -521,7 +525,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean', review
     'You are `' + l.name + '`, the coordinator. You orchestrate, verify, merge, clean up and report; you do not do the work yourself.',
     "- Every task goes to another Claude session, however small: a one-line fix, a config change, a lookup across files, a brief. Do not edit files, write code, run the task's builds or tests, or open PRs yourself. Route each task with `coord_route` first (task: the person's words): it reads every live session and answers send, adopt, spawn or unsure with a reason. Act on that answer: send → `coord_send`; adopt (an observed session) → ask the person to `/coord adopt <pane>`, then `coord_send`; spawn → `coord_spawn` with its repo_dir or cwd, model, effort and window. Ask the person where a task goes only when the router answers unsure; when the call fails, call it once more, then route by `coord_roster` yourself. Your own tools are for routing and checking: `coord_roster`, reading a worker's diff, report or CI to verify it, merging, and answering the person about status.",
     '- Only when the person says so in this turn ("직접 해", "do it yourself") do the work here; a coordinator that cannot spawn (limits reached) says so and asks, it does not fall back to doing the work.',
-    '- Start workers only with the `coord_spawn` tool (never tmux or claude from Bash). Each gets a worktree off origin and a pane where the person sees it: `coord_route` lists the places (your window, a window that already holds your workers, or new: at most 2 workers a window, 60 columns and 15 rows left on each side of a split) and picks one with the session; pass its window to `coord_spawn` as `window`. A place that no longer has room falls back to your window, else a new window; the result says which. `coord_route` already looked for a live session working there; `coord_spawn` still refuses one in the very directory, and then the person decides whether to adopt it.',
+    '- Start workers only with the `coord_spawn` tool (never tmux or claude from Bash). Each gets a worktree off origin and a pane where the person sees it: `coord_route` lists the places (your window, a window that already holds your workers, or new: at most 2 workers a window, 60 columns and 15 rows left on each side of a split) and picks one with the session; pass its window to `coord_spawn` as `window`. One window holds one work: a worker goes beside sessions on the same repository or task folder only, never into a window (yours included) holding other work, which gets a new window; both tools drop such a window by rule. A place that no longer has room falls back to your window, else a new window; the result says which. `coord_route` already looked for a live session working there; `coord_spawn` still refuses one in the very directory, and then the person decides whether to adopt it.',
     "- A brief has the person's words verbatim, the evidence paths, the scope, and when to send READY.",
     (l.limits.autoAdopt
       ? '- Every live session is your adopted worker while the mode is on (relation `adopted (auto)`), except another coordinator, its owned workers, and a session handed back: you may `coord_send` it a task that fits its directory and recent work. The ones listed as the person\'s are sessions the person drives that you have not instructed yet; their turns do not wake you. Adopted sessions do not count toward the worker limit. `coord_close` on an adopted one hands it back to the person (the pane stays) and it is not adopted again.'
@@ -541,6 +545,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean', review
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
     "- `[coord] <slug> (pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is the person\'s instruction to you, typed in the office without picking a session: call `coord_route` with the text and act on its answer; never ask the person which session to use.',
+    ONE_BROWSER + ' Tell workers the same when a brief needs a browser.',
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): ' + limitsText(l.limits),
     rows.length ? '| worker | relation | model/effort | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',

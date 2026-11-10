@@ -26,6 +26,7 @@ import { WEB_IDLE, engineForUrl, engineOfTarget, formatEngineRules, parseEngine,
 import { WEB_SETTINGS_ROWS, pickRows, renderWeb, type WebSettings } from './views/web'
 import { renderWebSide } from './views/webside'
 import { LINK_RENEW_MS, SIDE_EMPTY, activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps, type AutoStep, type SidePane, type SideWeb, type TwebLink } from './lib/webside'
+import { paneOpens, secondPaneDeny } from './lib/webpane'
 import { renderHelp } from './views/help'
 import { helpSections } from './lib/help'
 import { COCKPIT_ACTION, GROW_ACTION, PALETTE_ACTION, catchAll, paletteNextKey, renderPalette } from './views/palette'
@@ -3850,6 +3851,12 @@ export function register(on: any, options: Record<string, unknown> = {}) {
           'Tell the user what you need and that they can grant it by typing /policy themselves (for example `/policy allow merge owner/repo 15m`). ' +
           'Do not suggest running the script with `!` either: that path bypasses the timed, scoped grant.',
       }
+    }
+    // One tweb pane per window (lib/webpane.ts): the panes are listed only
+    // for a command that would open one.
+    if (paneOpens(command).length) {
+      const why = secondPaneDeny(command, (await listSide($)).panes)
+      if (why) return { deny: why }
     }
     const cred = credentialFor(command)
     if (cred && interactive) {

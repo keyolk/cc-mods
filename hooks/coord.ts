@@ -12,7 +12,7 @@ import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '.
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
 import { ROUTER_MODEL, candidates, checkRoute, parsePrompts, parseRoute, routeRequest, routeText, type Paths, type Raw } from './lib/coordroute'
-import { BOX_FMT, parseBoxes, pick, places, spots, type PaneBox } from './lib/coordplace'
+import { BOX_FMT, busyOf, parseBoxes, pick, places, spots, type Fit, type PaneBox, type Work } from './lib/coordplace'
 import type { Policy } from './lib/policy'
 import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, upsert, type ReviewFile } from './lib/coordreview'
 
@@ -45,7 +45,7 @@ const TOOLS = {
   spawn: {
     name: 'coord_spawn',
     description:
-      "Coordinator mode: start a worker claude in a pane split off yours in your tmux window (the person sees it there), in a window that already holds your workers, or in a new window: pass coord_route's window as `window`; without it, or when that place no longer has room, your window when it has room (at most 2 workers, 60 columns and 15 rows left on each side), else a new window. With repo_dir, a worktree is made off origin's default branch at ~/worktrees/<repo>/<slug> on branch <slug>; with cwd, it runs there as is. The brief is saved to ~/research/<slug>/prompt.txt (always reachable) and reporting instructions are appended. In a repository (or cwd) Claude Code does not trust, the worker runs in ~/research/<slug> with the code as an add-dir, and its prompt says to use absolute paths and git -C. Refused above the person's limits, or when a live session already works in that directory unless overlap_ok (set it only after the person said to start another anyway).",
+      "Coordinator mode: start a worker claude in a pane split off yours in your tmux window (the person sees it there), in a window that already holds your workers, or in a new window: pass coord_route's window as `window`; without it, or when that place no longer has room, your window when it has room (at most 2 workers, 60 columns and 15 rows left on each side), else a new window. A window is used only when every session in it works on the same repository (or task folder) as the worker, your own window included; one holding other work is never split. With repo_dir, a worktree is made off origin's default branch at ~/worktrees/<repo>/<slug> on branch <slug>; with cwd, it runs there as is. The brief is saved to ~/research/<slug>/prompt.txt (always reachable) and reporting instructions are appended. In a repository (or cwd) Claude Code does not trust, the worker runs in ~/research/<slug> with the code as an add-dir, and its prompt says to use absolute paths and git -C. Refused above the person's limits, or when a live session already works in that directory unless overlap_ok (set it only after the person said to start another anyway).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -450,7 +450,12 @@ async function route($: any, i: any): Promise<{ result: string } | { deny: strin
   ])
   const cands = candidates(seen, l, n, { titles, prompts, repos }, Date.now())
   const owned = active(l).filter((w) => w.relation === 'owned').length
-  const room = places(spots(l, await coordBox($), await boxes($)))
+  const all = await boxes($)
+  const box = coordBox(all)
+  // Each place is shown with the work of the sessions in it; which of them
+  // fit is known once the router has chosen the repository, below.
+  const fit = await fitOf($, seen, box.window)
+  const room = places(spots(l, box, all, fit))
   const ask = routeRequest(task, cands, l.limits, owned, room)
   let r: any
   try {
@@ -461,7 +466,12 @@ async function route($: any, i: any): Promise<{ result: string } | { deny: strin
   if (!r?.isAnswered) return { deny: 'coord_route: the router model gave no answer (' + (r?.reason ?? 'unknown') + (r?.status ? ' ' + r.status : '') + (r?.error ? ' ' + r.error : '') + '); nothing was decided, call it again' }
   const raw = parseRoute(r.text)
   if ('error' in raw) return { deny: 'coord_route: ' + raw.error }
-  const d = checkRoute(raw, cands, l.limits, owned, await routePaths($, raw), room)
+  const paths = await routePaths($, raw)
+  // A window holding other work than the chosen repository or folder is
+  // dropped here, by rule, whatever the router picked.
+  const want = raw.action === 'spawn' ? await wantOf($, raw, paths) : undefined
+  const fitted = want ? spots(l, box, all, { ...fit, want: [want] }) : undefined
+  const d = checkRoute(raw, cands, l.limits, owned, paths, fitted ? places(fitted) : room, fitted?.away)
   if ('error' in d) return { deny: 'coord_route: ' + d.error + '; nothing was decided, call it again or route with coord_roster' }
   return { result: routeText(d) }
 }
@@ -472,10 +482,40 @@ async function boxes($: any): Promise<PaneBox[]> {
 }
 
 // The coordinator's pane, its window and size.
-async function coordBox($: any): Promise<{ pane: string; window: string; width: number; height: number }> {
+function coordBox(all: PaneBox[]): { pane: string; window: string; width: number; height: number } {
   const me = ctx!.pane() ?? ''
-  const b = (await boxes($)).find((x) => x.pane === me)
+  const b = all.find((x) => x.pane === me)
   return { pane: me, window: b?.window ?? '', width: b?.width ?? 0, height: b?.height ?? 0 }
+}
+
+// What a directory works on (lib/coordplace.ts Work): the main checkout of
+// its git repository and that repository's GitHub owner/name.
+async function workOf($: any, d: string): Promise<Work> {
+  const common = await commonDir($, d)
+  if (!common) return { dir: d }
+  const origin = await sh($, ['git', '-C', d, 'remote', 'get-url', 'origin'], { timeoutMs: 3000 })
+  const repo = origin.ok ? repoFromRemote(origin.out) : undefined
+  return { dir: d, common: canonicalOf(common) ?? common, ...(repo ? { repo } : {}) }
+}
+
+// The sessions in the windows a worker may be split into (the
+// coordinator's, and the ones it made for its workers), with their work.
+async function fitOf($: any, seen: PaneSeen[], coordWindow: string, want?: Work[]): Promise<Fit> {
+  const mine = active(ledger!)
+  const wins = new Set([coordWindow, ...mine.filter((w) => w.relation === 'owned' && w.made?.kind === 'window').map((w) => w.made!.window)])
+  const here = seen.filter((s) => wins.has(s.window))
+  const code = new Map(mine.map((w) => [w.sid, w.code]))
+  const dirs = [...new Set(here.flatMap((s) => [s.cwd, code.get(s.sid) ?? '']).filter(Boolean))]
+  const [n, works] = await Promise.all([names($), Promise.all(dirs.map(async (d) => [d, await workOf($, d)] as const)).then((xs) => new Map(xs))])
+  return { sessions: busyOf(here, ledger!, n, works), home: ctx!.home(), ...(want ? { want } : {}) }
+}
+
+// The work of the worker the router chose to spawn: its repo_dir's checkout,
+// or its cwd.
+async function wantOf($: any, raw: Raw, paths: Paths): Promise<Work | undefined> {
+  if (paths.repoTop) return workOf($, paths.repoTop)
+  if (typeof raw.cwd === 'string' && raw.cwd.trim() && paths.cwdOk) return workOf($, raw.cwd.trim().replace(/^~(?=\/|$)/, ctx!.home()))
+  return undefined
 }
 
 // The paths the router named, looked at: a repo_dir's toplevel, a cwd's
@@ -572,7 +612,11 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   // in a window it made, as coord_route chose; checked again against tmux
   // now (lib/coordplace.ts).
   const all = await boxes($)
-  const room = spots(ledger!, { pane: me, window: all.find((b) => b.pane === me)?.window ?? '', width, height }, all)
+  const myWindow = all.find((b) => b.pane === me)?.window ?? ''
+  // Only beside sessions on the same work: the repository (or folder) the
+  // worker's code is in.
+  const fit = await fitOf($, seen, myWindow, [await workOf($, repoTop || code)])
+  const room = spots(ledger!, { pane: me, window: myWindow, width, height }, all, fit)
   const placed = pick(i.window === undefined ? undefined : String(i.window), room)
   const split = placed.spot?.split
   // The worker's policy is written under its session id before it starts,
@@ -689,7 +733,7 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
   // Only what coord_spawn made, and never this session's own pane or window.
   const me = ctx!.pane()
   const myWindow = me ? (await sh($, ['tmux', 'display-message', '-p', '-t', me, '#{window_id}'], { timeoutMs: 3000 })).out : ''
-  const kill = closeArgv(w, { pane: me, window: myWindow || undefined }, active(ledger!).filter((x) => x.relation === 'owned'))
+  const kill = closeArgv(w, { pane: me, window: myWindow || undefined }, active(ledger!).filter((x) => x.relation === 'owned'), await panes($))
   if (kill) await sh($, ['tmux', ...kill], { timeoutMs: 3000 })
   let note = ''
   if (w.worktree) {
