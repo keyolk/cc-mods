@@ -337,7 +337,7 @@ async function slxDo(s, act, extra = {}, label = '') {
 
 // [slx 켜기] / [slx 다시 시작]: slx starts its TUI (replacing an older one
 // that runs), then, with `then`, opens that trigger's session: the person
-// pressed once. The press waits for slx (up to ~20 s).
+// pressed once. The press waits for slx (up to ~35 s).
 async function slxUp(then) {
   if (slxUi.upping) return
   const stale = !!slxStale()

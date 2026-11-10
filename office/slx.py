@@ -68,8 +68,9 @@ TEXT_MAX = 4000
 _cache: dict = {"at": 0.0, "out": None}
 # binary path -> (mtime, its usage text)
 _knows: dict[str, tuple[float, str]] = {}
-# `slx up` waits up to 15 s for the TUI, and -replace up to 5 s more for the old one to quit.
-UP_TIMEOUT = 30
+# `slx up` waits up to 30 s for the TUI (reading the Meerkat key may ask
+# gpg-agent), and -replace up to 5 s more for the old one to quit.
+UP_TIMEOUT = 45
 # A `slx open` right after up: tries, while slx says it has no TUI yet.
 OPEN_TRIES = 3
 
@@ -310,9 +311,11 @@ def _up_error(out: str) -> str:
     if m := re.search(r"exited at start: (.*)", out):
         return "slx가 켜지자마자 꺼졌습니다: " + m.group(1)[:200]
     if "did not start taking requests" in out:
-        return "slx를 띄웠지만 15초 안에 요청을 받지 않습니다: slx tmux 세션의 inbox 창을 보세요"
+        return "slx를 띄웠지만 30초 안에 요청을 받지 않습니다: slx tmux 세션의 inbox 창을 보세요"
     if "no tmux server" in out:
         return "office가 tmux 밖에서 돌고 있어 slx를 띄울 수 없습니다"
+    if "another slx up is running" in out:
+        return "다른 slx 켜기가 아직 끝나지 않았습니다: 잠시 뒤 다시 누르세요"
     return (out.strip().splitlines() or ["slx up 실패"])[-1][:300]
 
 
