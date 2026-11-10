@@ -232,13 +232,7 @@ async function cmdAsk() {
 
 function cmdRender() {
   const d = cmd.data || { pending: [], coordinators: [] }
-  // Nothing picked yet: the row that has waited longest, when it holds a decision.
-  if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) {
-    const first = tblNeeds().find((R) => R.ds.length)
-    // With a table, a brief whose row is set aside (⏰) is not opened on its
-    // own; only a server from before `table` picks the first brief as is.
-    if (!(first && tblOpen(first.row.key, 'dec', false)) && !d.table) cmdPick(d.pending[0])
-  }
+  cmdFirstPick(d)
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="rtabs"></div><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
@@ -255,6 +249,15 @@ function cmdRender() {
   cmdRenderBriefs()
   cmdRenderSay()
   cmdRenderDoc()
+}
+
+// Nothing picked yet: the row that has waited longest, when it holds a
+// decision. With a table, a brief whose row is set aside (⏰) is not opened
+// on its own; only a server from before `table` picks the first brief as is.
+function cmdFirstPick(d) {
+  if (cmd.sel || !d.pending.length || cmd.shut === d.pending.map((p) => p.file).join('|')) return
+  const first = tblNeeds().find((R) => R.ds.length)
+  if (!(first && tblOpen(first.row.key, 'dec', false)) && !d.table) cmdPick(d.pending[0])
 }
 
 function cmdFold(which) {
@@ -313,11 +316,13 @@ function cmdWhere(c, at) {
 function cmdAbout() {
   const s = cmd.sel
   if (!s) return null
-  const key = s.sid ? 'sid:' + s.sid : s.review ? 'review:' + s.review : s.revs ? 'revs:' + s.revs : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
+  const key = s.sid ? 'sid:' + s.sid : s.memos ? 'sid:' + s.memos : s.review ? 'review:' + s.review : s.revs ? 'revs:' + s.revs : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
   // A ✕ holds for the thing it was pressed on; opening another brings the chip back.
   if (cmd.aboutSeen !== key) { cmd.aboutSeen = key; cmd.aboutOff = null }
   if (cmd.aboutOff === key) return null
   if (s.sid) return { key, kind: 'session', sid: s.sid, label: '👷 ' + (s.summary || s.name) + ' 에게' }
+  // A session's memo tab (defer.js): the box speaks to the session, as on its other tabs.
+  if (s.memos) return { key, kind: 'session', sid: s.memos, label: '👷 ' + (s.summary || s.name) + ' 에게' }
   if (s.review) return { key, kind: 'review', id: s.review, coord: s.coord, label: '🔎 ' + s.review + ' 에 대해' }
   if (s.slx && s.slx[0] === '!') return null
   if (s.slx) return { key, kind: 'slx', id: s.slx, label: '📨 ' + (s.title || s.slx) + ' 에 대해' }
@@ -341,7 +346,7 @@ const SAY_HINT = {
 async function cmdSay(text) {
   const ab = cmdAbout(), cs = cmd.data?.coordinators || []
   if (ab && ab.kind === 'session') {
-    const s = cmd.sel
+    const s = { ...cmd.sel, sid: ab.sid }
     if (!(await cmdReply(s, { kind: 'reply', value: text }, '지시'))) return false
     cmd.said = { direct: s.summary || s.name, at: Date.now(), text }
     return true
@@ -390,7 +395,9 @@ function cmdRenderSay() {
       cmdRenderSent()
     }
     box.querySelector('.go').onclick = go
-    ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); go() } else if (e.key === 'Escape') { e.preventDefault(); ta.blur() } }
+    // ⌥Enter with a session open: the words kept as its memo (defer.js), not sent.
+    const memo = () => { const ab = cmdAbout(); if (ab && ab.kind === 'session' && typeof dfrMemoAdd === 'function') dfrMemoAdd(ab.sid, ta.value.trim(), ta); else toast('메모는 세션을 열었을 때만 남길 수 있습니다') }
+    ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (e.altKey) memo(); else go() } else if (e.key === 'Escape') { e.preventDefault(); ta.blur() } }
     box.querySelector('.about').onclick = (e) => { if (e.target.closest('.x')) { cmd.aboutOff = cmdAbout()?.key; cmdRenderSay() } }
   }
   const ab = cmdAbout(), keys = ' <span class="m">(i · Enter 보내기 · Shift+Enter 줄바꿈)</span>'
@@ -748,7 +755,11 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // tmux pane. T (⌥T in its box) turns a picked session's look between its
 // last answer and its card; on the card ⌥1…⌥9 pick its tab ([ ] are the
 // row's tabs; its shelf takes them only with no row open). b (⌥B, ⇧ backwards) opens the brief line's next brief.
-// X (⌥X) ends the picked session; an adopted one on a second press (crew.js). In a box every key is typing; its Enter is cmdNoteKey's
+// X (⌥X) ends the picked session; an adopted one on a second press (crew.js).
+// Z (⌥Z from a box) puts up ⏰ 나중에's choices for the open row (defer.js):
+// a digit picks, Enter sets it aside, Esc backs out; while they are up they
+// take the digits and Enter before anything else. ⌥Enter in a session's box
+// keeps the words as a memo on it instead of sending them. In a box every key is typing; its Enter is cmdNoteKey's
 // (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
   const cardUp = typeof card !== 'undefined' && card.style.display === 'block'

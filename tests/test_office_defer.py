@@ -66,6 +66,8 @@ class DeferStoreTest(HomeCase):
         t = time.time() + 86400
         iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
         self.assertAlmostEqual(defer.until_of(iso), t, delta=1)
+        # What choices 3 and 4 send: Date.toISOString(), milliseconds and Z.
+        self.assertAlmostEqual(defer.until_of(time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))), int(t), delta=1)
 
     def test_a_memo_is_thrown_away_and_the_empty_file_goes(self):
         defer.act({"kind": "memo_add", "sid": S1, "text": "a"}, {S1})
@@ -259,6 +261,52 @@ class DeferKeysTest(unittest.TestCase):
             return [tblOrder(), tblHtml().includes('⏰ 미룸 1'), tblFind('s:w1').needs]
         """)
         self.assertEqual(got, [["s:s1", "s:c1"], True, False])
+
+    def test_a_deferred_row_holding_a_decision_is_never_opened_on_its_own_and_z_goes_on(self):
+        got = self.run_js("""
+            return (async () => {
+              deferTable()
+              // fix (w1) holds the decision, its call and a review: open it, set it aside for 3 h.
+              tblOpen('s:w1')
+              const before = cmd.sel.file
+              press('z'); press('2'); press('Enter'); await null; await null
+              const moved = [cmd.row, cmd.sel && cmd.sel.file]
+              // The server shows it set aside; the next render picks nothing on its own.
+              cmd.data.table[0].deferred = 2e9
+              dfr.local = {}
+              cmd.sel = null; cmd.row = null; cmd.shut = null
+              cmdFirstPick(cmd.data)
+              return [before, moved, cmd.sel, tblAsk(tblFind('s:w1')).startsWith('⏰'), tblAsk(tblFind('s:w1')).includes('Z?')]
+            })()
+        """)
+        self.assertEqual(got, ["a.html", ["s:s1", None], None, True, True])
+
+    def test_now_again_clears_a_deferral(self):
+        got = self.run_js("""
+            return (async () => {
+              deferTable()
+              cmd.data.table[1].deferred = 2e9
+              cmd.row = 's:s1'; cmd.sel = { sid: 's1', name: 'one' }
+              const before = tblFind('s:s1').needs
+              press('z'); const ch = dfrChoices(tblFind('s:s1')).map((c) => c[0])
+              press(String(ch.length)); press('Enter'); await null; await null
+              cmd.data.table[1].deferred = null
+              return [before, ch[ch.length - 1], posts, tblFind('s:s1').needs]
+            })()
+        """)
+        self.assertEqual(got, [False, "지금 다시 올리기", [{"kind": "defer_clear", "sid": "s1"}], True])
+
+    def test_on_the_memo_tab_the_task_box_speaks_to_the_session(self):
+        got = self.run_js("""
+            return (async () => {
+              deferTable()
+              tblOpen('s:w4', 'memo')
+              const ab = cmdAbout()
+              await cmdSay('계속해')
+              return [ab.kind, ab.sid, ab.label, replies]
+            })()
+        """)
+        self.assertEqual(got, ["session", "w4", "👷 Twingate 조사 에게", [["w4", {"kind": "reply", "value": "계속해"}, "지시"]]])
 
     def test_typing_in_the_memo_box_is_never_cancelled_and_enter_keeps_it(self):
         got = self.run_js("""

@@ -29,6 +29,7 @@ any prompt. This one is the command view's, and lifts on a new need.
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime
 
@@ -42,6 +43,8 @@ MAX_AHEAD = 31 * 86400
 MEMO_MAX = 4000
 MEMOS_MAX = 50
 SEEN_MAX = 200
+# One read-modify-write at a time: a poll's wake beside a memo_add must not drop the memo.
+_lock = threading.RLock()
 
 
 def folder() -> str:
@@ -126,6 +129,11 @@ def until_of(v: str, now: float | None = None) -> float | None:
 def wake(sid: str, why: str, now: float | None = None) -> None:
     """The row comes back: `due`, its time came (it stays up until opened);
     `new`, a need it did not hold came (that need holds it up)."""
+    with _lock:
+        _wake(sid, why, now)
+
+
+def _wake(sid: str, why: str, now: float | None) -> None:
     d = load(sid)
     if not d["until"]:
         return
@@ -140,6 +148,11 @@ def memo(sid: str, mid: str) -> dict | None:
 
 
 def memo_del(sid: str, mid: str) -> bool:
+    with _lock:
+        return _memo_del(sid, mid)
+
+
+def _memo_del(sid: str, mid: str) -> bool:
     d = load(sid)
     left = [m for m in d["memos"] if m["id"] != mid]
     if len(left) == len(d["memos"]):
@@ -158,6 +171,11 @@ def act(body: dict, live: set[str]) -> tuple[int, dict]:
         return 400, {"error": "bad sid"}
     if kind in ("defer_set", "memo_add") and sid not in live:
         return 404, {"error": "이 세션이 없습니다 (끝났거나 창이 닫혔습니다)"}
+    with _lock:
+        return _act(kind, sid, body)
+
+
+def _act(kind, sid: str, body: dict) -> tuple[int, dict]:
     d = load(sid)
     if kind == "defer_set":
         until = until_of(body.get("until"))

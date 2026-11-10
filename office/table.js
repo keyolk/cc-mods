@@ -234,11 +234,15 @@ function tblCells(R) {
 // What a row needs, in words, under its name: the first open question, or
 // what the review asks to check.
 function tblAsk(R) {
+  // Set aside: until when first, then what it holds.
+  if (R.deferred) return ['⏰ ' + cmdHHMM(R.deferred * 1000) + '까지 미룸', tblAskNow({ ...R, deferred: null })].filter(Boolean).join(' · ')
+  return tblAskNow(R)
+}
+function tblAskNow(R) {
   const q = R.ds.length ? cmdOpen(R.ds[0])[0] : null
   if (q) return q.question
   if (R.rs.length) return R.rs[0].title
   if (R.xs.length) return slxLine(R.xs[0].text).slice(0, 80)
-  if (R.deferred) return '⏰ ' + cmdHHMM(R.deferred * 1000) + '까지 미룸' + (R.memos.length ? ' · 📝 ' + R.memos[0].text.slice(0, 60) : '')
   if (R.woke) return '⏰ 다시 볼 시각' + (R.memos.length ? ' · 📝 ' + R.memos[0].text.slice(0, 60) : '')
   if (R.memos.length) return '📝 ' + R.memos[0].text.slice(0, 80)
   return ''
