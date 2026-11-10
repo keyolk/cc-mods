@@ -319,7 +319,7 @@ test('coord: a worker spawned with add_dirs runs claude --add-dir=<dir>, never s
   // Under bun test only: the plugin test runtime has no process to spawn.
   const bun = (globalThis as any).Bun
   const script = argv[13]!.replace('exec "$@"', 'printf "%s\\n" "$@"').replace('"$(cat "$p")"', '"<$p>"')
-  const tail = ['--add-dir=/w/briefs/b', '--add-dir=/odd dir', '--model', 'opus', '--effort', 'high', '--permission-mode', 'auto', '--disallowedTools', 'AskUserQuestion', '--session-id', 'u-2', '-n', 'b', '</r/b/prompt.txt>']
+  const tail = ['--add-dir=/w/briefs/b', '--add-dir=/odd dir', '--settings', '{"crossSessionInbound":"accept"}', '--model', 'opus', '--effort', 'high', '--permission-mode', 'auto', '--disallowedTools', 'AskUserQuestion', '--session-id', 'u-2', '-n', 'b', '</r/b/prompt.txt>']
   // No ccproxy on PATH: claude itself.
   const run = bun?.spawnSync(['sh', '-c', script, ...argv.slice(14)], { env: { PATH: '/usr/bin:/bin' } })
   if (run) expect(run.stdout.toString().trim().split('\n')).toEqual(['claude', ...tail])
