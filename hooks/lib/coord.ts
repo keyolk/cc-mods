@@ -418,8 +418,9 @@ export function unseen(l: Ledger, seen: PaneSeen[], now: number): Worker[] {
 // updates what the office draws. `alive`: session ids whose claude still runs
 // or whose transcript still grows: a worker among them is not gone though no
 // pane names it (a session that took its pane's name over it, such as a
-// `claude -p` from an older cc-mods).
-export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set()): { ledger: Ledger; changes: Change[] } {
+// `claude -p` from an older cc-mods). `sums`: what each session was doing
+// (lib/coordsum.ts), so a wake names the worker as the person knows it.
+export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
   const bySid = new Map(seen.map((s) => [s.sid, s]))
   const changes: Change[] = []
   const workers = l.workers.map((w) => {
@@ -429,7 +430,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
       // Not yet published: a worker just started has no @cc_pane_session for
       // its first seconds.
       if (now - w.at < SPAWN_GRACE_MS || alive.has(w.sid)) return w
-      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': ' + GONE + ' (pane closed or claude exited)', wake: !quiet(w) })
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: who(w.slug, sums.get(w.sid)) + ': ' + GONE + ' (pane closed or claude exited)', wake: !quiet(w) })
       return { ...w, endedAt: now }
     }
     const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
@@ -458,7 +459,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
     if (!asks) next.asked = undefined
     if (open && w.asked !== about) {
       next.asked = about
-      changes.push({ slug: w.slug, sid: w.sid, kind: 'ask', text: askText(w.slug, s), wake })
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'ask', text: askText(w.slug, s, sums.get(w.sid)), wake })
     }
     // cc-mods publishes done (attention none) at a turn's end, and waiting
     // with none only when the session has idled 30 min after that done. A
@@ -466,7 +467,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
     // fits between two ticks: so done, or that idle waiting, after anything
     // else is a finished turn.
     // A quiet worker's turns are the person's: not even logged.
-    else if (wake && !asks && idle(s.state) && !rested(w) && (w.state === 'working' || w.state === 'waiting' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, sid: w.sid, kind: 'turn', text: w.slug + ': finished its turn', wake: true })
+    else if (wake && !asks && idle(s.state) && !rested(w) && (w.state === 'working' || w.state === 'waiting' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, sid: w.sid, kind: 'turn', text: who(w.slug, sums.get(w.sid)) + ': finished its turn', wake: true })
     return next
   })
   return { ledger: { ...l, workers }, changes }
@@ -475,10 +476,27 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
 // The person must act in the worker's pane: the text says which pane and
 // window (`tmux select-pane -t %12`), and the call when it is a permission
 // ask.
-export function askText(slug: string, s: Pick<PaneSeen, 'pane' | 'window' | 'attention' | 'asks'>): string {
-  const where = slug + ' (pane ' + s.pane + ', window ' + s.window + ')'
+export function askText(slug: string, s: Pick<PaneSeen, 'pane' | 'window' | 'attention' | 'asks'>, summary?: string): string {
+  const where = (summary ? summary + ' (' + slug + ', ' : slug + ' (') + 'pane ' + s.pane + ', window ' + s.window + ')'
   if (s.asks) return where + ': asks: ' + s.asks + (s.attention === 'ask' ? ' (a permission dialog only the person can answer in that pane)' : ' (a permission ask still unsettled; a dialog there only the person can answer)')
   return where + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane'
+}
+
+// A worker as a wake names it: what it was doing, the slug after it in
+// parentheses (`office 지휘 정리 (fix)`); the slug alone while no summary is
+// known. The person reads these lines too, and `ops-k8s-4a` said nothing.
+// recheck finds the slug at either spot.
+export function who(slug: string, summary?: string): string {
+  const s = (summary ?? '').replace(/\s+/g, ' ').trim()
+  return s && s !== slug ? s + ' (' + slug + ')' : slug
+}
+
+// The worker a [coord] line is about: its slug at the start (`fix: …`,
+// `fix (pane …`) or in the parentheses after a summary (`… (fix): …`,
+// `… (fix, pane …`). The newest worker of that slug.
+export function wakeWorker(body: string, l: Ledger): Worker | undefined {
+  const hit = (slug: string) => body.startsWith(slug + ':') || body.startsWith(slug + ' (') || body.includes(' (' + slug + '):') || body.includes(' (' + slug + ', pane ')
+  return l.workers.filter((x) => hit(x.slug)).sort((a, b) => b.at - a.at || b.slug.length - a.slug.length)[0]
 }
 
 const idle = (state: string | undefined) => state === 'done' || state === 'waiting'
@@ -524,8 +542,7 @@ export function recheck(text: string, l: Ledger, now: number, sent: ReadonlyMap<
     const body = line.slice(WAKE_PREFIX.length)
     const c = sent.get(body)
     if (c) return current(c, l, now)
-    const slug = /^([a-z0-9][a-z0-9-]*)[ :]/.exec(body)?.[1]
-    const w = l.workers.filter((x) => x.slug === slug).sort((a, b) => b.at - a.at)[0]
+    const w = wakeWorker(body, l)
     return !w?.endedAt || body.includes(GONE)
   })
   return kept.length ? kept.join('\n') : undefined
@@ -578,8 +595,8 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- A report line `SKILL <name>: <problem> — <evidence>` is a skill that failed a worker. Give fixing it to a worker as its own task (route it like any task), with the line and its evidence verbatim, and tell that worker to use the meta:self-enhancer or meta:skill-creator skill. The worker that hit it does not edit the skill. Tell the person in one line.",
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
-    "- `[coord] <slug> (pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",
-    "- `[coord] <slug>: 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
+    "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",
+    "- `[coord] <summary> (<slug>): 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',
     ONE_BROWSER + ' Tell workers the same when a brief needs a browser.',
     '- Report to the person in ' + language + ', briefly, with tables.',

@@ -43,6 +43,11 @@ test('inbox: the wake names the worker, why, the tries and the head of what was 
   expect(w.startsWith('[coord] office-say-first: 지시 전달 실패 (dropped: x, 5회 시도): "[coordinator] aaa')).toBe(true)
   expect(w).toContain('…" — 다시 보내거나 파일로 넘겨라')
   expect(w.length).toBeLessThan(260)
+  // With what the worker was doing known, it leads and the slug follows.
+  expect(failWake({ text: 'x', at: NOW, tries: 5, slug: 'ops-k8s-4a', summary: 'ALB 정리' }, 'y').startsWith('[coord] ALB 정리 (ops-k8s-4a): 지시 전달 실패')).toBe(true)
+  // It rides through a put-back.
+  expect(putBack({ text: 'a', at: NOW, slug: 's', summary: 'S' }, { text: 'b', at: NOW }).summary).toBe('S')
+  expect(parseInbox(JSON.stringify({ text: 'a', at: 1, slug: 's', summary: 'S' }))?.summary).toBe('S')
 })
 
 test('inbox: a long instruction keeps its head and names the file; the file goes where the worker reaches', () => {

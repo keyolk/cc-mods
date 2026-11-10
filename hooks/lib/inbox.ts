@@ -19,6 +19,7 @@ export type InboxMsg = {
   tries?: number // submits that did not take
   from?: string // the coordinator session that sent it (coord.ts send)
   slug?: string // the worker's slug in that coordinator's ledger
+  summary?: string // what that worker was doing, as the coordinator's wakes name it
 }
 
 export const INBOX_STALE_S = 120
@@ -56,6 +57,7 @@ export function parseInbox(raw: string | undefined): InboxMsg | undefined {
     ...(Number(o.tries) > 0 ? { tries: Number(o.tries) } : {}),
     ...(typeof o.from === 'string' && o.from ? { from: o.from } : {}),
     ...(typeof o.slug === 'string' && o.slug ? { slug: o.slug } : {}),
+    ...(typeof o.summary === 'string' && o.summary ? { summary: o.summary } : {}),
   }
 }
 
@@ -89,6 +91,7 @@ export function putBack(m: InboxMsg, newer: InboxMsg | undefined): InboxMsg {
     tries: (m.tries ?? 0) + 1,
     ...(m.from ?? newer?.from ? { from: m.from ?? newer?.from } : {}),
     ...(m.slug ?? newer?.slug ? { slug: m.slug ?? newer?.slug } : {}),
+    ...(m.summary ?? newer?.summary ? { summary: m.summary ?? newer?.summary } : {}),
   }
 }
 
@@ -105,7 +108,8 @@ export function resumed(m: InboxMsg, newer: InboxMsg | undefined): InboxMsg {
 // worker's slug).
 export function failWake(m: InboxMsg, reason: string): string {
   const head = m.text.replace(/\s+/g, ' ').slice(0, 160)
-  return '[coord] ' + (m.slug ?? 'worker') + ': 지시 전달 실패 (' + reason + ', ' + (m.tries ?? 0) + '회 시도): "' + head + (m.text.length > 160 ? '…' : '') + '" — 다시 보내거나 파일로 넘겨라'
+  const name = m.slug ?? 'worker'
+  return '[coord] ' + (m.summary && m.summary !== name ? m.summary + ' (' + name + ')' : name) + ': 지시 전달 실패 (' + reason + ', ' + (m.tries ?? 0) + '회 시도): "' + head + (m.text.length > 160 ? '…' : '') + '" — 다시 보내거나 파일로 넘겨라'
 }
 
 // A coordinator's instruction too long to send whole: its head and where the

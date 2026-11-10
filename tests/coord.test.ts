@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, DECISION_BRIEF, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, DECISION_BRIEF, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -573,4 +573,28 @@ test('coord: the person typing in an auto-adopted session is only noted; its own
   // Handed over by the person (/coord adopt): wakes as before.
   const manual = on({ workers: [{ ...a!, auto: undefined, state: 'working', typedAt: undefined }] })
   expect(observe(manual, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'turn', wake: true })])
+})
+
+test('coord: a wake names the worker by what it was doing, the slug after it, and recheck still finds the worker', () => {
+  // The person: "ops-k8s-4a 라고 해봤자 내가 뭔지 알기도 어려워".
+  const sums = new Map([['w1', 'tmux 레이아웃 정리']])
+  const l = on({ workers: [worker({ state: 'working' })] })
+  const done = observe(l, parsePanes('%1\t@1\tw1\tdone\tnone\t/w/tmc-layout\t'), NOW, new Set(), sums)
+  expect(done.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout): finished its turn'])
+  const ask = observe(l, parsePanes('%1\t@1\tw1\twaiting\task\t/w/tmc-layout\t'), NOW, new Set(), sums)
+  expect(ask.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout, pane %1, window @1): waiting on an answer in its pane'])
+  const gone = observe(l, [], NOW + 600_000, new Set(), sums)
+  expect(gone.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout): its session is gone (pane closed or claude exited)'])
+  // No summary, or one that is the slug: the slug alone, as before.
+  expect([who('fix'), who('fix', 'fix'), who('fix', '  a   b ')]).toEqual(['fix', 'fix', 'a b (fix)'])
+  // recheck's fallback (no record of the line) finds the slug at either spot,
+  // and the longer slug of two that share a start.
+  const two = on({ workers: [worker(), worker({ slug: 'tmc-layout-2', sid: 'w2', at: NOW - 60_000 })] })
+  for (const body of ['tmc-layout: finished its turn', 'tmc-layout (pane %1, window @1): waiting on an answer in its pane', 'tmux 레이아웃 정리 (tmc-layout): finished its turn', 'tmux 레이아웃 정리 (tmc-layout, pane %1, window @1): asks: Read x'])
+    expect(wakeWorker(body, two)?.sid).toBe('w1')
+  expect(wakeWorker('x (tmc-layout-2): finished its turn', two)?.sid).toBe('w2')
+  expect(wakeWorker('nobody: x', two)).toBeUndefined()
+  const closed: Ledger = { ...two, workers: two.workers.map((w) => (w.sid === 'w1' ? { ...w, endedAt: NOW } : w)) }
+  expect(recheck('[coord] tmux 레이아웃 정리 (tmc-layout): finished its turn', closed, NOW, new Map())).toBeUndefined()
+  expect(recheck('[coord] tmux 레이아웃 정리 (tmc-layout): its session is gone (pane closed or claude exited)', closed, NOW, new Map())).toContain('gone')
 })

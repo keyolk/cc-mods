@@ -4,10 +4,16 @@
 // always, a box for a task: whatever the person types goes to the
 // coordinator, which picks the session (coord_route) or starts one, and the
 // line under the box says where it went. The person never picks a session to
-// instruct. Under it what needs the person: the decisions waiting on them
-// (briefs whose sidecar asks a question nobody has answered), who on the
-// floor waits on them, finished work to look at; then the sessions at work,
-// folded to one line, and the briefs lately written.
+// instruct. Under it the brief line, then one table, a row a session
+// (table.js, office/turn.py): its cells overlay what it holds — the decisions
+// its briefs ask, whether it waits on an answer or an approval, finished work
+// put up for a look, or that it is at work or quiet. The rows that need the
+// person come first; the rest fold to one line. The person found a stack of
+// sections too long and the slugs unreadable: a session is named by what it
+// was doing, its slug a small grey tag. A trigger of the slx inbox (📨
+// Slack, 🚨 Meerkat, office/slx.js) rides on its session's row as 📨N, or
+// with no session has a row of its own after the rest; it opens with 세션
+// 만들기, 무시, 이런 것 숨기기 or 나중에, each done by slx itself.
 // A picked brief opens beside the panel in the same sandboxed frame the
 // card's viewer uses; under it each of its questions, with the options to
 // pick and a box for a note or an answer in the person's own words. An answer
@@ -20,18 +26,17 @@
 // floor card's reply does, never through a coordinator.
 // Finished work a coordinator put up for the person's look (🔎 검토,
 // office/review.js) opens there too: 확인함 takes it off, 문제 있음 sends the
-// person's words to its coordinator. So does a trigger of the slx inbox (📨
-// Slack, 🚨 Meerkat, office/slx.js): 세션 만들기, 무시, 이런 것 숨기기 or
-// 나중에, each done by slx itself.
+// person's words to its coordinator.
 // A session at work, picked in its folded table, opens there too: to look at
 // it, and to answer it directly only when the person means to.
 // A picked session shows there in one of two looks, T (⌥T) between them:
 // 마지막 답, the end of its last answer, and 카드, what the floor card shows
 // (past turns, what it was handed, sent and wrote, its work, btw), drawn by
 // office.html's cardPanes into the same place, so the view is never left.
-// The briefs stay one line under the box, whatever the lists below hold: the
-// newest few as chips and 전체 to the whole list; b (⌥B) walks them. The
-// sessions waiting on the person show five until 더 보기.
+// A picked row opens beside the panel with a tab for each thing it holds
+// (table.js); Tab / ⇧Tab move between them, j/k between the rows.
+// The briefs stay one line under the box, whatever the table holds: the
+// newest few as chips, 전체 to every recent one; b (⌥B) walks them.
 //
 // The page knows two modes, 사무실 and 지휘; `C` (or `D`) or the header
 // switch flips them. Everything here reads /command; nothing in office.html depends on it
@@ -58,10 +63,6 @@ const CMD_CSS = `
 #command table { width: 100%; border-collapse: collapse; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; margin-bottom: 10px; }
 #command th { text-align: left; font-weight: 600; color: #7a7090; border-bottom: 2px solid rgba(59,42,53,.18); padding: 2px 4px; }
 #command td { border-bottom: 1px solid rgba(59,42,53,.1); padding: 3px 4px; vertical-align: top; }
-#command tr.w, #command h3.c { cursor: pointer; }
-#command h3.c.sel { text-decoration: underline; }
-#command tr.w:hover td { background: #f3ecdf; }
-#command tr.w.sel td { background: #fff3c4; }
 #command .st-waiting, #command .st-asking { color: #b7791f; } #command .st-alert { color: #c0392b; } #command .st-working { color: #2f855a; } #command .st-gone { color: #9a93a8; }
 #command .say { border-bottom: 2px solid rgba(59,42,53,.14); padding: 8px 12px; background: #fff3c4; }
 #command .say .sent { margin-top: 4px; }
@@ -72,7 +73,7 @@ const CMD_CSS = `
 #command .say .re .x { font: inherit; border: 0; background: none; cursor: pointer; padding: 0 4px; }
 #command h3.ws { cursor: pointer; user-select: none; }
 #command .fold { cursor: pointer; margin: -6px 0 10px; text-decoration: underline; }
-#command td .sum { display: block; color: #5a5070; font-size: 11px; }
+#command .slug { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 6px; background: rgba(59,42,53,.07); color: #8a8298; font: 10.5px ui-monospace, Menlo, monospace; vertical-align: 1px; white-space: nowrap; }
 #command textarea, #command input[type=text] { width: 100%; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 5px 8px; }
 #command textarea { min-height: 44px; resize: vertical; }
 #command button.act { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 10px; padding: 3px 10px; cursor: pointer; background: #fff; box-shadow: 0 2px 0 var(--line); }
@@ -125,12 +126,12 @@ const CMD_CSS = `
 // anyway on a second Enter; sent: sid -> when the person last answered it.
 // coord: the coordinator the box speaks to, when the person clicked one;
 // said: the last task typed in the box ({ coord, at, text }, at on the
-// ledger log's clock), for the line saying where it went; wOpen / wQuiet:
-// the sessions at work unfolded, and with them the quiet adopted ones.
+// ledger log's clock), for the line saying where it went.
 // view: how a picked session shows, 'said' (its last answer) or 'card'.
-// turnOpen: every row of 내 차례 shown, not the first TURN_SHOWN.
-const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, wOpen: false, wQuiet: false, view: 'said', turnOpen: false }
-try { cmd.wOpen = localStorage.getItem('office.cmd.workers') === 'open' } catch { /* no storage: folded */ }
+// row: the table's row open beside the panel (its key), whose tabs show
+// over the left pane; null when what is open came from elsewhere (a brief
+// chip, a link).
+const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, view: 'said', row: null }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
 document.body.appendChild(cmdEl)
@@ -198,47 +199,24 @@ function cmdActive(p) {
   const open = cmdOpen(p)
   return open.find((q) => q.id === cmd.q) || open[0]
 }
-function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmd.q = null }
+// A pick from anywhere but the table leaves no row open; tblShow sets it again after.
+function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmd.q = null; cmd.row = null }
 const cmdCall = (sid) => (cmd.data?.calls || []).find((c) => c.sid === sid)
-function cmdPickCall(c) { cmd.sel = { sid: c.sid, name: c.name, window: c.window }; cmd.armed = null; cmd.q = null; cmd.force = null; cmdAsk() }
+// `summary`: what the session was doing, the name the person knows it by;
+// `name` (its slug) stays for the small tag beside it.
+function cmdPickCall(c) { cmd.sel = { sid: c.sid, name: c.name, summary: c.summary || cmdSummary(c.sid), window: c.window }; cmd.armed = null; cmd.q = null; cmd.force = null; cmd.row = null; cmdAsk() }
+// What a session was doing, from whatever /command holds on it.
+function cmdSummary(sid) {
+  const d = cmd.data || {}
+  return (d.table || []).find((r) => r.sid === sid)?.summary || cmdCall(sid)?.summary || cmdWorkers().find((x) => x.w.sid === sid)?.w.summary || (d.coordinators || []).find((c) => c.sid === sid)?.summary || ''
+}
+// A session as the person reads it: its summary, the slug after it.
+const cmdWho = (s) => (s.summary && s.summary !== s.name ? s.summary + ' (' + s.name + ')' : s.name || '')
 // A session at work, from the folded table: opened like a waiting one, to look at.
 const cmdWorkers = () => (cmd.data?.coordinators || []).flatMap((c) => c.workers.map((w) => ({ c, w })))
-// An adopted session the person runs, that no coordinator has given a task
-// and that asks nothing: folded away unless asked for.
-const cmdQuiet = (w) => w.auto && !w.instructed && w.attention !== 'ask' && w.attention !== 'alert'
 // review.js and slx.js, unless the server that sent this page has none.
 const cmdRev = () => typeof revList === 'function'
 const cmdSlx = () => typeof slxList === 'function'
-// The person's turn (내 차례), one list of what waits on their input: a
-// decision ({ p }, a brief's question), a session waiting on them ({ c }),
-// finished work to look at ({ r }) and a trigger slx collected ({ x }, a
-// Slack mention or a Meerkat incident without a session row; slx.js). /command's `turn` (office/turn.py) gives
-// the order: oldest first, a worker's rows together; each row points at the
-// thing in `pending`, `calls` or `reviews`, which an answer takes out. A
-// server from before `turn`: decisions, then sessions, then reviews. j/k walk
-// it, the list draws it, an answer goes on to its next row.
-function cmdItems() {
-  const d = cmd.data || {}
-  if (!d.turn) return [...(d.pending || []).map((p) => ({ p })), ...(d.calls || []).map((c) => ({ c })), ...(cmdRev() ? revList() : []).map((r) => ({ r })), ...(cmdSlx() ? slxTurn() : []).map((x) => ({ x }))]
-  const out = []
-  for (const t of d.turn) {
-    const p = t.kind === 'decision' && cmdPending(t.file), c = t.kind === 'session' && cmdCall(t.sid)
-    const r = t.kind === 'review' && cmdRev() && revList().find((x) => x.coord === t.coord && x.id === t.id)
-    const x = t.kind === 'slx' && cmdSlx() && slxTurn().find((y) => y.id === t.id)
-    if (p) out.push({ p, worker: t.worker }); else if (c) out.push({ c, worker: t.worker }); else if (r) out.push({ r, worker: t.worker }); else if (x) out.push({ x })
-  }
-  return out
-}
-const cmdItemKey = (it) => (it.p ? 'p:' + it.p.file : it.r ? 'r:' + it.r.coord + '|' + it.r.id : it.x ? 'x:' + it.x.id : 'c:' + it.c.sid)
-// The row after this one (else the one before), to open once it is answered;
-// asked before the answer takes it out of the list.
-function cmdNextAfter(it) {
-  const items = cmdItems(), k = cmdItemKey(it), at = items.findIndex((x) => cmdItemKey(x) === k)
-  if (at < 0) return items[0] || null
-  return items[at + 1] || items[at - 1] || null
-}
-const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : it.r ? revIsSel(it.r) : it.x ? slxIsSel(it.x) : cmd.sel.sid === it.c.sid)
-function cmdGo(it) { if (it.p) cmdPick(it.p); else if (it.r) revPick(it.r); else if (it.x) slxPick(it.x); else cmdPickCall(it.c); cmdRender() }
 
 async function cmdAsk() {
   const sid = cmd.sel?.sid
@@ -254,141 +232,55 @@ async function cmdAsk() {
 
 function cmdRender() {
   const d = cmd.data || { pending: [], coordinators: [] }
-  // Nothing picked yet: the decision that has waited longest.
-  if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) cmdPick(d.pending[0])
+  // Nothing picked yet: the row that has waited longest, when it holds a decision.
+  if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) {
+    const first = tblNeeds().find((R) => R.ds.length)
+    if (!(first && tblOpen(first.row.key, 'dec', false))) cmdPick(d.pending[0])
+  }
   if (!cmdEl.firstChild) {
-    cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
+    cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="rtabs"></div><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
     cmdEl.querySelector('.briefs').onclick = cmdBriefClick
+    cmdEl.querySelector('.rtabs').onclick = tblTabClick
   }
-  const list = cmdEl.querySelector('.list'), keep = list.scrollTop
-  // What needs the person, one list in the order j/k walks it.
-  const items = cmdItems(), shown = cmdTurnShown(items), more = items.length - shown.length
-  const out = ['<h3>✋ 내 차례 ' + items.length + ' <span class="m">결정·답을 기다리는 세션·검토 · 오래 기다린 순 · j/k</span></h3>']
-  if (!items.length) out.push('<div class="m" style="margin-bottom:10px">기다리는 것이 없습니다. 결정 질문, 답이나 승인을 기다리는 세션, 검토할 일이 생기면 여기에 나옵니다.</div>')
-  else out.push('<ul class="feed turn">' + shown.map((it, i) => cmdTurnRow(it, shown[i - 1])).join('')
-    + (more > 0 ? '<li class="more" data-fold="turn">더 보기 · ' + more + '개 더</li>' : cmd.turnOpen && items.length > TURN_SHOWN ? '<li class="more" data-fold="turn">접기</li>' : '') + '</ul>')
-  if (cmdSlx()) out.push(slxFoot())
-  out.push(cmdWorkersHtml(d))
-  const recent = d.recent || []
-  out.push('<h3 class="recent">📄 최근 브리프 <span class="m">누르면 옆에 열림</span></h3>')
-  out.push(recent.length ? '<ul class="feed">' + recent.map((b) => '<li data-brief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.file) + '">' + (b.pending ? '⏳ ' : '') + cmdEsc(b.title) + ' <span class="m">' + cmdEsc([b.by, cmdAgo(new Date(b.at * 1000).toISOString())].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<div class="m">브리프가 없습니다.</div>')
-  list.innerHTML = out.join('')
+  // The table scrolls on its own: a redraw keeps where it was.
+  const list = cmdEl.querySelector('.list'), keep = list.scrollTop, keepT = list.querySelector('.tblwrap')?.scrollTop || 0
+  // The slx line under the table: what is hidden, what runs, the bulk choices.
+  list.innerHTML = tblHtml() + (cmdSlx() ? slxFoot() : '')
   list.scrollTop = keep
+  const wrap = list.querySelector('.tblwrap')
+  if (wrap) wrap.scrollTop = keepT
   cmdRenderBriefs()
   cmdRenderSay()
   cmdRenderDoc()
 }
 
-// The sessions at work (👷 일하는 중), folded to one line by default: those
-// not in 내 차례 (waiting on nobody), how many the coordinators started, how
-// many they adopted. Unfolded, a table per
-// coordinator; a row opens that session beside the panel (to look at, and
-// to answer it directly), it never changes where the box's task goes.
-function cmdWorkersHtml(d) {
-  const ws = cmdWorkers().filter((x) => !cmdCall(x.w.sid)), quiet = ws.filter((x) => cmdQuiet(x.w)).length
-  const out = ['<h3 class="ws" data-fold="workers" title="펼치기/접기">' + (cmd.wOpen ? '▾' : '▸') + ' 👷 일하는 중 ' + ws.length + ' <span class="m">(내 worker ' + ws.filter((x) => x.w.relation === 'owned').length + ' · 자동 입양 ' + ws.filter((x) => x.w.auto).length + ')</span></h3>']
-  if (!d.coordinators.length) out.push('<div class="m" style="margin-bottom:10px">켜진 coordinator가 없습니다. 세션에서 <code>/coord on</code>.</div>')
-  if (!cmd.wOpen) return out.join('')
-  if (quiet) out.push('<div class="m fold" data-fold="quiet">' + (cmd.wQuiet ? '지시받지 않은 자동 입양 ' + quiet + '개 숨기기' : '지시받지 않은 자동 입양 ' + quiet + '개 숨김 · 보기') + '</div>')
-  for (const c of d.coordinators) {
-    const csel = d.coordinators.length > 1 && cmdCoord()?.sid === c.sid
-    out.push('<h3 class="c' + (csel ? ' sel' : '') + '" data-coord="' + cmdEsc(c.sid) + '"' + (d.coordinators.length > 1 ? ' title="위 칸의 할 일을 이 coordinator에게"' : '') + '>🎖 ' + cmdEsc(c.name) + ' <span class="m">' + cmdEsc([c.window, c.live ? STATE_KO[c.state] || c.state : '창 없음', ATTN_KO[c.attention] || ''].filter(Boolean).join(' · ')) + '</span></h3>')
-    const rows = c.workers.filter((w) => !cmdCall(w.sid) && (cmd.wQuiet || !cmdQuiet(w)))
-    if (!rows.length) { out.push('<div class="m" style="margin-bottom:10px">' + (c.workers.length ? '지시받은 세션이 없습니다.' : 'worker가 없습니다.') + '</div>'); continue }
-    out.push('<table><tr><th>세션</th><th>model/effort</th><th>상태</th><th>브리프</th><th></th></tr>')
-    for (const w of rows) {
-      const sel = !!cmd.sel && cmd.sel.sid === w.sid
-      const st = !w.live ? 'gone' : w.doing === 'asking' || w.doing === 'alert' ? w.doing : w.state
-      out.push('<tr class="w' + (sel ? ' sel' : '') + '" data-sid="' + cmdEsc(w.sid) + '" title="옆에 열기 (마지막 답, G로 pane)"><td>' + cmdEsc(w.slug) + (cmdSlx() ? slxBadge(w) : '') + (w.relation === 'adopted' ? ' <span class="m">' + (w.auto ? '자동 입양' : '입양') + '</span>' : '') + (w.summary && w.summary !== w.slug ? '<span class="sum">' + cmdEsc(w.summary) + '</span>' : '') + '</td><td>' + cmdEsc((w.model || '-') + '/' + (w.effort || '-')) + '</td>'
-        + '<td class="st-' + cmdEsc(st) + '">' + cmdEsc(w.live ? STATE_KO[w.state] || w.state || '?' : '창 없음') + (ATTN_KO[w.attention] ? ' ' + ATTN_KO[w.attention] : '') + '</td>'
-        + '<td>' + (w.brief ? '<a href="#" data-brief="' + cmdEsc(w.brief.path) + '" data-title="' + cmdEsc(w.brief.title) + '">' + (w.brief.pending ? '⏳ ' : '📄 ') + cmdEsc(w.brief.title.slice(0, 24)) + '</a>' : '<span class="m">—</span>') + '</td>'
-        + '<td>' + (w.live ? '<button class="end" data-end="' + cmdEsc(w.sid) + '" title="세션 끝내기 (옆에 열고 확인)">⏹</button>' : '') + '</td></tr>')
-    }
-    out.push('</table>')
-  }
-  return out.join('')
-}
-
-// 내 차례 as the list shows it: the first TURN_SHOWN rows, and the one
-// picked wherever it is, until 더 보기.
-const TURN_SHOWN = 8
-function cmdTurnShown(items = cmdItems()) {
-  return cmd.turnOpen ? items : items.filter((it, i) => i < TURN_SHOWN || cmdIsSel(it))
-}
-
-// One row: what it is (❓ a decision, 🙋/❗ a session, 🔎/⚠ a review), whose,
-// and what it asks. A row of the same worker as the one above it leaves the
-// name out: the worker's rows read as one.
-function cmdTurnRow(it, prev) {
-  if (it.x) return cmdSlx() ? slxTurnRow(it.x) : ''
-  const who = it.worker || (it.c ? it.c.slug || it.c.name : it.p ? it.p.decision.worker : it.r ? it.r.id : '') || ''
-  const same = !!prev && !prev.x && !!who && who === (prev.worker || (prev.c ? prev.c.slug || prev.c.name : prev.p ? prev.p.decision.worker : prev.r ? prev.r.id : ''))
-  let icon, title, ask, meta, key
-  if (it.p) {
-    const p = it.p, open = cmdOpen(p)
-    icon = '❓'; key = 'data-file="' + cmdEsc(p.file) + '"'
-    title = p.title; ask = p.decision.question + (open.length > 1 ? ' (외 ' + (open.length - 1) + '건)' : '')
-    meta = [p.coordinatorName ? '🎖 ' + p.coordinatorName : '', cmdAgo(p.decision.asked)]
-  } else if (it.c) {
-    const c = it.c
-    icon = c.attention === 'alert' ? '❗' : '🙋'; key = 'data-call="' + cmdEsc(c.sid) + '"'
-    title = c.summary && c.summary !== c.name ? c.summary : c.name; ask = ''
-    meta = [c.window, c.boss ? '🎖 ' + c.boss : '', c.since ? cmdAgo(new Date(c.since * 1000).toISOString()) : '', Date.now() - (cmd.sent[c.sid] || 0) < 60000 ? '📨 답 보냄' : '']
-  } else {
-    const r = it.r
-    icon = r.issues && r.issues.length ? '⚠' : '🔎'; key = 'data-review="' + cmdEsc(r.id) + '" data-rcoord="' + cmdEsc(r.coord) + '"'
-    title = r.title; ask = r.check || ''
-    meta = ['🎖 ' + r.coordName, cmdAgo(revMs(r.updatedAt || r.at))]
-  }
-  // A session with no summary is called by its name: said once.
-  const name = who && !same ? '<b>' + cmdEsc(who) + '</b>' + (title && title !== who ? ' · ' : '') : ''
-  return '<li ' + key + ' class="t' + (cmdIsSel(it) ? ' sel' : '') + (same ? ' cont' : '') + '">' + icon + ' ' + name + (title !== who || same ? cmdEsc(title) : '')
-    + (it.c && cmdSlx() ? slxBadge(it.c) : '')
-    + (ask ? '<span class="ask">' + cmdEsc(ask) + '</span>' : '') + ' <span class="m">' + cmdEsc(meta.filter(Boolean).join(' · ')) + '</span></li>'
-}
-
 function cmdFold(which) {
-  if (which === 'quiet') cmd.wQuiet = !cmd.wQuiet
-  else if (which === 'turn') cmd.turnOpen = !cmd.turnOpen
-  else {
-    cmd.wOpen = !cmd.wOpen
-    try { localStorage.setItem('office.cmd.workers', cmd.wOpen ? 'open' : 'shut') } catch { /* private window: not remembered */ }
-  }
+  if (which === 'others') tbl.othersOpen = !tbl.othersOpen
+  else if (which === 'slx') tbl.slxOpen = !tbl.slxOpen
   cmdRender()
 }
 
 function cmdClick(ev) {
-  if (cmdRev() && revClick(ev)) return
   if (cmdSlx() && slxClick(ev)) return
-  const f = ev.target.closest('[data-fold]')
-  if (f) return cmdFold(f.dataset.fold)
-  const li = ev.target.closest('li[data-call]')
-  if (li) { const c = cmdCall(li.dataset.call); if (c) { cmdPickCall(c); cmdRender() } return }
-  const a = ev.target.closest('[data-brief]')
-  if (a) { ev.preventDefault(); cmdPick({ file: a.dataset.brief.split('/').pop(), path: a.dataset.brief, title: a.dataset.title }); return cmdRender() }
-  const q = ev.target.closest('[data-file]')
-  if (q) { const p = cmdPending(q.dataset.file); if (p) { cmdPick(p); cmdRender() } return }
-  const h = ev.target.closest('h3.c')
-  if (h) {
-    cmd.coord = h.dataset.coord
-    cmdRender()
-    cmdEl.querySelector('.say textarea')?.focus()
-    return
-  }
   // ⏹ on a row: the session opens beside the panel and its end is asked
   // there, where the warning and the second press are.
   const end = ev.target.closest('button[data-end]')
   if (end) {
-    const x = cmdWorkers().find((y) => y.w.sid === end.dataset.end)
-    if (x) { const s = { sid: x.w.sid, name: x.w.slug, window: x.w.window }; cmdPickCall(s); cmdRender(); crewEnd(cmd.sel) }
+    const R = tblAll().find((x) => x.row.sid === end.dataset.end)
+    if (R) { cmdPickCall({ sid: R.row.sid, name: R.row.name, summary: R.row.summary, window: R.c?.window }); cmd.row = R.row.key; cmdRender(); crewEnd(cmd.sel) }
     return
   }
-  const tr = ev.target.closest('tr.w')
-  if (tr) {
-    const x = cmdWorkers().find((y) => y.w.sid === tr.dataset.sid)
-    if (x) { cmdPickCall({ sid: x.w.sid, name: x.w.slug, window: x.w.window }); cmdRender() }
-  }
+  const f = ev.target.closest('[data-fold]')
+  if (f) return cmdFold(f.dataset.fold)
+  const tr = ev.target.closest('tr[data-row]')
+  if (!tr) return
+  // A coordinator's row clicked: the box's plain tasks go to it from now on
+  // (with several on). Walking past one with j/k, or an answer moving on,
+  // never changes where they go.
+  const R = tblFind(tr.dataset.row)
+  if (R && R.row.isCoord) cmd.coord = R.row.sid
+  tblOpen(tr.dataset.row)
 }
 
 // The coordinator the box speaks to: the one last clicked, else the first
@@ -406,35 +298,28 @@ function cmdWhere(c, at) {
   const e = (c?.log || []).find((x) => x.at >= at && (x.kind === 'send' || x.kind === 'spawn'))
   if (!e) return ''
   const slug = String(e.text).split(/[: ]/)[0]
-  return e.kind === 'spawn' ? '🆕 새 worker <b>' + cmdEsc(slug) + '</b>' : '👷 <b>' + cmdEsc(slug) + '</b>에 맡김'
-}
-
-function cmdRenderSent() {
-  const el = cmdEl.querySelector('.say .sent'), s = cmd.said
-  if (!el) return
-  if (!s) { el.innerHTML = ''; return }
-  const c = (cmd.data?.coordinators || []).find((x) => x.sid === s.coord)
-  const where = cmdWhere(c, s.at)
-  el.innerHTML = '→ coordinator에게 보냄 ' + cmdHHMM(s.at) + ' · ' + (where || '<span class="m">맡길 곳을 고르는 중…</span>')
-  el.title = s.text
+  const w = (c?.workers || []).find((x) => x.slug === slug), tag = '<span class="slug">' + cmdEsc(slug) + '</span>'
+  const name = w && w.summary && w.summary !== slug ? '<b>' + cmdEsc(w.summary) + '</b> ' + tag : '<b>' + cmdEsc(slug) + '</b>'
+  return e.kind === 'spawn' ? '🆕 새 worker ' + name : '👷 ' + name + '에 맡김'
 }
 
 // What the person has open beside the panel is what the box speaks about:
-// a brief (its worker), a session (straight to it), a review item or an slx
-// item (who wrote, where, its link and the start of its text), shown
+// a brief (its worker), a session (straight to it) or a review item, shown
 // as a chip over the box. ✕ on the chip makes the box a plain task again
 // until something else is opened. Nothing open: the coordinator places it.
 function cmdAbout() {
   const s = cmd.sel
   if (!s) return null
-  const key = s.sid ? 'sid:' + s.sid : s.review ? 'review:' + s.review : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
+  const key = s.sid ? 'sid:' + s.sid : s.review ? 'review:' + s.review : s.revs ? 'revs:' + s.revs : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
   // A ✕ holds for the thing it was pressed on; opening another brings the chip back.
   if (cmd.aboutSeen !== key) { cmd.aboutSeen = key; cmd.aboutOff = null }
   if (cmd.aboutOff === key) return null
-  if (s.sid) return { key, kind: 'session', sid: s.sid, label: '👷 ' + s.name + ' 에게' }
+  if (s.sid) return { key, kind: 'session', sid: s.sid, label: '👷 ' + (s.summary || s.name) + ' 에게' }
   if (s.review) return { key, kind: 'review', id: s.review, coord: s.coord, label: '🔎 ' + s.review + ' 에 대해' }
   if (s.slx && s.slx[0] === '!') return null
   if (s.slx) return { key, kind: 'slx', id: s.slx, label: '📨 ' + (s.title || s.slx) + ' 에 대해' }
+  // A session's review items as a list: the box speaks about the unfolded one.
+  if (s.revs) { const r = cmdRev() && revCur(s); return r ? { key, kind: 'review', id: r.id, coord: r.coord, label: '🔎 ' + (r.title || r.id) + ' 에 대해' } : null }
   const p = cmdPending(s.file)
   // The brief's worker: the one its question names, else the session whose latest brief it is.
   const worker = p?.decision?.worker || cmdWorkers().find((x) => x.w.brief && x.w.brief.file === s.file)?.w.slug || ''
@@ -455,7 +340,7 @@ async function cmdSay(text) {
   if (ab && ab.kind === 'session') {
     const s = cmd.sel
     if (!(await cmdReply(s, { kind: 'reply', value: text }, '지시'))) return false
-    cmd.said = { direct: s.name, at: Date.now(), text }
+    cmd.said = { direct: s.summary || s.name, at: Date.now(), text }
     return true
   }
   const c = (ab && ab.coord && cs.find((x) => x.sid === ab.coord)) || cmdCoord()
@@ -516,9 +401,11 @@ function cmdRenderSay() {
 function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
   cmdEl.classList.toggle('doc-on', !!s)
+  tblRenderTabs()
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
   if (s.sid) return cmdRenderCall(bar, doc, dec, s)
   if (s.review) return cmdRev() ? revRenderDoc(bar, doc, dec, s) : cmdShut()
+  if (s.revs) return cmdRev() ? revRenderList(bar, doc, dec, s) : cmdShut()
   if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
   if (cmd.frame !== s.path) {
@@ -592,7 +479,7 @@ function cmdRenderCall(bar, doc, dec, s) {
   if (cmd.frame !== 'call:' + s.sid) {
     cmd.frame = 'call:' + s.sid
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
-    bar.innerHTML = '<b>' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span>'
+    bar.innerHTML = '<b title="' + cmdEsc(cmdWho(s)) + '">' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.summary || s.name) + '</b>' + (s.summary && s.summary !== s.name ? '<span class="slug">' + cmdEsc(s.name) + '</span>' : '') + '<span class="m">' + cmdEsc(s.window || '') + '</span>'
       + '<span class="seg" title="마지막 답 ↔ 카드 (T · 입력칸에서는 ⌥T)"><button data-v="said" title="마지막 답"><span class="key">T</span>답</button><button data-v="card" title="카드: 지난 대화, 파일, 작업, btw">🗂 카드</button></span>'
       + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗</button>' + (typeof crewButtons === 'function' ? crewButtons(s.sid) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.go').onclick = () => cmdFocus(s)
@@ -616,7 +503,7 @@ function cmdRenderCall(bar, doc, dec, s) {
   const said = doc.querySelector('.said'), skey = JSON.stringify(a && [a.error, a.text, a.cut])
   if (a && said.dataset.key !== skey) {
     said.dataset.key = skey
-    bar.querySelector('.m').textContent = [a.summary, a.window || s.window, a.pane, a.cwd].filter(Boolean).join(' · ')
+    bar.querySelector('.m').textContent = [a.summary && a.summary !== s.summary ? a.summary : '', a.window || s.window, a.pane, a.cwd].filter(Boolean).join(' · ')
     if (a.error) said.innerHTML = '<div class="m">' + (a.error === 'no such session' ? '이 세션이 없습니다 (창이 닫혔거나 끝났습니다).' : cmdEsc(a.error)) + '</div>'
     else said.innerHTML = (a.cut ? '<div class="cut">… 앞부분 생략 · 전체는 🗂 카드 (T)</div>' : '') + (a.text ? (typeof md === 'function' ? md(a.text) : '<pre>' + cmdEsc(a.text) + '</pre>') : '<div class="m">마지막 답이 없습니다.</div>')
     said.onclick = (ev) => { const l = ev.target.closest('a[data-open]'); if (l) { ev.preventDefault(); openLink(l.dataset.open) } }
@@ -659,7 +546,7 @@ function cmdFocus(s) {
   const pane = (cmd.ask && cmd.ask.sid === s.sid && cmd.ask.pane) || cmdCall(s.sid)?.pane
   if (!pane) { toast('이 세션의 pane을 모릅니다'); return }
   focusPane(pane)
-  toast('↗ ' + s.name + ' (' + pane + ')')
+  toast('↗ ' + (s.summary || s.name) + ' (' + pane + ')')
 }
 
 // Keys in a session's box: Enter sends the words typed, or with none the
@@ -694,8 +581,9 @@ async function cmdReply(s, body, label) {
     toast((j.busy === 'working' ? '🔨 일하는 중이라 보내면 끝난 뒤 이어서 처리됩니다' : '📨 앞서 보낸 답이 아직 전달 전입니다') + ' — 그래도 보내려면 한 번 더 Enter')
     return false
   }
-  toast('📨 ' + label + ' → ' + s.name)
+  toast('📨 ' + label + ' → ' + (s.summary || s.name))
   const waited = !!cmdCall(s.sid)
+  if (waited) tblMark((R) => R.row.sid === s.sid)
   cmd.sent[s.sid] = Date.now()
   // A session at work the person spoke to stays open: they went to it on purpose.
   if (!waited) {
@@ -705,11 +593,9 @@ async function cmdReply(s, body, label) {
     cmdAsk()
     return true
   }
-  // On to the next one waiting, as an answered brief goes on to the next brief.
-  const items = cmdItems(), at = items.findIndex(cmdIsSel)
-  const next = [...items.slice(at + 1), ...items.slice(0, Math.max(0, at))].find((it) => !it.c || Date.now() - (cmd.sent[it.c.sid] || 0) > 60000)
-  if (next) cmdGo(next)
-  else { cmdShut(); cmdRender() }
+  // On to the row's next need, else the next row (table.js): the answered
+  // call leaves the row for a minute (cmd.sent), as the server catches up.
+  tblAfter()
   return true
 }
 
@@ -733,7 +619,7 @@ function cmdNoteKey(e, p, q) {
 // Close the brief beside the panel; the floor shows again. A waiting
 // decision is not picked again on its own until the list changes.
 function cmdShut() {
-  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.ask = null; cmd.force = null; cmd.view = 'said'; cmd.card = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
+  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.ask = null; cmd.force = null; cmd.view = 'said'; cmd.card = null; cmd.row = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
   cmdRenderDoc()
   cmdRenderSay()
 }
@@ -769,12 +655,13 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
     cmdEl.querySelector('.decide .note[data-q="' + open[0].id + '"]')?.focus()
     return
   }
-  // On to the next row of 내 차례.
-  const next = cmdNextAfter({ p })
+  // Its row and the order marked, out of the data, then on: the row's next
+  // need, else the next row.
+  tblMark((R) => R.row.decisions?.includes(p.file))
   const rest = (cmd.data?.pending || []).filter((x) => x.file !== p.file)
   cmd.data.pending = rest
   commandCount(rest.length)
-  if (next) cmdGo(next); else { cmd.sel = null; cmdRender() }
+  tblAfter()
 }
 
 // Keys while the command view is up (office.html's officeKey asks first).
@@ -786,16 +673,16 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // card keeps C and ⌥C for its MCP reconnect. Esc goes back to the office
 // (first closing an open brief); in the task box or the note, Esc only
 // leaves the box and the next Esc closes. i to the task box on top, m to the
-// active question's box; j/k through the waiting briefs and then the
-// sessions waiting on the person and then the review items (never the
-// sessions at work, which wait on nobody); a digit arms an
+// active question's box; j/k through the table's rows that need the person
+// (never the rows folded under 그 밖, which wait on nobody); Tab / ⇧Tab
+// (⌥Tab, and ⌥[ ⌥] for TWeb's normal mode) through the open row's tabs; a digit arms an
 // option of the active question (a picked session's choice or quick reply;
 // 1 a review item's 확인함) and Enter sends it, so one stray key never
 // decides. ⌥I, ⌥J and ⌥K do what i, j and k do, for TWeb's normal mode
 // (⌥I from a box too). G (⌥G in its box) goes to a picked session's
 // tmux pane. T (⌥T in its box) turns a picked session's look between its
-// last answer and its card; on the card [ ] and ⌥1…⌥9 pick its tab, as on
-// the floor card. b (⌥B, ⇧ backwards) opens the brief line's next brief.
+// last answer and its card; on the card ⌥1…⌥9 pick its tab ([ ] are the
+// row's tabs; its shelf takes them only with no row open). b (⌥B, ⇧ backwards) opens the brief line's next brief.
 // X (⌥X) ends the picked session; an adopted one on a second press (crew.js). In a box every key is typing; its Enter is cmdNoteKey's
 // (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
@@ -811,11 +698,13 @@ function commandKey(e, k, typing) {
   if (k === 'b' && (e.altKey || !typing) && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdBriefWalk(e)
   if (/^[1-9]$/.test(k) && e.altKey && cmd.on && cmdCardUp() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmd.card.selectTab(+k - 1); return true }
   // ⌥M to a picked review item's box: TWeb's normal mode keeps bare m (live, 8899).
-  if (k === 'm' && e.altKey && !typing && cmd.on && cmd.sel?.review && cmdRev() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); revFocus(); return true }
+  if (k === 'm' && e.altKey && !typing && cmd.on && (cmd.sel?.review || cmd.sel?.revs) && cmdRev() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); revFocus(); return true }
   // ⌥I to the task box, from anywhere (a box included), and ⌥J/⌥K through
   // what waits on the person: TWeb's normal mode keeps bare i, j and k.
   if (k === 'i' && e.altKey && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdEl.querySelector('.say textarea')?.focus(); return true }
   if ((k === 'j' || k === 'k') && e.altKey && !typing && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdWalk(e, k)
+  // ⌥[ ⌥] (and ⌥Tab): the open row's tabs, where TWeb's normal mode keeps the bare keys.
+  if ((k === '[' || k === ']' || k === 'Tab') && e.altKey && !typing && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdTabKey(e, k === '[' || (k === 'Tab' && e.shiftKey) ? -1 : 1)
   if (e.altKey || typing) return false
   if (!cmd.on) {
     if (k === 'd') { e.preventDefault(); setCommand(true); return true }
@@ -830,6 +719,8 @@ function commandKey(e, k, typing) {
   if (k === 'Escape' || k === 'd') return hit(() => setCommand(false))
   // j/k only: the arrows walk the floor beside the panel.
   if (k === 'j' || k === 'k') return cmdWalk(e, k)
+  // Tab / ⇧Tab: the open row's tabs; with none open (or one tab) the floor's.
+  if (k === 'Tab') return cmdTabKey(e, e.shiftKey ? -1 : 1)
   const s = cmd.sel && cmd.sel.sid ? cmd.sel : null
   if (s) {
     const chs = cmdChoices(cmd.ask && cmd.ask.sid === s.sid ? cmd.ask : null)
@@ -837,9 +728,12 @@ function commandKey(e, k, typing) {
     if (k === 'Enter' && cmd.armed && cmd.armed.call === s.sid && chs[cmd.armed.i]) return hit(() => cmdReply(s, chs[cmd.armed.i].body, chs[cmd.armed.i].label))
     if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-call]')?.focus())
     if (k === 'g') return hit(() => cmdFocus(s))
-    if ((k === '[' || k === ']') && cmdCardUp()?.shelfTab) return hit(() => cmd.card.shelfTab(k === ']' ? 1 : -1))
   }
-  if (cmd.sel?.review && cmdRev() && revKey(k, cmd.sel, hit)) return true
+  // [ ]: the open row's tabs (Tab's twin); the card's own tabs are ⌥1…⌥9,
+  // and its shelf takes [ ] only when no row with two tabs is open.
+  if ((k === '[' || k === ']') && cmdTabKey(e, k === ']' ? 1 : -1)) return true
+  if (s && (k === '[' || k === ']') && cmdCardUp()?.shelfTab) return hit(() => cmd.card.shelfTab(k === ']' ? 1 : -1))
+  if ((cmd.sel?.review || cmd.sel?.revs) && cmdRev() && revKey(k, cmd.sel, hit)) return true
   if (cmd.sel?.slx && cmdSlx() && slxKey(k, cmd.sel, hit)) return true
   const p = cmd.sel && cmdPending(cmd.sel.file)
   const q = p && cmdActive(p)
@@ -851,16 +745,25 @@ function commandKey(e, k, typing) {
   return false
 }
 
-// j/k (⌥J/⌥K): to the next or previous thing waiting on the person.
-// Nothing picked, or a session at work picked (never in the walk): j starts
-// at the first, k at the last. Nothing waiting: the key is the floor's.
+// j/k (⌥J/⌥K): to the next or previous row that needs the person, in the
+// order the table shows. Nothing open, or a row from under 그 밖 (never in
+// the walk): j starts at the first, k at the last. Nothing waiting: the key
+// is the floor's.
 function cmdWalk(e, k) {
-  const list = cmdItems()
+  const list = tblOrder()
   if (!list.length) return false
   e.preventDefault()
-  const at = list.findIndex(cmdIsSel)
+  const at = list.indexOf(tblCur())
   const i = at < 0 ? (k === 'j' ? -1 : 0) : at
-  cmdGo(list[(i + (k === 'j' ? 1 : -1) + list.length) % list.length])
+  tblOpen(list[(i + (k === 'j' ? 1 : -1) + list.length) % list.length])
+  return true
+}
+
+// Tab / ⇧Tab: the open row's next or previous tab; false (the floor's key)
+// when no row with two tabs is open.
+function cmdTabKey(e, dir) {
+  if (!tblStep(dir)) return false
+  e.preventDefault()
   return true
 }
 

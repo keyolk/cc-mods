@@ -271,7 +271,7 @@ async function tick($: any) {
     // session can take its pane's name (a `claude -p` it ran, from a cc-mods
     // before register.ts kept those off the pane).
     const live = await alive($, unseen(ledger, seen, Date.now()).map((w) => w.sid))
-    const { ledger: l, changes } = observe(ledger, seen, Date.now(), live)
+    const { ledger: l, changes } = observe(ledger, seen, Date.now(), live, sums)
     let out = l
     // A quiet worker's asks are the person's own work: kept in its
     // row, not in the log the office shows.
@@ -285,7 +285,7 @@ async function tick($: any) {
     // person prompts again is labelled anew by the next one.
     if (Date.now() - summedAt > SUM_EVERY_MS) {
       summedAt = Date.now()
-      await summarize($, seen, await names($), await sessionInfo($, seen))
+      sums = await summarize($, seen, await names($), await sessionInfo($, seen))
     }
   } finally {
     ticking = false
@@ -293,6 +293,9 @@ async function tick($: any) {
 }
 let summedAt = 0
 const SUM_EVERY_MS = 60_000
+// The summaries the last one wrote: a wake and an inbox message name a
+// worker by what it was doing (lib/coord.ts who), not by its slug alone.
+let sums: Map<string, string> = new Map()
 
 // The ledger with every live session adopted (lib/coord.ts autoAdopt). The
 // other ledgers and the names are read only when a session is new (`full`:
@@ -784,7 +787,7 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
     // keep: an instruction reaches a worker in the middle of a long turn, which
     // may outlast the 2-minute stale limit of an unmarked inbox file.
     try {
-      await $.fs.write(inbox, JSON.stringify({ text: old ? old.text + '\n\n' + msg : msg, at: old?.at ?? now / 1000, keep: true, from: ctx!.sid(), slug: w.slug }))
+      await $.fs.write(inbox, JSON.stringify({ text: old ? old.text + '\n\n' + msg : msg, at: old?.at ?? now / 1000, keep: true, from: ctx!.sid(), slug: w.slug, ...(sums.get(w.sid) ? { summary: sums.get(w.sid) } : {}) }))
     } catch (e) {
       return { deny: 'coord_send: not delivered to ' + w.slug + ': no peer message (' + (peer?.reason ?? 'refused') + ') and the office inbox could not be written (' + String(e) + ')' }
     }
