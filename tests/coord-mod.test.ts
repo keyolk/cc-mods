@@ -79,7 +79,8 @@ test('coord: the running turn is kept where a reload keeps it, and a worker clos
   expect(submitted.filter((t) => t.startsWith('[coord]'))).toEqual([])
   panes = ''
   const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'brief-decision-4' } as any)
-  expect(r.result).toBe("Closed brief-decision-4's window.")
+  // A worker from before coord_spawn recorded what it made had its own window.
+  expect(r.result).toBe("Closed brief-decision-4's window @134.")
   await $.turn.complete({ turnId: 't1', answer: 'closed it', durationMs: 5, isAborted: false, usage: null } as any)
   expect(turn.at(-1)).toBeNull()
   await clock.advance(1_000)
@@ -113,7 +114,9 @@ function spawnRun(argv: string[]): string | undefined {
   if (argv[0] === 'git' && argv.includes('symbolic-ref')) return 'origin/main'
   if (argv[0] === 'git' && argv.includes('get-url')) return 'git@github.com:keyolk/autoreview.git'
   if (argv[0] === 'uuidgen') return 'U-1'
-  if (argv[0] === 'tmux' && argv[1] === 'display-message') return 'main'
+  // The coordinator's pane, 100x30: too small to split either way, so these
+  // spawns fall back to a window.
+  if (argv[0] === 'tmux' && argv[1] === 'display-message') return 'main\t100\t30'
   if (argv[0] === 'tmux' && argv[1] === 'new-window') return '@9 %90'
   return undefined
 }
@@ -130,6 +133,10 @@ test('coord: a repository Claude Code does not trust is not refused: the worker 
   const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/autoreview' } as any)
   const wt = '/home/u/worktrees/autoreview/ar-x'
   expect(r.result).toContain('cwd /home/u/research/ar-x, add-dirs ' + wt + '.')
+  // The coordinator's pane is 100x30: a window instead, and the result says why.
+  expect(r.result).toContain('in a new window @9 (pane %90): your pane (100x30) is too small to split')
+  expect(runs.some((a) => a[0] === 'tmux' && a[1] === 'split-window')).toBe(false)
+  expect(JSON.parse(files[LEDGER]!).workers[0].made).toEqual({ kind: 'window', pane: '%90', window: '@9' })
   expect(r.result).toContain('/src/autoreview is not trusted by Claude Code')
   expect(r.result).toContain('`git -C ' + wt + '`')
   expect(r.result).toContain(".claude settings (hooks, permissions, MCP) do not apply")
@@ -220,4 +227,53 @@ test('coord_route: one cheap model call over the live sessions; its answer is ch
   const f = JSON.stringify(await $.tool.call({ tool: 'mcp__cc-mods__coord_route', task: 'x' } as any))
   expect(f).toContain('no answer (api-error 529 overloaded)')
   expect(f).toContain('nothing was decided')
+})
+
+// A worker in a pane split off the coordinator's (%1), at work.
+const paneLedger = () => JSON.stringify({ on: true, sid: 'sid-1', name: 'cc-mods-d9', limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 4 }, workers: [{ slug: 'coord-route', sid: 'w96', relation: 'owned', pane: '%386', window: '@1', made: { kind: 'pane', pane: '%386', window: '@1' }, cwd: '/r/cr', at: OLD, state: 'working', attention: 'none' }], log: [], at: OLD })
+
+test('coord_close kills the pane it made and nothing else: not the coordinator\'s pane, not its window', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: paneLedger() }
+  const runs: string[][] = []
+  stubs(on, { files, submitted: [], panes: () => '', runs, run: (a) => (a[0] === 'tmux' && a[1] === 'display-message' ? '@1' : undefined) })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'coord-route' } as any)
+  expect(r.result).toBe("Closed coord-route's pane %386.")
+  const kills = runs.filter((a) => a[0] === 'tmux' && a[1]!.startsWith('kill-'))
+  expect(kills).toEqual([['tmux', 'kill-pane', '-t', '%386']])
+  // A ledger that names the coordinator's own pane as the worker's: nothing is killed.
+  files[LEDGER] = paneLedger().replaceAll('%386', '%1')
+  runs.length = 0
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const self: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'coord-route' } as any)
+  expect(self.result).toContain('no pane or window of its own to close')
+  expect(runs.some((a) => a[0] === 'tmux' && a[1]!.startsWith('kill-'))).toBe(false)
+})
+
+test('coord: a claude -p child naming the worker\'s pane does not make the worker gone while its session lives', async ($, on) => {
+  // Live: coord-route's `claude -p` child (8edc482b) published itself in pane
+  // %386, and the coordinator heard "coord-route: its session is gone".
+  const files: Record<string, string> = { [LEDGER]: paneLedger() }
+  const submitted: string[] = []
+  let live = 'w96'
+  const asked: string[][] = []
+  stubs(on, {
+    files,
+    submitted,
+    panes: () => '%1\t@1\tsid-1\tdone\tnone\t/work\t\t\n%386\t@1\tchild-8edc\tworking\tnone\t/r/cr\t\t',
+    run: (a) => (a[0] === 'sh' && String(a[2]).includes('ps -o comm=') ? (asked.push(a.slice(3)), live) : undefined),
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await clock.advance(10_000)
+  await clock.advance(10_000)
+  expect(asked.at(-1)).toEqual(['/home/u', 'w96'])
+  expect(submitted.filter((t) => t.includes('gone'))).toEqual([])
+  expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeUndefined()
+  // The worker's own session ends: then it is gone.
+  live = ''
+  await clock.advance(10_000)
+  expect(submitted.filter((t) => t.includes('coord-route: its session is gone'))).toHaveLength(1)
+  expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeGreaterThan(0)
 })

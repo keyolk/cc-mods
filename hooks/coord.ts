@@ -7,7 +7,7 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, SPLIT_MIN, WAKE_PREFIX, WORKER_CAPS, active, closeArgv, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -43,7 +43,7 @@ const TOOLS = {
   spawn: {
     name: 'coord_spawn',
     description:
-      "Coordinator mode: start a worker claude in its own tmux window. With repo_dir, a worktree is made off origin's default branch at ~/worktrees/<repo>/<slug> on branch <slug>; with cwd, it runs there as is. The brief is saved to ~/research/<slug>/prompt.txt (always reachable) and reporting instructions are appended. In a repository (or cwd) Claude Code does not trust, the worker runs in ~/research/<slug> with the code as an add-dir, and its prompt says to use absolute paths and git -C. Refused above the person's limits, or when a live session already works in that directory unless overlap_ok (set it only after the person said to start another anyway).",
+      "Coordinator mode: start a worker claude in a pane split off yours in your tmux window (the person sees it there; a new window only when your pane is too small to split). With repo_dir, a worktree is made off origin's default branch at ~/worktrees/<repo>/<slug> on branch <slug>; with cwd, it runs there as is. The brief is saved to ~/research/<slug>/prompt.txt (always reachable) and reporting instructions are appended. In a repository (or cwd) Claude Code does not trust, the worker runs in ~/research/<slug> with the code as an add-dir, and its prompt says to use absolute paths and git -C. Refused above the person's limits, or when a live session already works in that directory unless overlap_ok (set it only after the person said to start another anyway).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -66,7 +66,7 @@ const TOOLS = {
   },
   close: {
     name: 'coord_close',
-    description: 'Coordinator mode: end a worker. Owned: closes its tmux window and removes its worktree (refused when the worktree has uncommitted changes). Adopted: hands it back to the person (the session keeps running).',
+    description: 'Coordinator mode: end a worker. Owned: kills the pane coord_spawn made for it (or its fallback window) and removes its worktree (refused when the worktree has uncommitted changes). Adopted: hands it back to the person (the session keeps running).',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' } }, required: ['slug'] },
   },
 }
@@ -136,6 +136,20 @@ async function panes($: any): Promise<PaneSeen[]> {
   return r.ok ? parsePanes(r.out) : []
 }
 
+// Of these session ids, the ones still alive: a claude process the session
+// registry names (checked to be claude, so a reused pid is not it), or a
+// transcript written in the last 3 minutes.
+const ALIVE_SH =
+  'h=$0; for s in "$@"; do p=$(jq -r --arg s "$s" \'select(.sessionId == $s) | .pid\' "$h"/.claude/sessions/*.json 2>/dev/null | head -1); ' +
+  'if [ -n "$p" ] && ps -o comm= -p "$p" 2>/dev/null | grep -q claude; then echo "$s"; continue; fi; ' +
+  'f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] && [ -n "$(find "$f" -mmin -3 2>/dev/null)" ] && echo "$s"; done'
+
+async function alive($: any, sids: string[]): Promise<Set<string>> {
+  if (!sids.length) return new Set()
+  const r = await sh($, ['sh', '-c', ALIVE_SH, ctx!.home(), ...sids], { timeoutMs: 5000 })
+  return new Set(r.out.split('\n').filter((x) => sids.includes(x)))
+}
+
 export function coordLedger(): Ledger | undefined {
   return ledger
 }
@@ -194,11 +208,15 @@ async function tick($: any) {
     // Panes first: a coord tool (close, spawn) may save the ledger while
     // tmux answers, and observing the ledger from before that would undo it.
     const seen = await panes($)
-    const { ledger: l, changes } = observe(ledger, seen, Date.now())
+    // A worker no pane names is gone only when its session is: another
+    // session can take its pane's name (a `claude -p` it ran, from a cc-mods
+    // before register.ts kept those off the pane).
+    const live = await alive($, unseen(ledger, seen, Date.now()).map((w) => w.sid))
+    const { ledger: l, changes } = observe(ledger, seen, Date.now(), live)
     let out = l
     for (const c of changes) out = logged(out, 'event', c.text, Date.now())
     if (changes.length || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
-    // A worker coord_close is closing: its window went first, its endedAt
+    // A worker coord_close is closing: its pane went first, its endedAt
     // comes when the close saves. Not news to the coordinator that closed it.
     pending.push(...changes.filter((c) => c.wake && !closing.has(c.sid)))
     await flush($)
@@ -269,7 +287,7 @@ export async function coordCommand($: any, args: string): Promise<string> {
       else for (const argv of restoreArgvs(before)) await ctx.policy.run(argv)
       await ctx.policy.reload()
     }
-    return 'Coordinator mode off; this session\'s policy is back to what it was. Workers keep running in their windows; the ledger stays for the next /coord on.'
+    return 'Coordinator mode off; this session\'s policy is back to what it was. Workers keep running in their panes; the ledger stays for the next /coord on.'
   }
   if (verb === 'limits') {
     if (!arg) return 'Limits: models ' + ledger.limits.models.join(', ') + '; effort up to ' + ledger.limits.maxEffort + '; ' + ledger.limits.maxWorkers + ' workers.'
@@ -455,23 +473,35 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   const promptFile = research + '/prompt.txt'
   await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid, at))
   const uuid = (await sh($, ['uuidgen'])).out.toLowerCase()
-  const sess = await sh($, ['tmux', 'display-message', '-p', '-t', ctx!.pane() ?? '', '#{session_name}'], { timeoutMs: 3000 })
-  if (!uuid || !sess.ok) return { deny: 'could not find this tmux session or make a session id' }
+  const me = ctx!.pane() ?? ''
+  const sess = await sh($, ['tmux', 'display-message', '-p', '-t', me, '#{session_name}\t#{pane_width}\t#{pane_height}'], { timeoutMs: 3000 })
+  if (!uuid || !sess.ok || !me) return { deny: 'could not find this tmux pane or make a session id' }
+  const [session = '', w0, h0] = sess.out.split('\t')
+  const width = Number(w0) || 0
+  const height = Number(h0) || 0
+  // Beside the coordinator, where the person sees it, unless its pane is too
+  // small to split.
+  const split = splitPlan(width, height)
   // The worker's policy is written under its session id before it starts,
   // so its first tool call already runs under it.
   for (const argv of policyArgvs(WORKER_CAPS)) {
     if (!(await ctx!.policy.run(argv, uuid))) return { deny: 'could not write the worker policy (' + argv.join(' ') + '); nothing was started' }
   }
-  const r = await sh($, ['tmux', ...workerArgv({ target: sess.out + ':', slug: req.slug, cwd: at.cwd, model: req.model, effort: req.effort, sid: uuid, promptFile, addDirs: at.addDirs })], { timeoutMs: 5000 })
-  if (!r.ok) return { deny: 'tmux new-window failed: ' + r.err }
-  const [window, pane] = r.out.split(' ')
+  const r = await sh($, ['tmux', ...workerArgv({ target: split ? me : session + ':', split, slug: req.slug, cwd: at.cwd, model: req.model, effort: req.effort, sid: uuid, promptFile, addDirs: at.addDirs })], { timeoutMs: 5000 })
+  if (!r.ok) return { deny: 'tmux ' + (split ? 'split-window' : 'new-window') + ' failed: ' + r.err }
+  const [window = '', pane = ''] = r.out.split(' ')
+  const made: Made = { kind: split ? 'pane' : 'window', pane, window }
+  if (pane) await sh($, ['tmux', ...titleArgv(pane, req.slug)], { timeoutMs: 3000 })
   const now = Date.now()
-  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, cwd: at.cwd, code: at.outside, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, addDirs: at.addDirs.length ? at.addDirs : undefined, at: now }
+  const w: Worker = { slug: req.slug, sid: uuid, relation: 'owned', pane, window, made, cwd: at.cwd, code: at.outside, worktree, repoDir: repoTop || undefined, repo: ghRepo, model: req.model, effort: req.effort as Worker['effort'], brief: promptFile, addDirs: at.addDirs.length ? at.addDirs : undefined, at: now }
   await save($, logged({ ...ledger!, workers: [...ledger!.workers, w] }, 'spawn', req.slug + ' ' + req.model + '/' + req.effort + ' in ' + at.cwd + (at.addDirs.length ? ' +' + at.addDirs.join(' +') : ''), now))
   if (ghRepo) await coordPolicy($)
   const o = at.outside
   const untrusted = o ? ' ' + trustTarget(place) + ' is not trusted by Claude Code, so the worker runs in ' + at.cwd + ' and reaches the code in ' + o + ' as an add-dir: brief it with absolute paths under ' + o + ' and `git -C ' + o + '`; that repository\'s .claude settings (hooks, permissions, MCP) do not apply there (its prompt says so).' : ''
-  return { result: 'Started worker ' + req.slug + ' in window ' + window + ' (pane ' + pane + '), session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
+  const where = split
+    ? 'in pane ' + pane + ', split ' + (split.dir === '-h' ? 'beside' : 'below') + ' yours (' + split.size + (split.dir === '-h' ? ' columns' : ' rows') + ') in window ' + window
+    : 'in a new window ' + window + ' (pane ' + pane + '): your pane (' + width + 'x' + height + ') is too small to split with ' + SPLIT_MIN.cols + ' columns or ' + SPLIT_MIN.rows + ' rows left on each side'
+  return { result: 'Started worker ' + req.slug + ' ' + where + ', session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
 }
 
 // The absolute common git dir of a checkout or worktree, undefined outside git.
@@ -531,7 +561,11 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
     if (dirty.ok && dirty.out) return { deny: w.worktree + ' has uncommitted changes; nothing was closed:\n' + dirty.out.split('\n').slice(0, 10).join('\n') }
   }
   closing.add(w.sid)
-  if (w.window) await sh($, ['tmux', 'kill-window', '-t', w.window], { timeoutMs: 3000 })
+  // Only what coord_spawn made, and never this session's own pane or window.
+  const me = ctx!.pane()
+  const myWindow = me ? (await sh($, ['tmux', 'display-message', '-p', '-t', me, '#{window_id}'], { timeoutMs: 3000 })).out : ''
+  const kill = closeArgv(w, { pane: me, window: myWindow || undefined })
+  if (kill) await sh($, ['tmux', ...kill], { timeoutMs: 3000 })
   let note = ''
   if (w.worktree) {
     // From the main checkout: git will not remove the worktree it runs in.
@@ -540,7 +574,7 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
   }
   await save($, logged({ ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid ? { ...x, endedAt: x.endedAt ?? now } : x)) }, 'close', w.slug, now))
   closing.delete(w.sid)
-  return { result: 'Closed ' + w.slug + "'s window" + note + '.' }
+  return { result: kill ? 'Closed ' + w.slug + "'s " + (kill[0] === 'kill-pane' ? 'pane ' : 'window ') + kill[2] + note + '.' : 'Ended ' + w.slug + ' in the ledger; it had no pane or window of its own to close' + note + '.' }
 }
 
 // The coordinator's own policy: COORD_CAPS plus a merge scope for each

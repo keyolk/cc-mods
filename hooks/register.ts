@@ -324,6 +324,16 @@ async function tmux($: any, argvs: string[][]) {
   }
 }
 
+// The pane's identity and state (@cc_pane_session, @cc_*state, the typed
+// mark, @cc_web_page): written only by a session a person can prompt. A
+// `claude -p` run from a session's Bash inherits its TMUX_PANE: writing there
+// would name the child's session id as the pane's, and a coordinator reading
+// the pane would hear its worker was gone (live: coord-route, pane %386,
+// worker 96a4ba54, child 8edc482b).
+async function ownPane($: any, argvs: string[][]) {
+  if (interactive) await tmux($, argvs)
+}
+
 // Last value written per tmux option, so a hook that fires on every redraw
 // (the question dialog renders many times) does not spawn tmux each time.
 const published = new Map<string, string>()
@@ -340,7 +350,7 @@ async function publish($: any, state: CcState | undefined, attention: Attention 
   for (const [k, v] of changed) published.set(k, v)
   const keep = new Set(changed.map(([k]) => k))
   const extras = Object.fromEntries(changed.filter(([k]) => k !== '@cc_state' && k !== '@cc_attention'))
-  await tmux(
+  await ownPane(
     $,
     publishArgv(
       pane!,
@@ -2811,7 +2821,7 @@ const WEB_PAGE_OPT = '@cc_web_page'
 async function setWebKeyboard($: any, mode: 'controls' | 'page') {
   await update($, webKeyboardA, () => mode)
   if (!isPaneId(pane)) return
-  await tmux($, [mode === 'page' ? ['set-option', '-p', '-t', pane, WEB_PAGE_OPT, '1'] : ['set-option', '-p', '-t', pane, '-u', WEB_PAGE_OPT]])
+  await ownPane($, [mode === 'page' ? ['set-option', '-p', '-t', pane, WEB_PAGE_OPT, '1'] : ['set-option', '-p', '-t', pane, '-u', WEB_PAGE_OPT]])
 }
 
 // Switch keyboard ownership on the Web tab. A Client can only take the
@@ -3495,7 +3505,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       ['fold', 'fold finished tool calls to one line (/focus is built in)'],
       ['route', 'let Jev pick each turn\'s effort (and model): on, off, model on|off', '[on|off|model on|off]'],
       ['office', 'every session in tmux as a character in a quarter-view office; click one to answer it', ''],
-      ['coord', 'coordinator mode: this session starts worker sessions in their own tmux windows and asks you before deciding', '[on|off|adopt <pane|name>|release <slug>|limits ...]'],
+      ['coord', 'coordinator mode: this session starts worker sessions in panes beside it and asks you before deciding', '[on|off|adopt <pane|name>|release <slug>|limits ...]'],
       ['web', 'open a page in the cockpit Web tab (TWeb drawn in this pane); no argument shows the tab, "close" stops it', '[url | close | --electron|--chrome|--webkit url]'],
       ['browser', 'where this session opens links: TWeb (Electron), TWeb on your Chrome or on WebKit, or the Chrome tab group', '[tweb|tweb-chrome|tweb-webkit|chrome|inherit]'],
     ]
@@ -3544,7 +3554,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       // The pane may outlive the session (a shell after `claude` exits): leave
       // it opening links the way the window does, not the way this session did.
       const unset = isPaneId(pane) && browser !== 'inherit' ? [browserArgv(pane, 'inherit')] : []
-      await tmux($, isPaneId(pane) ? [...clearArgv(pane), ...unset] : [])
+      await ownPane($, isPaneId(pane) ? [...clearArgv(pane), ...unset] : [])
     }
     published.clear()
     return next(e)
@@ -4144,7 +4154,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // The person typed here themselves (a coordinator's instructions come in
     // through the office inbox, a plugin prompt): a coordinator holding this
     // session as a worker leaves it alone for a while (lib/coord.ts HOLD_MS).
-    if (e.origin?.kind === 'composer' && !String(e.text ?? '').startsWith('/') && isPaneId(pane)) void tmux($, [['set', '-p', '-t', pane!, '@cc_human_at', String(Math.floor(Date.now() / 1000))]])
+    if (e.origin?.kind === 'composer' && !String(e.text ?? '').startsWith('/') && isPaneId(pane)) void ownPane($, [['set', '-p', '-t', pane!, '@cc_human_at', String(Math.floor(Date.now() / 1000))]])
     // A prompt to Claude takes the person's attention to the chat; a slash
     // command (/web, /reload-plugins) does not.
     if (e.origin?.kind === 'composer' && !String(e.text ?? '').startsWith('/')) void update($, uiA, (u) => ({ ...u, promptAt: Date.now() }))

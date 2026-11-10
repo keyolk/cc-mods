@@ -109,15 +109,35 @@ test('a turn publishes working, then the classified attention, on this pane only
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   mock.clock(on)
-  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'do the thing please, it is long enough', origin: { kind: 'composer' }, wait: false } as any)
   await $.turn.start({ turnId: 't1', text: 'do the thing please, it is long enough' })
   await $.turn.complete({ turnId: 't1', answer: '머지해 주실래요?', durationMs: 5, isAborted: false, usage: null } as any)
-  const tmux = runs.filter((a) => a[0] === 'tmux')
+  // Interactive, it also reads the other windows (list-windows): every write is to this pane.
+  const tmux = runs.filter((a) => a[0] === 'tmux' && a[1] !== 'list-windows')
   expect(tmux.every((a) => a.includes('%42'))).toBe(true)
   const states = tmux.filter((a) => a.includes('@cc_state')).map((a) => a[a.length - 1])
   expect(states).toEqual(['working', 'waiting'])
   expect(tmux.some((a) => a.includes('@cc_attention') && a[a.length - 1] === 'ask')).toBe(true)
+})
+
+test('a claude -p run from a session in this pane never writes the pane: not its session id, state, a typed mark, or the end clear', async ($, on) => {
+  // Live: worker coord-route (pane %386, sid 96a4ba54) ran `claude -p` from
+  // its Bash; the child (8edc482b) inherited TMUX_PANE and published itself
+  // as the pane's session, and the coordinator heard "coord-route: its
+  // session is gone" while the worker was alive.
+  const runs = baseStubs(on, { pane: '%42' })
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  mock.clock(on)
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.prompt.submit({ text: 'route this task for the coordinator please', origin: { kind: 'composer' }, wait: false } as any)
+  await $.turn.start({ turnId: 't1', text: 'route this task for the coordinator please' })
+  await $.turn.complete({ turnId: 't1', answer: '{"action":"send"}', durationMs: 5, isAborted: false, usage: null } as any)
+  await $.session.end({ reason: 'other', sessionId: 'sid-1', resume: {} } as any)
+  const writes = runs.filter((a) => a[0] === 'tmux' && (a[1] === 'set' || a[1] === 'set-window-option' || a[1] === 'set-option'))
+  expect(writes).toEqual([])
 })
 
 test('an asked tool call that runs (auto mode allowed it) puts the pane back to working', async ($, on) => {
@@ -129,7 +149,7 @@ test('an asked tool call that runs (auto mode allowed it) puts the pane back to 
   on('tool.check', () => ({ decision: 'ask' }))
   on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
   mock.clock(on)
-  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'read the readme and the office code', origin: { kind: 'composer' }, wait: false } as any)
   await $.turn.start({ turnId: 't1', text: 'read the readme and the office code' })
   await $.tool.check({ tool: 'Bash', input: { command: 'sed -n 1,9p README.md && ls' }, tool_use_id: 'tu-1' } as any)
@@ -156,7 +176,7 @@ test('a dialog for one of two parallel asked calls keeps the pane asking, named,
   on('classic.PermissionRequest', () => ({}) as any)
   on('classic.Notification', () => ({}) as any)
   mock.clock(on)
-  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'read the brief tool', origin: { kind: 'composer' }, wait: false } as any)
   await $.turn.start({ turnId: 't1', text: 'read the brief tool' })
   const brief = { file_path: '/home/u/worktrees/briefs/b/bin/brief.py' }
@@ -193,7 +213,7 @@ test('a dialog marked outside this process (cc-ask-dialog) does not leave anothe
   on('tool.check', () => ({ decision: 'ask' }))
   on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
   mock.clock(on)
-  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'read the two briefs', origin: { kind: 'composer' }, wait: false } as any)
   await $.turn.start({ turnId: 't1', text: 'read the two briefs' })
   await $.tool.check({ tool: 'Read', input: { file_path: '/x/a.py' }, tool_use_id: 'tu-1' } as any)
@@ -217,7 +237,7 @@ test('auto_continue answers a plain proceed question after a pause the person ca
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   const clock = mock.clock(on)
-  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await $.prompt.submit({ text: 'fix the flaky test please', origin: { kind: 'composer' }, wait: false } as any)
   await $.turn.start({ turnId: 't1', text: 'fix the flaky test please' })
   await $.turn.complete({ turnId: 't1', answer: '원인을 찾았습니다.\n\n이어서 테스트도 고칠까요?', durationMs: 5, isAborted: false, usage: null } as any)
@@ -869,7 +889,7 @@ test('the Web tab: /web starts the bridge, the region draws a marker, a click re
     fetched.push({ url: e.url, body: e.init?.body, socketPath: e.init?.socketPath })
     return { value: { status: 200, ok: true, headers: {}, text: '{}' } }
   })
-  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   const r: any = await $.command.run({ command: 'web', args: 'example.com', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as any)
   expect(r.text).toMatch(/Opening https:\/\/example\.com/)
   const argv = spawned.find((a) => a.some((x) => x.endsWith('/bin/cc-browser')))!
@@ -2971,7 +2991,7 @@ test('/office restarts a server left over from older code and keeps a current on
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
 })
 
-test('coordinator: /coord on registers the tools; a spawn reads its arguments off the call and starts a worker window', async ($, on) => {
+test('coordinator: /coord on registers the tools; a spawn reads its arguments off the call and splits a worker pane off the coordinator\'s', async ($, on) => {
   const written: Record<string, string> = {}
   const policyEnvs: { sid: string; argv: string[]; at: number }[] = []
   const trust = { json: JSON.stringify({ projects: { '/home/u': { hasTrustDialogAccepted: true }, '/src/tmc': { hasTrustDialogAccepted: true }, '/src/odd': [] } }) }
@@ -2990,8 +3010,8 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
       if (a[0] === 'git') return { code: 0, out: '' }
       if (a[0] === 'uuidgen') return { code: 0, out: 'ABC-1' }
       if (a[0] === 'test' && a[1] === '-d') return { code: a[2] === '/home/u/worktrees/briefs' ? 0 : 1, out: '' }
-      if (a[0] === 'tmux' && a[1] === 'display-message') return { code: 0, out: 'main' }
-      if (a[0] === 'tmux' && a[1] === 'new-window') return { code: 0, out: '@9 %90' }
+      if (a[0] === 'tmux' && a[1] === 'display-message') return { code: 0, out: 'main\t200\t50' }
+      if (a[0] === 'tmux' && a[1] === 'split-window') return { code: 0, out: '@4 %90' }
       if (a[0] === 'tmux' && a[1] === 'list-panes') return { code: 0, out: '' }
       return undefined
     },
@@ -3017,17 +3037,21 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   expect(JSON.stringify(missing)).toContain('add_dirs: /nope is not an existing directory')
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree'))).toBe(false)
   const ok: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/tmc', add_dirs: ['~/worktrees/briefs/'] })
-  expect(JSON.stringify(ok)).toContain('Started worker tmc-x in window @9 (pane %90)')
+  expect(JSON.stringify(ok)).toContain('Started worker tmc-x in pane %90, split beside yours (66 columns) in window @4')
   expect(JSON.stringify(ok)).toContain('add-dirs /home/u/worktrees/briefs, /home/u/research/tmc-x')
-  const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'new-window')!
-  expect(nw).toContain('main:')
+  // Split off the coordinator's own pane (%42), detached, a third of its 200 columns.
+  const nw = runs.find((a) => a[0] === 'tmux' && a[1] === 'split-window')!
+  expect(nw.slice(0, 10)).toEqual(['tmux', 'split-window', '-d', '-h', '-l', '66', '-P', '-F', '#{window_id} #{pane_id}', '-t'])
+  expect(nw[10]).toBe('%42')
+  expect(runs.some((a) => a[0] === 'tmux' && (a[1] === 'new-window' || a[1] === 'select-layout'))).toBe(false)
+  expect(runs).toContainEqual(['tmux', 'set', '-p', '-t', '%90', '@title', 'w:tmc-x'])
   // Its research folder (the brief, the evidence) is always reachable.
   expect(nw.slice(-8)).toEqual(['worker', 'sonnet', 'low', 'abc-1', 'tmc-x', '/home/u/research/tmc-x/prompt.txt', '--add-dir=/home/u/worktrees/briefs', '--add-dir=/home/u/research/tmc-x'])
   expect(runs.some((a) => a[0] === 'git' && a.includes('worktree') && a.includes('/home/u/worktrees/tmc/tmc-x'))).toBe(true)
   expect(written['/home/u/research/tmc-x/prompt.txt']).toContain('worker `tmc-x`')
   expect(written['/home/u/research/tmc-x/prompt.txt']).toMatch(/python3 \S+\/bin\/coord-report sid-1 '\[worker tmc-x\]/)
   const ledger = JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
-  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane, w.addDirs])).toEqual([['tmc-x', 'owned', '%90', ['/home/u/worktrees/briefs', '/home/u/research/tmc-x']]])
+  expect(ledger.workers.map((w: any) => [w.slug, w.relation, w.pane, w.made, w.addDirs])).toEqual([['tmc-x', 'owned', '%90', { kind: 'pane', pane: '%90', window: '@4' }, ['/home/u/worktrees/briefs', '/home/u/research/tmc-x']]])
   // The worker's policy was written under its own session id before its window opened.
   const pol = (argv: string[]) => argv[0] === 'python3' && String(argv[1]).endsWith('session_policy.py')
   const nwAt = runs.indexOf(nw)

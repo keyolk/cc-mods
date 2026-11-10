@@ -150,8 +150,8 @@ Esc leaves the field; ✕ clears it.
 ## Coordinator mode (`/coord`)
 
 One session hands work to worker sessions and asks you before anything your
-decision rides on. You keep both ways of working: go to any worker's tmux
-window and type there, or talk only to the coordinator.
+decision rides on. You keep both ways of working: type in any worker's pane
+(it sits beside the coordinator's), or talk only to the coordinator.
 
 | You run | It does |
 |---|---|
@@ -169,7 +169,14 @@ sessions from Bash, which the tmux guard keeps in its own window):
 - `coord_spawn`: a worktree off origin at `~/worktrees/<repo>/<slug>`, the
   brief in `~/research/<slug>/prompt.txt`, and `claude --model --effort
   --permission-mode auto --disallowedTools AskUserQuestion --session-id` in a
-  new window `w:<slug>` of your tmux session. Refused above your limits, and
+  pane split off the coordinator's own (`split-window -d`, so your keyboard
+  stays put), labelled `@title w:<slug>`. The longer side of the
+  coordinator's pane is split (beside it when the pane is wider than twice its
+  height, else below) and the worker gets a third; no `select-layout` runs, so
+  tweb panes and the cockpit in that window keep their sizes. When neither
+  side leaves 60 columns (or 15 rows) to both panes, the worker gets a new
+  window `w:<slug>` in your tmux session instead, and the result says so. The
+  ledger records the pane (or window) it made. Refused above your limits, and
   when a live session already works in that directory until you decide. The
   result names the other sessions in the same repository (its checkout, a
   worktree, or a folder under it), not the ones in a parent folder.
@@ -178,8 +185,8 @@ sessions from Bash, which the tmux guard keeps in its own window):
   allowed). `~/research/<slug>` (the brief, the evidence) is always one, unless
   it is the cwd itself.
 
-  **Dialogs nobody answers.** A worker's window has no one watching, so two
-  dialogs would stop it for good:
+  **Dialogs nobody answers.** A worker's pane usually has no one typing in
+  it, so two dialogs would stop it for good:
 
   | Dialog | When | What `coord_spawn` does |
   |---|---|---|
@@ -201,20 +208,27 @@ sessions from Bash, which the tmux guard keeps in its own window):
   put a folder it needs in `add_dirs`.
 - `coord_send`: an instruction to an owned or adopted worker, through the
   office inbox (it arrives as `[coordinator] …`).
-- `coord_close`: closes an owned worker's window and removes its worktree
-  (refused with uncommitted changes); an adopted one is handed back.
+- `coord_close`: kills the pane `coord_spawn` made for an owned worker (or
+  its fallback window), never the coordinator's own pane or window or any pane
+  it did not make, and removes its worktree (refused with uncommitted
+  changes); an adopted one is handed back.
 
 Each side gets its own session policy. `/coord on` saves this session's
 policy and sets the coordinator's: merge only in the repositories its live
 workers are in (added at each spawn), keep going (auto_continue), no prod
 write, Slack or other windows; `/coord off` puts the saved one back. Under god
 mode the coordinator's policy becomes what god restores when it ends. Each
-worker's policy is written under its session id before its window opens: no
+worker's policy is written under its session id before its pane opens: no
 merge, prod write, Slack or other windows, keep going, and no effort or model
 routing (the coordinator chose them).
 
 Every 10 s it reads the workers' panes and tells the coordinator when one
 asks something, finishes a turn, exits, or when you typed in it yourself. A
+worker no pane names is gone only when its own session is: no `claude`
+process for its session id in `~/.claude/sessions` and no transcript write in
+3 minutes. Only an interactive session writes its pane's identity and state
+(`@cc_pane_session`, `@cc_*state`, the typed mark): a `claude -p` a worker
+runs from its Bash inherits `TMUX_PANE` but leaves the pane alone. A
 turn's end is the worker's `done`; a permission ask counts only when a second
 look still sees the same call (auto mode settles most in seconds: every Bash
 spends its first ~3 s deciding, so two calls caught on two looks are not one
