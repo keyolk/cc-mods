@@ -552,6 +552,9 @@ def _token() -> str:
 TOKEN = _token()
 INBOX = os.path.expanduser("~/.claude/state/office/inbox")
 OPTION = re.compile(r"^\s*([❯›>]\s*)?(\d)[.)]\s+(.+?)\s*$")
+# A dialog drawn beside a preview box (AskUserQuestion with a side panel)
+# pads each line out to the box's border: what is left of a line without it.
+FRAME = "│┃║|─━═╭╮╰╯┌┐└┘├┤ \t"
 
 
 def capture(pane: str) -> list[str]:
@@ -575,11 +578,11 @@ def dialog(lines: list[str]) -> dict | None:
             opts, cursor, first = [], False, i
         if opts and n != opts[-1]["n"] + 1:
             continue
-        opts.append({"n": n, "label": m.group(3)[:90]})
+        opts.append({"n": n, "label": m.group(3).strip(FRAME)[:90]})
         cursor = cursor or bool(m.group(1))
     if len(opts) < 2 or not cursor or first is None:
         return None
-    question = next((tail[j].strip() for j in range(first - 1, -1, -1) if tail[j].strip() and not OPTION.match(tail[j])), "")
+    question = next((tail[j].strip(FRAME) for j in range(first - 1, -1, -1) if tail[j].strip(FRAME) and not OPTION.match(tail[j])), "")
     return {"question": question[:160], "options": opts}
 
 
@@ -1118,14 +1121,39 @@ def pane_of(sid: str) -> dict | None:
     """The session's pane and window, from tmux alone (snapshot() also reads
     every session's transcript and takes seconds)."""
     try:
-        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}|#{window_id}|#{@cc_pane_session}"], capture_output=True, text=True, timeout=3).stdout
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_id}|#{window_id}|#{@cc_pane_session}|#{session_name}:#{window_index}|#{window_name}|#{pane_current_path}"], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
     for line in out.splitlines():
-        pane, wid, s = (line.split("|") + ["", ""])[:3]
+        pane, wid, s, window, name, *cwd = (line.split("|") + [""] * 5)[:6]
         if s == sid:
-            return {"pane": pane, "wid": wid}
+            return {"pane": pane, "wid": wid, "window": window, "name": name, "cwd": "|".join(cwd)}
     return None
+
+
+def asking(sid: str) -> dict:
+    """What a session waiting on the person asks, for the command view: the
+    end of its last answer (command.ask_block), the choice on its screen if
+    one is drawn, else the quick replies the card offers. From tmux and the
+    transcript's tail only, so the view can ask it on every poll."""
+    me = pane_of(sid) if re.fullmatch(r"[0-9a-f-]{8,64}", sid or "") else None
+    if not me:
+        return {"error": "no such session"}
+    text = last_text(sid)
+    d = dialog(capture(me["pane"]))
+    return {"sid": sid, **me, **command.ask_block(text), "dialog": d, "suggestions": [] if d else suggestions(text), "inbox": inbox_waiting(sid)}
+
+
+def mark_human(pane: str) -> None:
+    """The person answered this session from the office: mark its pane as
+    their typing in it does (cc-mods sets @cc_human_at on a composer prompt;
+    an inbox prompt is a plugin's, so it does not). A coordinator then holds
+    it as its worker for a while (hooks/lib/coord.ts HOLD_MS) instead of
+    sending it a second answer of its own."""
+    try:
+        subprocess.run(["tmux", "set-option", "-p", "-t", pane, "@cc_human_at", str(int(time.time()))], capture_output=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def panels(sid: str) -> dict:
@@ -1340,6 +1368,7 @@ def act(body: dict) -> tuple[int, dict]:
         if not d or not any(str(o["n"]) == str(value) for o in d["options"]):
             return 409, {"error": "no dialog with that choice on its screen now"}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
+        mark_human(pane)
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
         # value: minutes to set it aside for, "speak" for until the person
@@ -1429,6 +1458,7 @@ def act(body: dict) -> tuple[int, dict]:
             if os.path.exists(os.path.join(INBOX, sid + ".json")):
                 return 409, {"error": "busy", "busy": "inbox"}
         inbox_put(sid, text)
+        mark_human(pane)
         return 200, {"ok": True, "sent": "reply"}
     if kind in ("send", "merge"):
         return rearrange(kind, me, value)
@@ -1677,7 +1707,10 @@ class Handler(BaseHTTPRequestHandler):
             sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
             return self.send(200, json.dumps(panels(sid)).encode(), "application/json")
         if self.path == "/command" or self.path.startswith("/command?"):  # not /command.js
-            return self.send(200, json.dumps(command.view(snapshot())).encode(), "application/json")
+            from urllib.parse import parse_qs, urlparse
+
+            sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
+            return self.send(200, json.dumps(asking(sid) if sid else command.view(snapshot())).encode(), "application/json")
         if self.path.startswith("/coord"):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):

@@ -281,7 +281,16 @@ of the coordinator that asked (else the worker, else the session that made the
 brief). Picking a worker row gives a box for an instruction to it, which goes
 to its coordinator as `[office→coord] <slug>: <text>` for `coord_send` to
 relay; the office never writes to a worker from this view (typing to a worker
-yourself is the floor's card, as before). The cockpit's Coord tab (0) lists
+yourself is the floor's card, as before). A session in the list of those
+waiting on the person (`🙋`) opens where a brief does: the end of its last
+answer (whole paragraphs up to 30 lines, `/command?sid=`), the choice drawn on
+its screen or the card's quick replies (`1-9` arms, Enter sends) and a box for
+an answer in the person's words; `j/k` walk the briefs and then these
+sessions. That answer goes to the session itself, as the card's reply or key
+does, not through `coord_say`, so a coordinator's hold on the worker never
+stops it; and the office marks the pane (`@cc_human_at`) as the person's own
+typing does, so the coordinator holds that worker for 10 minutes instead of
+answering it too. The cockpit's Coord tab (0) lists
 the same decisions as text. A session's card shows the newest brief it is
 recorded on (`sessions[].id` in the sidecar) as a badge that opens it.
 

@@ -288,7 +288,7 @@ def view(people: list[dict]) -> dict:
     # With nothing to decide the panel still says something: who waits on
     # the person across the floor, and the briefs written lately.
     calls = [
-        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "attention": p.get("attention"), "doing": p.get("doing")}
+        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug")}
         for p in people
         if p.get("attention") in ("ask", "alert")
     ]
@@ -297,6 +297,29 @@ def view(people: list[dict]) -> dict:
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
         recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
     return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "recent": recent}
+
+
+# What a session waiting on the person shows in the view's left pane: the
+# end of its last answer, where the question is, not the whole answer.
+ASK_LINES = 30
+ASK_CHARS = 3000
+
+
+def ask_block(text: str) -> dict:
+    """The end of a session's last answer: whole paragraphs from the end up to
+    ASK_LINES lines, or the last ASK_LINES lines of one longer paragraph, and
+    at most ASK_CHARS characters. `cut` says there is more above it."""
+    lines = (text or "").strip("\n").splitlines()
+    tail = lines[-ASK_LINES:]
+    if len(tail) < len(lines) and tail and lines[len(lines) - len(tail) - 1].strip():
+        # The tail starts mid-paragraph: open on the next whole one, if any.
+        start = next((i for i in range(1, len(tail)) if not tail[i - 1].strip() and tail[i].strip()), 0)
+        tail = tail[start:]
+    out = "\n".join(tail).strip("\n")
+    if len(out) > ASK_CHARS:
+        out = out[-ASK_CHARS:]
+        out = out[out.find("\n") + 1 :] if "\n" in out else out
+    return {"text": out, "cut": len(out) < len("\n".join(lines).strip("\n"))}
 
 
 def _mtime(path: str) -> float:

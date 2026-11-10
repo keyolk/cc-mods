@@ -10,6 +10,10 @@
 // goes to the office server, which records it on the brief and, once the
 // brief's last question is answered, hands them all to whoever asked
 // (office/command.py).
+// A session waiting on the person, picked in the list, opens there the same
+// way: the end of its last answer, the choice on its screen (or the card's
+// quick replies) and a box; an answer goes straight to that session, as the
+// floor card's reply does, never through a coordinator.
 // An instruction for a worker goes to its coordinator, never to the worker:
 // typing to a worker yourself is what the office floor's card is for.
 //
@@ -55,6 +59,15 @@ const CMD_CSS = `
 #command .feed { font: 12px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 0 0 10px; padding: 0; list-style: none; }
 #command .feed li { padding: 2px 4px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #command .feed li:hover { background: #f3ecdf; }
+#command .feed li.sel { background: #fff3c4; outline: 2px solid #2a2033; }
+#command .said { flex: 1; overflow: auto; padding: 10px 14px; font: 13px/1.55 -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; min-height: 0; }
+#command .said p { margin: 0 0 6px; }
+#command .said h1, #command .said h2, #command .said h3, #command .said h4 { font-size: 14px; margin: 8px 0 4px; }
+#command .said ul, #command .said ol { margin: 0 0 6px; padding-left: 18px; }
+#command .said code { font: 12px ui-monospace, Menlo, monospace; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; }
+#command .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; white-space: pre; }
+#command .said pre code { background: none; padding: 0; color: inherit; }
+#command .said .cut { color: #7a7090; font-size: 11px; margin-bottom: 6px; }
 #command .decide { border-top: 2px solid var(--line); padding: 8px 12px 10px; max-height: 45%; overflow: auto; }
 #command .decide .ask { font-size: 14px; margin-bottom: 6px; }
 #command .qa { padding: 6px 8px; margin: 0 -8px 4px; border-radius: 10px; }
@@ -70,9 +83,13 @@ const CMD_CSS = `
 @media (max-width: 760px) { #command { --cmd-w: calc(100vw - 20px); } #command .pane.right { right: 10px; bottom: 50%; } #command.doc-on .pane.left { top: 50%; } }
 `
 
-// armed: { q, i } (option i of question q, waiting for Enter); q: the question
-// digits and m go to, when the person picked one by hand.
-const cmd = { on: false, data: null, sel: null, worker: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0 }
+// sel: the picked brief ({ file, path, title }) or waiting session ({ sid,
+// name, window }). armed: { q, i } (option i of question q, waiting for
+// Enter), or { call: sid, i } for a session's choice; q: the question digits
+// and m go to, when the person picked one by hand. ask: what the picked
+// session asks (/command?sid=); force: a reply the server called busy, sent
+// anyway on a second Enter; sent: sid -> when the person last answered it.
+const cmd = { on: false, data: null, sel: null, worker: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {} }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
 document.body.appendChild(cmdEl)
@@ -127,6 +144,7 @@ async function cmdLoad() {
     const r = await fetch('/command', { cache: 'no-store' })
     if (r.ok) { cmd.data = await r.json(); commandCount(cmd.data.pending.length); cmdRender() }
   } catch { /* the server restarts: keep the last picture */ }
+  if (cmd.sel?.sid) cmdAsk()
   cmd.timer = setTimeout(cmdLoad, 3000)
 }
 
@@ -140,6 +158,26 @@ function cmdActive(p) {
   return open.find((q) => q.id === cmd.q) || open[0]
 }
 function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmd.q = null }
+const cmdCall = (sid) => (cmd.data?.calls || []).find((c) => c.sid === sid)
+function cmdPickCall(c) { cmd.sel = { sid: c.sid, name: c.name, window: c.window }; cmd.armed = null; cmd.q = null; cmd.force = null; cmdAsk() }
+// What j/k walk: the waiting briefs, then the sessions waiting on the person.
+function cmdItems() {
+  return [...(cmd.data?.pending || []).map((p) => ({ p })), ...(cmd.data?.calls || []).map((c) => ({ c }))]
+}
+const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : cmd.sel.sid === it.c.sid)
+function cmdGo(it) { if (it.p) cmdPick(it.p); else cmdPickCall(it.c); cmdRender() }
+
+async function cmdAsk() {
+  const sid = cmd.sel?.sid
+  if (!sid) return
+  try {
+    const r = await fetch('/command?sid=' + encodeURIComponent(sid), { cache: 'no-store' })
+    const j = await r.json()
+    if (cmd.sel?.sid !== sid) return
+    cmd.ask = j
+    cmdRenderDoc()
+  } catch { /* the server restarts: keep the last picture */ }
+}
 
 function cmdRender() {
   const d = cmd.data || { pending: [], coordinators: [] }
@@ -174,8 +212,8 @@ function cmdRender() {
   }
   if (!d.coordinators.length) out.push('<div class="m" style="margin-bottom:10px">켜진 coordinator가 없습니다. 세션에서 <code>/coord on</code>.</div>')
   const calls = d.calls || []
-  out.push('<h3>🙋 나를 기다리는 세션 <span class="m">' + calls.length + ' · 누르면 카드</span></h3>')
-  out.push(calls.length ? '<ul class="feed">' + calls.map((c) => '<li data-card="' + cmdEsc(c.sid) + '">' + (c.attention === 'alert' ? '❗ ' : '❓ ') + cmdEsc(c.name) + ' <span class="m">' + cmdEsc(c.window || '') + '</span></li>').join('') + '</ul>' : '<div class="m" style="margin-bottom:10px">없습니다.</div>')
+  out.push('<h3>🙋 나를 기다리는 세션 <span class="m">' + calls.length + ' · 누르면 옆에 열림 · j/k</span></h3>')
+  out.push(calls.length ? '<ul class="feed">' + calls.map((c) => '<li data-call="' + cmdEsc(c.sid) + '"' + (cmd.sel && cmd.sel.sid === c.sid ? ' class="sel"' : '') + '>' + (c.attention === 'alert' ? '❗ ' : '❓ ') + cmdEsc(c.name) + ' <span class="m">' + cmdEsc([c.window, c.boss ? '🎖 ' + c.boss : '', Date.now() - (cmd.sent[c.sid] || 0) < 60000 ? '📨 답 보냄' : ''].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<div class="m" style="margin-bottom:10px">없습니다.</div>')
   const recent = d.recent || []
   out.push('<h3>📄 최근 브리프 <span class="m">누르면 옆에 열림</span></h3>')
   out.push(recent.length ? '<ul class="feed">' + recent.map((b) => '<li data-brief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.file) + '">' + (b.pending ? '⏳ ' : '') + cmdEsc(b.title) + ' <span class="m">' + cmdEsc([b.by, cmdAgo(new Date(b.at * 1000).toISOString())].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<div class="m">브리프가 없습니다.</div>')
@@ -186,8 +224,8 @@ function cmdRender() {
 }
 
 function cmdClick(ev) {
-  const li = ev.target.closest('li[data-card]')
-  if (li) { if (typeof openCard === 'function') openCard(li.dataset.card); return }
+  const li = ev.target.closest('li[data-call]')
+  if (li) { const c = cmdCall(li.dataset.call); if (c) { cmdPickCall(c); cmdRender() } return }
   const a = ev.target.closest('[data-brief]')
   if (a) { ev.preventDefault(); cmdPick({ file: a.dataset.brief.split('/').pop(), path: a.dataset.brief, title: a.dataset.title }); return cmdRender() }
   const q = ev.target.closest('.q')
@@ -250,6 +288,7 @@ function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
   cmdEl.classList.toggle('doc-on', !!s)
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
+  if (s.sid) return cmdRenderCall(bar, doc, dec, s)
   // The frame is made once per brief: the 3 s refresh must not reload it.
   if (cmd.frame !== s.path) {
     cmd.frame = s.path
@@ -306,6 +345,107 @@ function cmdRenderDoc() {
   if (focused) dec.querySelector('.note[data-q="' + focused + '"]')?.focus()
 }
 
+// What a picked session offers to press: the choice drawn on its screen
+// (sent as that key), else the card's quick replies (sent as a reply).
+function cmdChoices(a) {
+  if (!a || a.error) return []
+  if (a.dialog) return a.dialog.options.map((o) => ({ label: o.label, body: { kind: 'key', value: String(o.n) } }))
+  return (a.suggestions || []).map((t) => ({ label: t, body: { kind: 'reply', value: t } }))
+}
+
+// A session waiting on the person, where a brief opens: the end of its last
+// answer (command.py ask_block), what it offers to press and a box. Redrawn
+// only when what it asks changes, so the 3 s poll keeps what is typed.
+function cmdRenderCall(bar, doc, dec, s) {
+  const a = cmd.ask && cmd.ask.sid === s.sid ? cmd.ask : null, c = cmdCall(s.sid)
+  if (cmd.frame !== 'call:' + s.sid) {
+    cmd.frame = 'call:' + s.sid
+    bar.innerHTML = '<b>🙋 ' + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span><button class="act card" title="이 세션의 카드 (지난 대화, 파일, btw)">🗂 카드</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+    bar.querySelector('.card').onclick = () => { if (typeof openCard === 'function') openCard(s.sid) }
+    bar.querySelector('.shut').onclick = cmdShut
+    doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
+    doc.innerHTML = '<div class="said"><div class="m">불러오는 중…</div></div>'
+    dec.dataset.key = ''
+  }
+  const said = doc.querySelector('.said'), skey = JSON.stringify(a && [a.error, a.text, a.cut])
+  if (a && said.dataset.key !== skey) {
+    said.dataset.key = skey
+    bar.querySelector('.m').textContent = [a.window || s.window, a.pane, a.cwd].filter(Boolean).join(' · ')
+    if (a.error) said.innerHTML = '<div class="m">' + (a.error === 'no such session' ? '이 세션이 없습니다 (창이 닫혔거나 끝났습니다).' : cmdEsc(a.error)) + '</div>'
+    else said.innerHTML = (a.cut ? '<div class="cut">… 앞부분 생략 · 전체는 🗂 카드</div>' : '') + (a.text ? (typeof md === 'function' ? md(a.text) : '<pre>' + cmdEsc(a.text) + '</pre>') : '<div class="m">마지막 답이 없습니다.</div>')
+    said.onclick = (ev) => { const l = ev.target.closest('a[data-open]'); if (l) { ev.preventDefault(); openLink(l.dataset.open) } }
+    // The question is at the end of the answer.
+    said.scrollTop = said.scrollHeight
+  }
+  const key = JSON.stringify([a && [a.error, a.dialog, a.suggestions, a.inbox], cmd.armed, !!c])
+  if (dec.dataset.key === key) return
+  const typed = dec.querySelector('.note[data-call]')?.value || '', focused = !!document.activeElement && dec.contains(document.activeElement)
+  dec.dataset.key = key
+  if (!a || a.error) { dec.style.display = 'none'; dec.innerHTML = ''; return }
+  dec.style.display = 'block'
+  const chs = cmdChoices(a)
+  dec.innerHTML = '<div class="m" style="margin-bottom:4px">' + cmdEsc(['→ 이 세션에 직접 (coordinator를 거치지 않음)', c && c.boss ? '🎖 ' + c.boss + '의 worker · 답하면 coordinator가 10분 동안 보내지 않음' : '', c ? '' : '지금은 기다리지 않음'].filter(Boolean).join(' · ')) + '</div>'
+    + (a.inbox ? '<div class="m" style="margin-bottom:4px">📨 앞서 보낸 답이 아직 전달 전: ' + cmdEsc(a.inbox.text) + '</div>' : '')
+    + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div><div class="opts"></div>'
+    // A choice drawn on its screen takes a key, not a prompt (as on the card).
+    + (a.dialog ? '' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다"></div>') + '</div>'
+  const opts = dec.querySelector('.opts')
+  chs.forEach((ch, i) => {
+    const b = document.createElement('button'), armed = cmd.armed && cmd.armed.call === s.sid && cmd.armed.i === i
+    b.className = 'act opt' + (armed ? ' armed' : '')
+    b.innerHTML = '<span class="key">' + (i + 1) + '</span>' + cmdEsc(ch.label)
+    b.onclick = () => cmdReply(s, ch.body, ch.label)
+    opts.appendChild(b)
+  })
+  const note = dec.querySelector('.note')
+  if (note) {
+    note.value = typed
+    note.onkeydown = (e) => cmdCallKey(e, s)
+    if (focused) note.focus()
+  }
+}
+
+// Keys in a session's box: Enter sends the words typed, or with none the
+// quick reply armed (a brief's box sends the armed option with the words as
+// its note; a session's reply has no note, so the words win), or a toast says
+// what to do. Esc leaves the box. Everything else is typing.
+function cmdCallKey(e, s) {
+  if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return true }
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return false
+  e.preventDefault()
+  const text = e.target.value.trim(), ch = cmd.armed && cmd.armed.call === s.sid ? cmdChoices(cmd.ask)[cmd.armed.i] : null
+  if (text) cmdReply(s, { kind: 'reply', value: text }, '답장')
+  else if (ch) cmdReply(s, ch.body, ch.label)
+  else toast('빠른 답을 고르거나(숫자 뒤 Enter, 또는 클릭) 답을 쓰고 Enter')
+  return true
+}
+
+// An answer to a waiting session, as the floor card sends it: a key for the
+// choice on its screen, or a reply (its next prompt, by the office inbox).
+// Not coord_say: the person answers the session itself, in their own words,
+// and the server marks the pane as theirs, so its coordinator holds it
+// instead of answering too. A session at work, or with a reply not yet
+// taken, is busy: a second Enter within 8 s sends it anyway, as on the card.
+async function cmdReply(s, body, label) {
+  const sig = JSON.stringify([s.sid, body])
+  const force = !!cmd.force && cmd.force.sig === sig && Date.now() - cmd.force.at < 8000
+  cmd.force = null
+  const j = await cmdPost({ sid: s.sid, ...body, ...(force ? { force: true } : {}) }, true)
+  if (!j) return
+  if (j.busy) {
+    cmd.force = { sig, at: Date.now() }
+    toast((j.busy === 'working' ? '🔨 일하는 중이라 보내면 끝난 뒤 이어서 처리됩니다' : '📨 앞서 보낸 답이 아직 전달 전입니다') + ' — 그래도 보내려면 한 번 더 Enter')
+    return
+  }
+  toast('📨 ' + label + ' → ' + s.name)
+  cmd.sent[s.sid] = Date.now()
+  // On to the next one waiting, as an answered brief goes on to the next brief.
+  const items = cmdItems(), at = items.findIndex(cmdIsSel)
+  const next = [...items.slice(at + 1), ...items.slice(0, Math.max(0, at))].find((it) => it.p || Date.now() - (cmd.sent[it.c.sid] || 0) > 60000)
+  if (next) cmdGo(next)
+  else { cmdShut(); cmdRender() }
+}
+
 // Keys in a question's box. Enter sends: the option armed for this question
 // with the box as its note; with none armed, the box itself as the answer
 // (직접 답); with neither, a toast says what to do. Esc leaves the box. The
@@ -326,15 +466,17 @@ function cmdNoteKey(e, p, q) {
 // Close the brief beside the panel; the floor shows again. A waiting
 // decision is not picked again on its own until the list changes.
 function cmdShut() {
-  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
+  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.ask = null; cmd.force = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
   cmdRenderDoc()
 }
 
-async function cmdPost(body) {
+// busyOk: a 409 that says busy comes back as { busy } for the caller to ask again.
+async function cmdPost(body, busyOk = false) {
   try {
     const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify(body) })
     if (r.status === 403) { staleToken(); return null }
     const j = await r.json().catch(() => ({}))
+    if (busyOk && r.status === 409 && j.busy) return j
     if (!r.ok) { toast('✕ ' + (j.error || r.status)); return null }
     return j
   } catch (e) { toast('✕ 못 보냈습니다: ' + e.message); return null }
@@ -376,9 +518,11 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // card keeps C and ⌥C for its MCP reconnect. Esc goes back to the office
 // (first closing an open brief); in the instruction box or the note, Esc
 // only leaves the box and the next Esc closes. i to the instruction box, m
-// to the active question's box; j/k through the waiting briefs; a digit arms
-// an option of the active question and Enter sends it, so one stray key
-// never decides. In a box every key is typing; its Enter is cmdNoteKey's.
+// to the active question's box; j/k through the waiting briefs and then the
+// sessions waiting on the person; a digit arms an option of the active
+// question (a picked session's choice or quick reply) and Enter sends it, so
+// one stray key never decides. In a box every key is typing; its Enter is
+// cmdNoteKey's (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
   const cardUp = typeof card !== 'undefined' && card.style.display === 'block'
   if (k === 'c' && (e.altKey || !typing) && !cardUp) { e.preventDefault(); setCommand(!cmd.on); return true }
@@ -392,14 +536,21 @@ function commandKey(e, k, typing) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   if (k === 'Escape' && cmd.sel) return hit(cmdShut)
   if (k === 'Escape' || k === 'd') return hit(() => setCommand(false))
-  const list = cmd.data?.pending || []
+  const list = cmdItems()
   // j/k only: the arrows walk the floor beside the panel.
   if ((k === 'j' || k === 'k') && list.length) {
     // Nothing picked (the view was closed on them): j starts at the first, k at the last.
-    const at = list.findIndex((p) => cmd.sel && p.file === cmd.sel.file)
+    const at = list.findIndex(cmdIsSel)
     const i = at < 0 ? (k === 'j' ? -1 : 0) : at
     const n = list[(i + (k === 'j' ? 1 : -1) + list.length) % list.length]
-    return hit(() => { cmdPick(n); cmdRender() })
+    return hit(() => cmdGo(n))
+  }
+  const s = cmd.sel && cmd.sel.sid ? cmd.sel : null
+  if (s) {
+    const chs = cmdChoices(cmd.ask && cmd.ask.sid === s.sid ? cmd.ask : null)
+    if (/^[1-9]$/.test(k) && +k <= chs.length) return hit(() => { cmd.armed = { call: s.sid, i: +k - 1 }; cmdRenderDoc(); toast('Enter로 「' + chs[+k - 1].label + '」 보내기') })
+    if (k === 'Enter' && cmd.armed && cmd.armed.call === s.sid && chs[cmd.armed.i]) return hit(() => cmdReply(s, chs[cmd.armed.i].body, chs[cmd.armed.i].label))
+    if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-call]')?.focus())
   }
   const p = cmd.sel && cmdPending(cmd.sel.file)
   const q = p && cmdActive(p)
