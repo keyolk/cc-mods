@@ -60,10 +60,10 @@ export type Worker = {
   attention?: string
   asks?: string // the tool call a permission ask waits on (@cc_pane_asks)
   asked?: string // what the coordinator was last woken for: the call, or the attention
-  heldAt?: number // the person typed in the worker's own pane
+  typedAt?: number // the person's last prompt in the worker's own pane
   // Adopted by autoAdopt, not handed over by the person. Until the
   // coordinator first instructs it (instructed), the person is the one
-  // driving it: its turns, asks and holds wake nobody (quiet).
+  // driving it: its turns and asks wake nobody (quiet).
   auto?: boolean
   instructed?: number
   endedAt?: number
@@ -87,9 +87,11 @@ export type Ledger = {
 }
 
 export const LOG_MAX = 200
-// The person typing in a worker's pane holds it this long after the last
-// prompt: the coordinator sends it nothing meanwhile.
-export const HOLD_MS = 10 * 60_000
+// The person's prompt in a worker's pane this recent is named in
+// coord_send's result, as a note. It refuses nothing: an instruction is a
+// plugin prompt (the office inbox, $.prompt.submit), queued behind their turn,
+// and the draft in their composer stays where it is.
+export const TYPED_MS = 10 * 60_000
 export const SPAWN_GRACE_MS = 60_000
 export const RELEASED_MAX = 200
 
@@ -232,9 +234,8 @@ export function autoAdopt(l: Ledger, seen: readonly PaneSeen[], names: ReadonlyM
     mine.add(s.sid)
     const slug = adoptSlug(names.get(s.sid), s.sid, taken)
     taken.add(slug)
-    // heldAt: the person's last prompt there, so a session they typed in a
-    // minute ago is held at once, as it would be had it been adopted then.
-    adopted.push({ slug, sid: s.sid, relation: 'adopted', auto: true, pane: s.pane, window: s.window, cwd: s.cwd, at: now, state: s.state, attention: s.attention, asks: s.asks, heldAt: s.humanAt })
+    // typedAt: the person's last prompt there, from before its adoption too.
+    adopted.push({ slug, sid: s.sid, relation: 'adopted', auto: true, pane: s.pane, window: s.window, cwd: s.cwd, at: now, state: s.state, attention: s.attention, asks: s.asks, typedAt: s.humanAt })
   }
   if (!adopted.length && kept.length === l.workers.length) return { ledger: l, adopted }
   const next = { ...l, at: now, workers: [...kept, ...adopted] }
@@ -367,7 +368,7 @@ export function parsePanes(out: string): PaneSeen[] {
 // call a permission ask waits on (lib/asks.ts).
 export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}\t#{@cc_pane_asks}'
 
-export type Change = { slug: string; sid: string; kind: 'ask' | 'held' | 'turn' | 'gone'; text: string; wake: boolean }
+export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone'; text: string; wake: boolean }
 const GONE = 'its session is gone'
 
 // Workers no pane names past their first minute: the ones observe would call
@@ -402,14 +403,11 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
     // (it is claude's command-line argument), so a mark from the spawn's
     // first minute is that, not the person. An adopted one was given no
     // brief: any mark after its adoption is the person.
+    // Recorded, not told: the person typing there stops nothing.
     const grace = w.relation === 'owned' ? SPAWN_GRACE_MS : 0
     const human = s.humanAt && s.humanAt > w.at + grace ? s.humanAt : undefined
-    const held = human && (!w.heldAt || human > w.heldAt) ? human : undefined
+    if (human && (!w.typedAt || human > w.typedAt)) next.typedAt = human
     const wake = !quiet(w)
-    if (held) {
-      next.heldAt = held
-      changes.push({ slug: w.slug, sid: w.sid, kind: 'held', text: w.slug + ': the person is typing in it; send it nothing until ' + new Date(held + HOLD_MS).toTimeString().slice(0, 5), wake })
-    }
     // waiting with ask or action is not a turn's end: ask is a question its
     // turn ended on or a permission dialog drawn, action a tool call put to
     // the permission mode. Under --permission-mode auto the classifier
@@ -454,20 +452,25 @@ const idle = (state: string | undefined) => state === 'done' || state === 'waiti
 // question, so a done after it is a turn's end.
 const rested = (w: Worker) => idle(w.state) && w.attention !== 'ask' && w.attention !== 'action'
 
-export function held(w: Worker, now: number): boolean {
-  return !!w.heldAt && now - w.heldAt < HOLD_MS
+export function typedLately(w: Worker, now: number): boolean {
+  return !!w.typedAt && now - w.typedAt < TYPED_MS
+}
+
+// coord_send's note on a worker the person prompted lately, else ''.
+export function typedNote(w: Worker, now: number): string {
+  if (!typedLately(w, now)) return ''
+  return ' Note: the person typed in this pane lately (' + new Date(w.typedAt!).toTimeString().slice(0, 5) + ', ' + Math.max(1, Math.round((now - w.typedAt!) / 60_000)) + ' min ago); the instruction is queued behind their turn and their draft is not touched.'
 }
 
 // Whether a wake held while the coordinator's turn ran still says something
-// true now that it can be delivered: the worker still asks, is still held,
-// is still idle after its turn. A gone worker stays gone.
+// true now that it can be delivered: the worker still asks, is still idle
+// after its turn. A gone worker stays gone.
 export function current(c: Change, l: Ledger, now: number): boolean {
   const w = l.workers.find((x) => x.sid === c.sid)
   if (!w) return false
   if (c.kind === 'gone') return true
   if (w.endedAt) return false
   if (c.kind === 'ask') return w.attention === 'ask' || w.attention === 'action'
-  if (c.kind === 'held') return held(w, now)
   return rested(w)
 }
 
@@ -511,7 +514,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
   // The quiet ones (every session the person runs, often twenty or more) go
   // on one line, so the table that rides on every turn stays the workers'.
   const mute = active(l).filter(quiet)
-  const rows = active(l).filter((w) => !quiet(w)).map((w) => '| ' + w.slug + ' | ' + w.relation + (w.auto ? ' (auto)' : '') + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (held(w, now) ? ' HELD by person' : '') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
+  const rows = active(l).filter((w) => !quiet(w)).map((w) => '| ' + w.slug + ' | ' + w.relation + (w.auto ? ' (auto)' : '') + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (typedLately(w, now) ? ' (person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) + ')' : '') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
   return [
     '# Coordinator mode (cc-mods)',
     'You are `' + l.name + '`, the coordinator. You orchestrate, verify, merge, clean up and report; you do not do the work yourself.',
@@ -522,7 +525,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     (l.limits.autoAdopt
       ? '- Every live session is your adopted worker while the mode is on (relation `adopted (auto)`), except another coordinator, its owned workers, and a session handed back: you may `coord_send` it a task that fits its directory and recent work. The ones listed as the person\'s are sessions the person drives that you have not instructed yet; their turns do not wake you. Adopted sessions do not count toward the worker limit. `coord_close` on an adopted one hands it back to the person (the pane stays) and it is not adopted again.'
       : '- Live sessions are not adopted automatically (/coord limits adopt off): only the ones the person handed over with /coord adopt are adopted.'),
-    '- Send instructions only with `coord_send`, and only to owned or adopted workers. Observed sessions are read-only: summarise them, never instruct them. A worker HELD by the person (they typed in its pane in the last 10 minutes) gets nothing until the hold ends.',
+    '- Send instructions only with `coord_send`, and only to owned or adopted workers. Observed sessions are read-only: summarise them, never instruct them. The person may type in any worker\'s pane while you send to it: that is fine (your instruction is queued behind their turn, their draft stays); `person typed HH:MM` and the note in coord_send\'s result are for your report, not a reason to hold back.',
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
@@ -538,7 +541,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): ' + limitsText(l.limits),
     rows.length ? '| worker | relation | model/effort | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
-    ...(mute.length ? ['Adopted, the person\'s (not instructed yet; coord_roster has their state): ' + mute.map((w) => w.slug + (held(w, now) ? ' HELD' : '') + ' ' + w.cwd).join(', ') + '.'] : []),
+    ...(mute.length ? ['Adopted, the person\'s (not instructed yet; coord_roster has their state): ' + mute.map((w) => w.slug + ' ' + w.cwd).join(', ') + '.'] : []),
   ].join('\n')
 }
 

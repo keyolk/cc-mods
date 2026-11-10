@@ -7,7 +7,7 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordSection, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -63,7 +63,7 @@ const TOOLS = {
   },
   send: {
     name: 'coord_send',
-    description: 'Coordinator mode: send an instruction to an owned or adopted worker (every live session is adopted by default); it arrives in that session as a prompt starting with [coordinator]. Refused for observed sessions and while the person holds the worker (they typed in its pane in the last 10 minutes).',
+    description: 'Coordinator mode: send an instruction to an owned or adopted worker (every live session is adopted by default); it arrives in that session as a prompt starting with [coordinator]. Refused for observed sessions. The person typing in that pane is no bar (the instruction is queued behind their turn and leaves their draft alone); the result notes it when they typed there in the last 10 minutes.',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' }, text: { type: 'string' } }, required: ['slug', 'text'] },
   },
   close: {
@@ -218,7 +218,7 @@ async function tick($: any) {
     const live = await alive($, unseen(ledger, seen, Date.now()).map((w) => w.sid))
     const { ledger: l, changes } = observe(ledger, seen, Date.now(), live)
     let out = l
-    // A quiet worker's holds and asks are the person's own work: kept in its
+    // A quiet worker's asks are the person's own work: kept in its
     // row, not in the log the office shows.
     for (const c of changes) if (c.wake || c.kind === 'gone') out = logged(out, 'event', c.text, Date.now())
     if (changes.length || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
@@ -347,7 +347,7 @@ export async function coordCommand($: any, args: string): Promise<string> {
     await save($, released(ledger, w, now))
     return 'Released ' + arg + '; it keeps running, now observed only, and is not adopted again (/coord adopt takes it back).'
   }
-  const rows = active(ledger).map((w) => '- ' + w.slug + ' · ' + w.relation + (w.auto ? ' (auto)' : '') + ' · ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' · ' + (w.state ?? '?') + (held(w, now) ? ' · held by you' : '') + ' · ' + (w.pane ?? ''))
+  const rows = active(ledger).map((w) => '- ' + w.slug + ' · ' + w.relation + (w.auto ? ' (auto)' : '') + ' · ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' · ' + (w.state ?? '?') + (typedLately(w, now) ? ' · you typed lately' : '') + ' · ' + (w.pane ?? ''))
   return 'Coordinator mode ' + (ledger.on ? 'on' : 'off') + ' as `' + ledger.name + '`.\n' + (rows.length ? rows.join('\n') : 'No workers.') + '\n/coord on|off|adopt <pane|name>|release <slug>|limits [models <list>|effort <level>|workers <n>|adopt on|off]'
 }
 
@@ -385,7 +385,7 @@ async function roster($: any): Promise<string> {
     .map((s) => {
       const w = mine.get(s.sid)
       const rel = s.sid === ledger!.sid ? 'self' : (w?.relation ?? 'observed') + (w?.auto ? ' (auto)' : '')
-      return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && held(w, now) ? ' HELD' : '') + ' | ' + s.cwd + ' |'
+      return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && typedLately(w, now) ? ' person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) : '') + ' | ' + s.cwd + ' |'
     })
   return '| name | relation | pane | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n')
 }
@@ -590,7 +590,6 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
   if (!w) return { deny: 'no owned or adopted worker ' + i.slug + '; observed sessions (another coordinator, its workers, one handed back) are not instructed: the person adopts one with /coord adopt <pane>' }
   if (!text) return { deny: 'empty instruction' }
   const now = Date.now()
-  if (held(w, now)) return { deny: 'the person is working in ' + w.slug + ' (held until ' + new Date(w.heldAt! + HOLD_MS).toTimeString().slice(0, 5) + '); tell the person instead' }
   // The office inbox (office.py inbox_put): the worker's cc-mods takes it
   // within 2 s and submits it there as a prompt.
   const inbox = ctx!.home() + '/.claude/state/office/inbox/' + w.sid + '.json'
@@ -606,7 +605,7 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
   // The first instruction ends a quiet worker's quiet: its reply is news.
   const l = w.instructed ? ledger! : { ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, instructed: now } : x)) }
   await save($, logged(l, 'send', w.slug + ': ' + text.slice(0, 200), now))
-  return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' }
+  return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' + typedNote(w, now) }
 }
 
 async function close($: any, i: any): Promise<{ result: string } | { deny: string }> {

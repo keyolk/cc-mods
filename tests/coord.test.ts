@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, DECISION_BRIEF, HOLD_MS, PANES_FMT, WORKER_CAPS, adoptSlug, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, DECISION_BRIEF, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -137,21 +137,22 @@ test('coord: a worker whose pane names another session is not gone while its own
   expect(unseen(on({ workers: [worker({ at: NOW - 5_000 }), worker({ slug: 'b', sid: 'w2', endedAt: NOW })] }), [], NOW)).toEqual([])
 })
 
-test('coord: the watch wakes the coordinator for a question, an exit and the person taking over', () => {
+test('coord: the watch wakes the coordinator for a question, a finished turn and an exit; the person typing is recorded, not told', () => {
   const l = on({ workers: [worker(), worker({ slug: 'b', sid: 'w2' }), worker({ slug: 'c', sid: 'w3' }), worker({ slug: 'fresh', sid: 'w4', at: NOW - 5_000 })] })
   const seen = parsePanes(['%1\t@1\tw1\tworking\task\t/w/tmc-layout\t', '%2\t@2\tw2\tdone\tnone\t/w/b\t' + Math.floor((NOW - 1000) / 1000), ''].join('\n'))
   const { ledger, changes } = observe(l, seen, NOW)
-  expect(changes.map((c) => c.slug)).toEqual(['tmc-layout', 'b', 'b', 'c'])
+  expect(changes.map((c) => c.slug)).toEqual(['tmc-layout', 'b', 'c'])
   expect(changes[0]!.text).toContain('waiting on an answer')
-  expect(changes[1]!.text).toContain('the person is typing')
-  expect(changes[2]!.text).toContain('finished its turn')
-  expect(changes[3]!.text).toContain('gone')
+  expect(changes[1]!.text).toContain('finished its turn')
+  expect(changes[2]!.text).toContain('gone')
+  expect(changes.some((c) => /send it nothing|typing/.test(c.text))).toBe(false)
   // Just started and not yet published: not counted gone.
   expect(ledger.workers.find((w) => w.slug === 'fresh')!.endedAt).toBeUndefined()
   expect(ledger.workers.find((w) => w.slug === 'c')!.endedAt).toBe(NOW)
   const b = ledger.workers.find((w) => w.slug === 'b')!
-  expect(held(b, NOW)).toBe(true)
-  expect(held(b, NOW + HOLD_MS)).toBe(false)
+  expect(b.typedAt).toBe(NOW - 1000)
+  expect(typedLately(b, NOW)).toBe(true)
+  expect(typedLately(b, NOW + TYPED_MS)).toBe(false)
   // Seen again unchanged: nothing new to say.
   expect(observe(ledger, seen, NOW + 10_000).changes).toEqual([])
 })
@@ -194,13 +195,12 @@ test('coord: a wake held through the coordinator\'s turn is delivered only while
   // Live: "its session is gone" was queued behind the coordinator's turn and
   // arrived two minutes later, after it had found out and respawned.
   const l = on({ workers: [worker({ state: 'done', attention: 'none' }), worker({ slug: 'b', sid: 'w2', endedAt: NOW }), worker({ slug: 'c', sid: 'w3', state: 'working', attention: 'none' })] })
-  const c = (sid: string, kind: 'ask' | 'held' | 'turn' | 'gone') => ({ slug: sid, sid, kind, text: '', wake: true })
+  const c = (sid: string, kind: 'ask' | 'turn' | 'gone') => ({ slug: sid, sid, kind, text: '', wake: true })
   expect(current(c('w1', 'turn'), l, NOW)).toBe(true)
   expect(current(c('w2', 'gone'), l, NOW)).toBe(true)
   // Working again (the coordinator sent it more): no longer finished.
   expect(current(c('w3', 'turn'), l, NOW)).toBe(false)
   expect(current(c('w3', 'ask'), l, NOW)).toBe(false)
-  expect(current(c('w1', 'held'), l, NOW)).toBe(false)
   expect(current(c('nobody', 'gone'), l, NOW)).toBe(false)
 })
 
@@ -258,9 +258,11 @@ test('coord: /coord limits', () => {
 test('coord: the brief, the worker\'s first prompt, does not count as the person typing', () => {
   const l = on({ workers: [worker({ at: NOW - 30_000 })] })
   const seen = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW - 29_000) / 1000))
-  expect(observe(l, seen, NOW).changes).toEqual([])
+  const first = observe(l, seen, NOW)
+  expect(first.changes).toEqual([])
+  expect(first.ledger.workers[0]!.typedAt).toBeUndefined()
   const later = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW + 60_000) / 1000))
-  expect(observe(l, later, NOW + 61_000).changes.map((c) => c.text)[0]).toContain('the person is typing')
+  expect(observe(l, later, NOW + 61_000).ledger.workers[0]!.typedAt).toBe(NOW + 60_000)
 })
 
 test('coord: a turn that ended between two ticks still wakes the coordinator', () => {
@@ -516,27 +518,28 @@ test('coord: /coord limits adopt on|off; a ledger from before the setting adopts
   expect(text).toContain('4 owned workers; auto-adopt on.')
 })
 
-test('coord: an auto-adopted session the person typed in is held; its own work wakes nobody until the coordinator instructs it', () => {
+test('coord: the person typing in an auto-adopted session is only noted; its own work wakes nobody until the coordinator instructs it', () => {
   const t = (ms: number) => String(Math.floor(ms / 1000))
-  // Typed 2 minutes before it was adopted: held at once, for the rest of HOLD_MS.
+  // Typed 2 minutes before it was adopted: noted for the rest of TYPED_MS.
   const [a] = autoAdopt(on(), parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t' + t(NOW - 120_000)), new Map(), new Set(), NOW).adopted
-  expect(a!.heldAt).toBe(NOW - 120_000)
-  expect(held(a!, NOW)).toBe(true)
-  expect(held(a!, NOW - 120_000 + HOLD_MS)).toBe(false)
-  // Typed again after adoption, even within the first minute: held anew, logged quietly.
-  const l = on({ workers: [{ ...a!, heldAt: undefined }] })
+  expect(a!.typedAt).toBe(NOW - 120_000)
+  expect(typedLately(a!, NOW)).toBe(true)
+  expect(typedNote(a!, NOW)).toBe(' Note: the person typed in this pane lately (' + new Date(NOW - 120_000).toTimeString().slice(0, 5) + ', 2 min ago); the instruction is queued behind their turn and their draft is not touched.')
+  expect(typedNote(a!, NOW - 120_000 + TYPED_MS)).toBe('')
+  // Typed again after adoption, even within the first minute: recorded, no change at all.
+  const l = on({ workers: [{ ...a!, typedAt: undefined }] })
   const r = observe(l, parsePanes('%7\t@1\tops\tworking\tnone\t/src/ops\t' + t(NOW + 5_000)), NOW + 6_000)
-  expect(r.changes).toEqual([expect.objectContaining({ kind: 'held', wake: false })])
-  expect(r.ledger.workers[0]!.heldAt).toBe(NOW + 5_000)
+  expect(r.changes).toEqual([])
+  expect(r.ledger.workers[0]!.typedAt).toBe(NOW + 5_000)
   // Its turns end silently, its asks do not wake; gone does not wake either.
-  const busy = on({ workers: [{ ...a!, state: 'working', heldAt: undefined }] })
+  const busy = on({ workers: [{ ...a!, state: 'working', typedAt: undefined }] })
   expect(observe(busy, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([])
   expect(observe(busy, parsePanes('%7\t@1\tops\twaiting\task\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'ask', wake: false })])
   expect(observe(busy, [], NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'gone', wake: false })])
   // Instructed once: its turns are news.
-  const told = on({ workers: [{ ...a!, state: 'working', heldAt: undefined, instructed: NOW + 1 }] })
+  const told = on({ workers: [{ ...a!, state: 'working', typedAt: undefined, instructed: NOW + 1 }] })
   expect(observe(told, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'turn', wake: true })])
   // Handed over by the person (/coord adopt): wakes as before.
-  const manual = on({ workers: [{ ...a!, auto: undefined, state: 'working', heldAt: undefined }] })
+  const manual = on({ workers: [{ ...a!, auto: undefined, state: 'working', typedAt: undefined }] })
   expect(observe(manual, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'turn', wake: true })])
 })

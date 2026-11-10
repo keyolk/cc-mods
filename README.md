@@ -180,8 +180,8 @@ sessions from Bash, which the tmux guard keeps in its own window):
 
   | Rule | For an adopted session |
   |---|---|
-  | held | you typed in its pane in the last 10 minutes (a prompt from before its adoption counts): `coord_send` is refused |
-  | quiet | until the coordinator first instructs it, it is yours: its turns, asks and holds wake nobody and stay out of the log |
+  | you typing | no bar: `coord_send` still delivers (queued behind your turn; your draft stays); a prompt of yours there in the last 10 minutes is a note in its result |
+  | quiet | until the coordinator first instructs it, it is yours: its turns and asks wake nobody and stay out of the log |
   | close | `coord_close` hands it back; its pane is never killed |
   | limit | `workers <n>` counts owned workers only; adopted ones never take a slot |
 
@@ -272,9 +272,11 @@ main) still knows it; and when the `[coord]` prompt leaves Claude Code's queue,
 its lines about workers closed since are dropped. Claude Code reloads a
 changed plugin right before one of its tools runs, so a coord tool called
 then waits (up to 20 s) for the new module to read the ledger instead of
-failing with `no tool.call hook answered this call`. A
-worker you typed in is **held** for 10 minutes: the coordinator sends it
-nothing. Workers report back with SendMessage (`READY <sha>`, `BLOCKED`,
+failing with `no tool.call hook answered this call`. You
+may type in any worker's pane while the coordinator sends to it: an
+instruction is a plugin prompt through the office inbox, queued behind your
+turn, and the draft in your composer stays; `coord_send` only notes that you
+typed there in the last 10 minutes. Workers report back with SendMessage (`READY <sha>`, `BLOCKED`,
 `QUESTION`); when SendMessage cannot reach the coordinator (its socket in
 `/tmp/cc-socks` is gone), with `bin/coord-report <sid> <text>`, which the
 brief names: it goes through the coordinator's office inbox. The ledger is `~/.claude/state/office/coord/<sid>.json`; the

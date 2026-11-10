@@ -369,15 +369,17 @@ test('coord: with the mode on every live session is adopted but another coordina
   expect(JSON.parse(files[LEDGER]!).workers.find((x: any) => x.sid === 'new1abcd')).toMatchObject({ slug: 'new1abcd', relation: 'adopted', auto: true })
 })
 
-test('coord: an auto-adopted session the person just typed in is held: coord_send refuses it', async ($, on) => {
+test('coord: an auto-adopted session the person just typed in still takes coord_send; the result notes it', async ($, on) => {
   const files: Record<string, string> = { [LEDGER]: ledgerJson() }
   const typed = String(Math.floor((Date.now() - 60_000) / 1000))
   stubs(on, { files, submitted: [], panes: () => ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%7\t@7\tops\tdone\tnone\t/src/ops-k8s\t' + typed + '\t'].join('\n'), run: (argv) => (argv[0] === 'sh' && String(argv[2]).includes('.claude/sessions') && !String(argv[2]).includes('ps -o') ? '{"s":"ops","n":"ops-k8s"}' : undefined) })
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_roster' } as any)
-  expect(r.result).toContain('| ops-k8s | adopted (auto) ops-k8s | %7 | done HELD |')
+  const at = new Date(Number(typed) * 1000).toTimeString().slice(0, 5)
+  expect(r.result).toContain('| ops-k8s | adopted (auto) ops-k8s | %7 | done person typed ' + at + ' |')
   const s: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'ops-k8s', text: 'x' } as any)
-  expect(s.deny).toContain('the person is working in ops-k8s')
-  expect(files['/home/u/.claude/state/office/inbox/ops.json']).toBeUndefined()
+  expect(s.deny).toBeUndefined()
+  expect(s.result).toBe('Sent to ops-k8s (%7). Note: the person typed in this pane lately (' + at + ', 1 min ago); the instruction is queued behind their turn and their draft is not touched.')
+  expect(JSON.parse(files['/home/u/.claude/state/office/inbox/ops.json']!).text).toBe('[coordinator] x')
 })
