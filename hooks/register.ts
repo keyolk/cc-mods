@@ -55,6 +55,7 @@ import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs,
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from './lib/asks'
 import { clip, hhmm } from './lib/text'
+import { INBOX_HOLD_MAX_MS, INBOX_TRIES, failWake, inboxPrompt, landed, parseInbox, putBack, resumed, type InboxMsg } from './lib/inbox'
 import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
 import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseOpen, parseSums, type ExpCheck } from './lib/exp'
@@ -1901,58 +1902,79 @@ async function refreshExp($: any, paths?: string[]) {
 }
 
 // The office (office/office.py, /office): a reply the person sent this
-// session from its quick-action card waits in a file named by session id;
-// it goes in as their own prompt, so the model reads it as typed. Taken once
-// (removed before submitting); one older than two minutes is dropped, unless
-// it is marked keep (a brief answer, an instruction for a coordinator, a
-// worker's coord-report): that one goes in up to a day late, saying how late.
-const INBOX_STALE_S = 120
-const INBOX_KEEP_S = 24 * 3600
-// A submit that failed puts the message back for the next tick; after this
-// many failures it is dropped, so a submit that never works does not loop.
-const INBOX_TRIES = 5
+// session from its quick-action card waits in a file named by session id
+// (lib/inbox.ts); it goes in as their own prompt, so the model reads it as
+// typed. A plugin's prompt waits for the session to be idle, so the file is
+// taken only then: taken mid-turn, the first message sat in the engine's
+// queue for the whole turn and held the inbox shut behind it. Taken, it is
+// moved aside (<sid>.json.sending), so what arrives meanwhile starts a new
+// file, and removed once the submit's turn started with the text in it.
 let officeBusy = false
 async function officeInbox($: any) {
   if (officeBusy || !home) return
   void officeSide($)
   void officeMcp($)
   const file = home + '/.claude/state/office/inbox/' + sid + '.json'
-  if (!(await $.fs.exists(file).catch(() => false))) return
+  const sending = file + '.sending'
   officeBusy = true
   try {
-    const raw = await readText($, file)
-    await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
-    let msg: { text?: unknown; at?: unknown; keep?: unknown; tries?: unknown } = {}
-    try {
-      msg = JSON.parse(raw ?? '{}')
-    } catch {
+    // One left aside by a module that reloaded while its submit waited: it
+    // may have gone in, or not; it goes back in front, saying so.
+    const left = parseInbox(await readText($, sending))
+    if (left) {
+      await $.fs.write(file, JSON.stringify(resumed(left, parseInbox(await readText($, file)))))
+      await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
+    }
+    if (!(await $.fs.exists(file).catch(() => false))) return
+    const turn = (await read($, turnA)) as { at: number } | null
+    if (mainTurnRunning && (!turn || Date.now() - turn.at < INBOX_HOLD_MAX_MS)) return
+    const moved = await $.process.run(['mv', '-f', file, sending], { timeoutMs: 3000 })
+    if (moved.exitCode !== 0) return
+    const msg = parseInbox(await readText($, sending))
+    const text = msg && inboxPrompt(msg, Date.now() / 1000)
+    if (!msg || !text) {
+      await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
       return
     }
-    let text = typeof msg.text === 'string' ? msg.text.trim() : ''
-    const age = Date.now() / 1000 - Number(msg.at ?? 0)
-    if (!text || age > (msg.keep === true ? INBOX_KEEP_S : INBOX_STALE_S)) return
-    if (age > INBOX_STALE_S) text = '(' + Math.round(age / 60) + '분 전 office inbox에 들어온 메시지)\n' + text
     $.ui.toast('office: "' + clip(text, 60) + '"')
+    let why: string
     try {
-      await $.prompt.submit({ text, asUser: true })
-    } catch {
-      // The file was removed before submitting; put it back (under anything
-      // that arrived meanwhile) so the next tick tries again.
-      const tries = Number(msg.tries ?? 0) + 1
-      if (tries >= INBOX_TRIES) {
-        $.ui.toast('office: could not send the reply; type it here')
+      const r = landed(await $.prompt.submit({ text, asUser: true }), text)
+      if (r === true) {
+        await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
         return
       }
-      let newer = ''
-      try {
-        newer = String(JSON.parse((await readText($, file)) ?? '{}').text ?? '')
-      } catch {}
-      const back = String(msg.text).trim()
-      await $.fs.write(file, JSON.stringify({ text: newer ? back + '\n\n' + newer : back, at: msg.at, ...(msg.keep === true ? { keep: true } : {}), tries }))
+      why = r
+    } catch (err) {
+      why = 'submit refused: ' + clip(String(err), 80)
     }
+    // Back in front of anything that arrived meanwhile, for the next tick.
+    const back = putBack(msg, parseInbox(await readText($, file)))
+    if ((back.tries ?? 0) < INBOX_TRIES) await $.fs.write(file, JSON.stringify(back))
+    else await inboxGiveUp($, back, why)
+    await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
   } finally {
     officeBusy = false
   }
+}
+
+// An inbox message that never went in. A coordinator's instruction tells
+// the coordinator (a peer message, which reaches it mid-turn; else its own
+// inbox), and every one is kept under inbox/failed: nothing is lost unsaid.
+async function inboxGiveUp($: any, m: InboxMsg, why: string) {
+  const dir = home + '/.claude/state/office/inbox/failed'
+  await $.process.run(['mkdir', '-p', dir], { timeoutMs: 3000 })
+  await $.fs.write(dir + '/' + sid + '-' + Date.now() + '.json', JSON.stringify({ ...m, why }))
+  if (!m.from) {
+    $.ui.toast('office: could not send the reply; type it here')
+    return
+  }
+  const wake = failWake(m, why)
+  const r = await $.session.send({ to: { sessionId: m.from }, text: wake }).catch((err: unknown) => ({ isDelivered: false, reason: String(err) }))
+  if (r?.isDelivered) return
+  const inbox = home + '/.claude/state/office/inbox/' + m.from + '.json'
+  const old = parseInbox(await readText($, inbox))
+  await $.fs.write(inbox, JSON.stringify({ text: old ? old.text + '\n\n' + wake : wake, at: old?.at ?? Date.now() / 1000, keep: true }))
 }
 
 // btw from the office card: side messages for this session, asked in order

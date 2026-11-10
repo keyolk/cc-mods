@@ -839,13 +839,16 @@ def route_of(pane: str) -> str:
 
 # A reply sent from the office that the session has not picked up yet: what
 # it says and how long it has waited (cc-mods takes it within ~2 s once idle).
+# <sid>.json.sending is one cc-mods took and has not seen go in yet.
 def inbox_waiting(sid: str) -> dict | None:
-    try:
-        with open(os.path.join(INBOX, sid + ".json")) as f:
-            d = json.load(f)
-        return {"text": str(d.get("text", ""))[:200], "at": d.get("at")}
-    except (OSError, ValueError):
-        return None
+    for name in (sid + ".json", sid + ".json.sending"):
+        try:
+            with open(os.path.join(INBOX, name)) as f:
+                d = json.load(f)
+            return {"text": str(d.get("text", ""))[:200], "at": d.get("at")}
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def detail(sid: str, kind: str | None = None) -> dict:
@@ -1444,7 +1447,7 @@ def act(body: dict) -> tuple[int, dict]:
         if not body.get("force"):
             if me["state"] == "working":
                 return 409, {"error": "busy", "busy": "working", "tool": me.get("tool")}
-            if os.path.exists(os.path.join(INBOX, sid + ".json")):
+            if inbox_waiting(sid):
                 return 409, {"error": "busy", "busy": "inbox"}
         inbox_put(sid, text)
         return 200, {"ok": True, "sent": "reply"}

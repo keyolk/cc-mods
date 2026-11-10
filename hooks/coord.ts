@@ -15,6 +15,8 @@ import { ROUTER_MODEL, candidates, checkRoute, parsePrompts, parseRoute, routeRe
 import { BOX_FMT, busyOf, parseBoxes, pick, places, spots, type Fit, type PaneBox, type Work } from './lib/coordplace'
 import type { Policy } from './lib/policy'
 import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, upsert, type ReviewFile } from './lib/coordreview'
+import { clip } from './lib/text'
+import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
 import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
 
 // What register.ts lends: the session, and its policy. God mode keeps "the
@@ -65,7 +67,7 @@ const TOOLS = {
   },
   send: {
     name: 'coord_send',
-    description: 'Coordinator mode: send an instruction to an owned or adopted worker (every live session is adopted by default); it arrives in that session as a prompt starting with [coordinator]. Refused for observed sessions. The person typing in that pane is no bar (the instruction is queued behind their turn and leaves their draft alone); the result notes it when they typed there in the last 10 minutes.',
+    description: 'Coordinator mode: send an instruction to an owned or adopted worker (every live session is adopted by default); it arrives in that session as a message starting with [coordinator]: a peer message, read mid-turn at its next tool call, or (when no peer message reaches it) its office inbox, read when its turn ends. No length limit: a very long text goes to a file and the message carries the path. Refused for observed sessions. The person typing in that pane is no bar (their draft is left alone); the result notes it when they typed there in the last 10 minutes.',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' }, text: { type: 'string' } }, required: ['slug', 'text'] },
   },
   close: {
@@ -738,22 +740,45 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
   if (!w) return { deny: 'no owned or adopted worker ' + i.slug + '; observed sessions (another coordinator, its workers, one handed back) are not instructed: the person adopts one with /coord adopt <pane>' }
   if (!text) return { deny: 'empty instruction' }
   const now = Date.now()
-  // The office inbox (office.py inbox_put): the worker's cc-mods takes it
-  // within 2 s and submits it there as a prompt.
-  const inbox = ctx!.home() + '/.claude/state/office/inbox/' + w.sid + '.json'
-  await sh($, ['mkdir', '-p', ctx!.home() + '/.claude/state/office/inbox'])
-  let old = ''
-  try {
-    old = String(JSON.parse((await readText($, inbox)) ?? '{}').text ?? '')
-  } catch {}
-  const msg = '[coordinator] ' + text
-  // keep: an instruction reaches a worker in the middle of a long turn, which
-  // may outlast the 2-minute stale limit of an unmarked inbox file.
-  await $.fs.write(inbox, JSON.stringify({ text: old ? old + '\n\n' + msg : msg, at: now / 1000, keep: true }))
+  const home = ctx!.home()
+  // Too long to send whole: the rest goes to a file the worker can read.
+  let body = text
+  if (body.length > INLINE_MAX) {
+    const d = spillDir(w.addDirs, w.slug, home)
+    const path = d + '/coord-' + new Date(now).toISOString().replace(/[:.]/g, '-') + '.md'
+    await sh($, ['mkdir', '-p', d])
+    await $.fs.write(path, body)
+    body = spilled(body, path)
+  }
+  const msg = '[coordinator] ' + body
+  // A peer message (the SendMessage tool's own delivery) reaches a worker in
+  // the middle of its turn, at its next tool call. A plugin prompt through
+  // the office inbox waits for the turn to end: 25 minutes, once, while the
+  // worker went on without it. The inbox is for a worker no peer message
+  // reaches (its socket in /tmp/cc-socks gone).
+  const peer = await $.session.send({ to: { sessionId: w.sid }, text: msg }).catch((e: unknown) => ({ isDelivered: false, reason: String(e) }))
+  let via: string
+  if (peer?.isDelivered) via = 'delivered into its session (mid-turn: at its next tool call)'
+  else {
+    // The office inbox (office.py inbox_put): the worker's cc-mods submits it
+    // there as a prompt once it is idle; from and slug let it tell this
+    // coordinator when it never went in.
+    const inbox = home + '/.claude/state/office/inbox/' + w.sid + '.json'
+    await sh($, ['mkdir', '-p', home + '/.claude/state/office/inbox'])
+    const old = parseInbox(await readText($, inbox))
+    // keep: an instruction reaches a worker in the middle of a long turn, which
+    // may outlast the 2-minute stale limit of an unmarked inbox file.
+    try {
+      await $.fs.write(inbox, JSON.stringify({ text: old ? old.text + '\n\n' + msg : msg, at: old?.at ?? now / 1000, keep: true, from: ctx!.sid(), slug: w.slug }))
+    } catch (e) {
+      return { deny: 'coord_send: not delivered to ' + w.slug + ': no peer message (' + (peer?.reason ?? 'refused') + ') and the office inbox could not be written (' + String(e) + ')' }
+    }
+    via = 'left in its office inbox (no peer message: ' + clip(String(peer?.reason ?? 'refused'), 120) + '); it goes in when its turn ends, and a [coord] wake tells you if it never does'
+  }
   // The first instruction ends a quiet worker's quiet: its reply is news.
   const l = w.instructed ? ledger! : { ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, instructed: now } : x)) }
   await save($, logged(l, 'send', w.slug + ': ' + text.slice(0, 200), now))
-  return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' + typedNote(w, now) }
+  return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + '): ' + via + '.' + (body !== text ? ' Its ' + text.length + ' characters went to a file; the message carries the head and the path.' : '') + typedNote(w, now) }
 }
 
 async function reviewTool($: any, i: any): Promise<{ result: string } | { deny: string }> {

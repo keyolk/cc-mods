@@ -532,7 +532,7 @@ test('coord: the person typing in an auto-adopted session is only noted; its own
   const [a] = autoAdopt(on(), parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t' + t(NOW - 120_000)), new Map(), new Set(), NOW).adopted
   expect(a!.typedAt).toBe(NOW - 120_000)
   expect(typedLately(a!, NOW)).toBe(true)
-  expect(typedNote(a!, NOW)).toBe(' Note: the person typed in this pane lately (' + new Date(NOW - 120_000).toTimeString().slice(0, 5) + ', 2 min ago); the instruction is queued behind their turn and their draft is not touched.')
+  expect(typedNote(a!, NOW)).toBe(' Note: the person typed in this pane lately (' + new Date(NOW - 120_000).toTimeString().slice(0, 5) + ', 2 min ago); their draft is not touched.')
   expect(typedNote(a!, NOW - 120_000 + TYPED_MS)).toBe('')
   // Typed again after adoption, even within the first minute: recorded, no change at all.
   const l = on({ workers: [{ ...a!, typedAt: undefined }] })
