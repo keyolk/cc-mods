@@ -332,7 +332,8 @@ class TurnTest(unittest.TestCase):
         ]
         calls = [{"sid": WORKER, "since": NOW.timestamp() - 2 * 3600}]
         rows = turn.rows([], calls, [], {}, xs, now=NOW.timestamp())
-        self.assertEqual([(r["kind"], r.get("id") or r.get("sid")) for r in rows], [("slx", "ended"), ("session", WORKER), ("slx", "new")])
+        # A session that waited less still comes before the triggers.
+        self.assertEqual([(r["kind"], r.get("id") or r.get("sid")) for r in rows], [("session", WORKER), ("slx", "ended"), ("slx", "new")])
         self.assertEqual(turn.rows([], calls, [], {}, now=NOW.timestamp())[0]["kind"], "session")
 
     def test_several_items_on_one_session_are_counted(self):

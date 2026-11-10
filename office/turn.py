@@ -40,7 +40,8 @@ def rows(waiting: list[dict], calls: list[dict], reviews: list[dict], workers: d
     the worker its id names (an id is the worker slug or a PR). A time not
     known sorts as now: it has waited the least we can tell. `triggers`:
     /command's slx items (office/slx.py); one waits on the person while no
-    session of its own is up and no row above carries it (`merged`)."""
+    session of its own is up and no row above carries it (`merged`). They
+    follow every decision, session and review, oldest first among themselves."""
     now = time.time() if now is None else now
     slugs = set(workers.values())
     out = []
@@ -63,5 +64,8 @@ def rows(waiting: list[dict], calls: list[dict], reviews: list[dict], workers: d
     first: dict[str, float] = {}
     for r in out:
         first[group(r)] = min(first.get(group(r), r["at"]), r["at"])
-    out.sort(key=lambda r: (first[group(r)], group(r), r["at"]))
+    # Triggers come after what a session or a brief already waits on: they
+    # are candidates, and a day of Slack mentions (26 rows in the live inbox)
+    # would otherwise fill the first rows and push every decision under 더 보기.
+    out.sort(key=lambda r: (r["kind"] == "slx", first[group(r)], group(r), r["at"]))
     return out
