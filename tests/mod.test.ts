@@ -96,6 +96,38 @@ test('Claude cannot self-grant session policy through Bash', async ($, on) => {
   expect(ok.result.stdout).toBe('ran')
 })
 
+test('Claude\'s tweb split is refused while its window has a browser pane; the office pane alone, or TWEB_SECOND_PANE=1, lets it run', async ($, on) => {
+  // The window of %10 holds the office (%401) and, once the worker opened one, its own browser pane (%418).
+  let listed = [{ pane: '%401', status: { browser: 'electron', tabs: { tabs: [{ url: 'http://127.0.0.1:8796/' }] } } }]
+  const runs = baseStubs(on, {
+    pane: '%10',
+    run: (argv) => {
+      if (argv[0] === 'tmux' && argv[1] === 'list-panes' && argv[3] === '%10') return { code: 0, out: '%10\n%401\n%418\n' }
+      if (argv[0] === 'tweb' && argv[1] === 'panes') return { code: 0, out: JSON.stringify(listed) }
+      return undefined
+    },
+  })
+  const ran: string[] = []
+  on('tool.call', (_$: any, e: any) => (ran.push(e.command), { result: { stdout: 'ran', stderr: '', interrupted: false } }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  // Only the office in the window: the split runs.
+  expect(((await $.tool.call({ tool: 'Bash', command: 'tweb split https://concur.example' })) as any).result.stdout).toBe('ran')
+  listed = [...listed, { pane: '%418', status: { browser: 'chrome', tabs: { tabs: [{ url: 'https://concur.example' }] } } }]
+  const r: any = await $.tool.call({ tool: 'Bash', command: 'tweb split https://b.example' })
+  expect(r.deny).toContain('already has a browser pane (%418)')
+  expect(r.deny).toContain('tweb tab new https://b.example --pane %418')
+  // Said to be meant: it runs.
+  expect(((await $.tool.call({ tool: 'Bash', command: 'TWEB_SECOND_PANE=1 tweb split https://b.example' })) as any).result.stdout).toBe('ran')
+  // A pane in the window is used, not refused.
+  expect(((await $.tool.call({ tool: 'Bash', command: 'tweb tab new https://b.example --pane %418' })) as any).result.stdout).toBe('ran')
+  expect(ran).toEqual(['tweb split https://concur.example', 'TWEB_SECOND_PANE=1 tweb split https://b.example', 'tweb tab new https://b.example --pane %418'])
+  // A command that opens no pane does not list them.
+  const listings = () => runs.filter((a) => a[0] === 'tweb' && a[1] === 'panes').length
+  const before = listings()
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect(listings()).toBe(before)
+})
+
 test('/policy changes only from the person, through the CLI with the session id', async ($, on) => {
   const runs = baseStubs(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })

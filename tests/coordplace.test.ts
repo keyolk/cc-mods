@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { closeArgv, emptyLedger, type Ledger, type Limits, type Worker } from '../hooks/lib/coord'
-import { BOX_FMT, WINDOW_WORKERS, parseBoxes, pick, places, spots, type PaneBox } from '../hooks/lib/coordplace'
+import { BOX_FMT, WINDOW_WORKERS, busyOf, parseBoxes, pick, places, related, sameWork, spots, type Busy, type Fit, type PaneBox, type Work } from '../hooks/lib/coordplace'
 import { checkRoute, routeRequest, routeText } from '../hooks/lib/coordroute'
 
 const NOW = 1_800_000_000_000
@@ -98,4 +98,104 @@ test('coord_close: a fallback window another live worker was split into loses on
   expect(closeArgv(a, { pane: '%1', window: '@1' }, [a])).toEqual(['kill-window', '-t', '@7'])
   // Never the coordinator's own pane, wherever the ledger says it is.
   expect(closeArgv(worker('x', { kind: 'pane', pane: '%1', window: '@7' }), { pane: '%1', window: '@1' }, [a])).toBeUndefined()
+})
+
+// ---- one window, one work ----------------------------------------------------
+
+const HOME = '/h'
+const CCMODS: Work = { dir: '/h/src/keyolk/cc-mods', common: '/h/src/keyolk/cc-mods', repo: 'keyolk/cc-mods' }
+const CONCUR: Work = { dir: '/h/research/concur-expense' }
+
+test('coordplace: the same work is one repository (common dir or GitHub remote) or one task folder, never a broad parent', () => {
+  // A worktree shares the main checkout's common dir.
+  expect(sameWork({ dir: '/h/worktrees/cc-mods/x', common: '/h/src/keyolk/cc-mods' }, CCMODS, HOME)).toBe(true)
+  // Two clones of one GitHub repository.
+  expect(sameWork({ dir: '/tmp/cc-mods', common: '/tmp/cc-mods', repo: 'Keyolk/CC-Mods' }, CCMODS, HOME)).toBe(true)
+  // A task folder and a folder under it.
+  expect(sameWork({ dir: '/h/research/concur-expense/receipts' }, CONCUR, HOME)).toBe(true)
+  expect(sameWork({ dir: '/h/research/concur-expense/' }, CONCUR, HOME)).toBe(true)
+  // Live: the cc-mods coordinator and a Concur expense worker are not.
+  expect(sameWork(CCMODS, CONCUR, HOME)).toBe(false)
+  // ~, a folder right under it, an org under ~/src, a repository's worktrees folder: not one task.
+  for (const outer of ['/h', '/h/research', '/h/src', '/h/src/keyolk', '/h/worktrees/cc-mods', '/', '/tmp']) expect(sameWork({ dir: outer }, { dir: outer + '/a/b' }, HOME)).toBe(false)
+  expect(sameWork({ dir: '/h' }, { dir: '/h' }, HOME)).toBe(false)
+  // Two other repositories in one org folder.
+  expect(sameWork({ dir: '/h/src/keyolk/tweb', common: '/h/src/keyolk/tweb' }, CCMODS, HOME)).toBe(false)
+  expect(sameWork({ dir: '' }, { dir: '' }, HOME)).toBe(false)
+  // A worker in its research folder with the code outside: either matches.
+  expect(related([{ dir: '/h/research/fix' }, CCMODS], [{ dir: '/h/src/keyolk/cc-mods/office' , common: '/h/src/keyolk/cc-mods' }], HOME)).toBe(true)
+})
+
+test('coordplace: the sessions in each window with their work, the coordinator by its name, a worker by its slug with its code outside', () => {
+  const l = ledger([{ ...worker('fix', { kind: 'pane', pane: '%2', window: '@1' }), code: '/h/src/keyolk/cc-mods' }])
+  const seen = [
+    { window: '@1', sid: 'coord', cwd: '/h/src/keyolk/cc-mods' },
+    { window: '@1', sid: 's-fix', cwd: '/h/research/fix' },
+    { window: '@1', sid: 'other', cwd: '/h/research/concur-expense' },
+    { window: '@1', sid: 'other', cwd: '/h/research/concur-expense' },
+  ]
+  const works = new Map([['/h/src/keyolk/cc-mods', CCMODS]])
+  const b = busyOf(seen, l, new Map([['other', 'concur-expense']]), works)
+  expect(b.map((x) => x.name)).toEqual(['cc-mods-d9', 'fix', 'concur-expense'])
+  expect(b[1]!.work).toEqual([{ dir: '/h/research/fix' }, CCMODS])
+  expect(b[2]!.work).toEqual([CONCUR])
+})
+
+// Live: the cc-mods coordinator's window @1 also held a Concur worker; @7 is a
+// window the coordinator made for a cc-mods worker.
+const MIXED: Busy[] = [
+  { window: '@1', name: 'cc-mods-d9', work: [CCMODS] },
+  { window: '@1', name: 'concur-expense', work: [CONCUR] },
+  { window: '@7', name: 'a', work: [{ dir: '/h/worktrees/cc-mods/a', common: '/h/src/keyolk/cc-mods' }] },
+]
+
+test('coordplace: a window holding other work is not offered, the coordinator\'s own included, and says why', () => {
+  const l = ledger([worker('a', { kind: 'window', pane: '%70', window: '@7' })])
+  const fit: Fit = { sessions: MIXED, home: HOME, want: [CCMODS] }
+  const s = spots(l, COORD, BOXES, fit)
+  expect(s.spots.map((x) => x.window)).toEqual(['@7'])
+  expect(s.skipped).toEqual(['your window @1 holds other work: concur-expense (~/research/concur-expense)'])
+  expect(s.away).toEqual([{ window: '@1', why: 'your window @1 holds other work: concur-expense (~/research/concur-expense)' }])
+  // A Concur task fits neither: a new window.
+  const concur = spots(l, COORD, BOXES, { ...fit, want: [{ dir: '/h/research/concur-expense' }] })
+  expect(concur.spots).toEqual([])
+  expect(concur.skipped).toEqual(['your window @1 holds other work: cc-mods-d9 (keyolk/cc-mods)', 'window @7 holds other work: a (~/src/keyolk/cc-mods)'])
+  expect(pick(undefined, concur)).toEqual({})
+  // A window of one work only takes that work.
+  const clean = spots(l, COORD, BOXES, { sessions: MIXED.filter((b) => b.name !== 'concur-expense'), home: HOME, want: [CCMODS] })
+  expect(clean.spots.map((x) => x.window)).toEqual(['@1', '@7'])
+  // Without the new worker's work (coord_route before its answer), every window is offered, labelled with its work.
+  const shown = places(spots(l, COORD, BOXES, { sessions: MIXED, home: HOME }))
+  expect(shown.map((p) => [p.window, p.work])).toEqual([['@1', ['cc-mods-d9 (keyolk/cc-mods)', 'concur-expense (~/research/concur-expense)']], ['@7', ['a (~/src/keyolk/cc-mods)']], ['new', undefined]])
+})
+
+test('coordplace: a pick of a window holding other work falls back to the first fitting place and says why', () => {
+  const l = ledger([worker('a', { kind: 'window', pane: '%70', window: '@7' })])
+  const s = spots(l, COORD, BOXES, { sessions: MIXED, home: HOME, want: [CCMODS] })
+  const p = pick('@1', s)
+  expect(p.spot?.window).toBe('@7')
+  expect(p.note).toBe('your window @1 holds other work: concur-expense (~/research/concur-expense) (@7, or new); used window @7 instead')
+  // Nothing chosen: the first place, here the workers' window.
+  expect(pick(undefined, s).spot?.window).toBe('@7')
+})
+
+test('coord_route: a window the router picked that holds other work is dropped by rule, with the reason', () => {
+  const l = ledger([worker('a', { kind: 'window', pane: '%70', window: '@7' })])
+  const fitted = spots(l, COORD, BOXES, { sessions: MIXED, home: HOME, want: [CCMODS] })
+  const spawn = { action: 'spawn', repo_dir: '/h/src/keyolk/cc-mods', model: 'sonnet', effort: 'medium', reason: 'cc-mods work' }
+  const d = checkRoute({ ...spawn, window: '@1' }, [], LIMITS, 1, { repoTop: '/h/src/keyolk/cc-mods' }, places(fitted), fitted.away) as any
+  expect(d.window).toBeUndefined()
+  expect(routeText(d)).toContain('Place: the router chose window "@1", but your window @1 holds other work: concur-expense (~/research/concur-expense); coord_spawn places it by default.')
+  expect((checkRoute({ ...spawn, window: '@7' }, [], LIMITS, 1, { repoTop: '/h/src/keyolk/cc-mods' }, places(fitted), fitted.away) as any).window).toBe('@7')
+  expect(routeRequest('x', [], LIMITS, 1).system).toContain('one window holds one work')
+})
+
+test('coord_close: a fallback window another Claude session is in now loses only the worker\'s pane', () => {
+  const a = worker('a', { kind: 'window', pane: '%70', window: '@7' })
+  const seen = [{ window: '@7', sid: 's-a' }, { window: '@7', sid: 'person' }]
+  expect(closeArgv(a, { pane: '%1', window: '@1' }, [a], seen)).toEqual(['kill-pane', '-t', '%70'])
+  // Only its own session there (its tweb pane is no session): the window.
+  expect(closeArgv(a, { pane: '%1', window: '@1' }, [a], [{ window: '@7', sid: 's-a' }, { window: '@1', sid: 'person' }])).toEqual(['kill-window', '-t', '@7'])
+  // A pane it was split into is only ever that pane.
+  expect(closeArgv(worker('b', { kind: 'pane', pane: '%2', window: '@1' }), { pane: '%1', window: '@1' }, [], seen)).toEqual(['kill-pane', '-t', '%2'])
 })
