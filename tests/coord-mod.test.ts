@@ -181,6 +181,30 @@ test('coord: a cwd Claude Code does not trust is reached the same way; with the 
   expect(files['/home/u/research/ar-z/prompt.txt']).toBeUndefined()
 })
 
+test('coord: a worker goes where coord_route placed it, a window that holds this coordinator\'s workers; a place with no room falls back and says so', async ($, on) => {
+  // Worker a has the fallback window @7 this coordinator made; the
+  // coordinator's own pane (100x30) is too small to split.
+  const a = { slug: 'a', sid: 'w-a', relation: 'owned', pane: '%70', window: '@7', made: { kind: 'window', pane: '%70', window: '@7' }, cwd: '/r/a', at: OLD, state: 'working', attention: 'none' }
+  const files: Record<string, string> = { [LEDGER]: JSON.stringify({ ...JSON.parse(spawnLedger()), workers: [a] }), [TRUST]: JSON.stringify({ projects: { '/home/u': { hasTrustDialogAccepted: true } } }) }
+  const runs: string[][] = []
+  const boxes = ['@1\t%1\t100\t30', '@7\t%70\t240\t60'].join('\n')
+  stubs(on, { files, submitted: [], panes: () => boxes, runs, run: (argv) => (argv[0] === 'tmux' && argv[1] === 'split-window' ? '@7 %72' : spawnRun(argv)) })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-w', model: 'sonnet', effort: 'low', brief: 'look', cwd: '/src/autoreview', window: '@7' } as any)
+  expect(r.result).toContain('Started worker ar-w in pane %72, split beside %70, next to a (80 columns) in window @7,')
+  const sp = runs.find((x) => x[0] === 'tmux' && x[1] === 'split-window')!
+  expect(sp.slice(0, 11)).toEqual(['tmux', 'split-window', '-d', '-h', '-l', '80', '-P', '-F', '#{window_id} #{pane_id}', '-t', '%70'])
+  expect(JSON.parse(files[LEDGER]!).workers[1].made).toEqual({ kind: 'pane', pane: '%72', window: '@7' })
+  // A window that is not a place (the person's @9): the default, here a new
+  // window since the coordinator's pane has no room.
+  runs.length = 0
+  const r2: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-v', model: 'sonnet', effort: 'low', brief: 'look', cwd: '/src/autoreview', window: '@9' } as any)
+  expect(r2.result).toContain('in a new window @9 (pane %90): your pane (100x30) is too small to split')
+  expect(r2.result).toContain('(window @9 is not a place for a worker now (none, or new); used a new window instead)')
+  expect(runs.some((x) => x[0] === 'tmux' && x[1] === 'split-window')).toBe(false)
+})
+
 test('coord_route: one cheap model call over the live sessions; its answer is checked and handed back, never acted on; a failed or bad answer is an error', async ($, on) => {
   const files: Record<string, string> = { [LEDGER]: ledgerJson() }
   const runs: string[][] = []

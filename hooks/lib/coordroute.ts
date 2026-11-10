@@ -5,6 +5,7 @@
 // so every action stays in its transcript. Pure: coord.ts does the I/O.
 
 import { EFFORTS, active, held, isEffort, modelAlias, type Ledger, type Limits, type PaneSeen } from './coord'
+import type { Place } from './coordplace'
 
 export type Candidate = {
   name: string // SendMessage name
@@ -88,18 +89,19 @@ const SYSTEM = [
   '- Choose spawn only when no live session fits, or the one that fits is working (busy) or held by the person.',
   '- Never "send" to an observed session; for those the action is "adopt". Never pick a held session.',
   '- spawn is not possible when the owned workers are at maxWorkers: then pick a fitting session, or "unsure".',
-  'Shape: {"action":"send"|"adopt"|"spawn"|"unsure","target":"<slug or name>","repo_dir":"<path>","cwd":"<path>","model":"haiku|sonnet|opus","effort":"low|medium|high|xhigh|max","reason":"<one sentence>"}. Leave out keys that do not apply.',
+  '- With spawn, also pick "window" from places: a window whose workers (by slug) work on the same repository or task; else the coordinator\'s window; "new" when no listed window fits or the work is unrelated to all of them.',
+  'Shape: {"action":"send"|"adopt"|"spawn"|"unsure","target":"<slug or name>","repo_dir":"<path>","cwd":"<path>","model":"haiku|sonnet|opus","effort":"low|medium|high|xhigh|max","window":"<a places window id>|new","reason":"<one sentence>"}. Leave out keys that do not apply.',
 ].join('\n')
 
-export function routeRequest(task: string, cands: Candidate[], limits: Limits, owned: number): { system: string; prompt: string } {
+export function routeRequest(task: string, cands: Candidate[], limits: Limits, owned: number, places: Place[] = [{ window: 'new', kind: 'new' }]): { system: string; prompt: string } {
   const sessions = cands.map((c) => ({ ...c, prompts: c.prompts.length ? c.prompts : undefined }))
   return {
     system: SYSTEM,
-    prompt: JSON.stringify({ task, limits: { models: limits.models, maxEffort: limits.maxEffort, maxWorkers: limits.maxWorkers, ownedWorkers: owned }, sessions }, null, 1),
+    prompt: JSON.stringify({ task, limits: { models: limits.models, maxEffort: limits.maxEffort, maxWorkers: limits.maxWorkers, ownedWorkers: owned }, sessions, places }, null, 1),
   }
 }
 
-export type Raw = { action?: unknown; target?: unknown; repo_dir?: unknown; cwd?: unknown; model?: unknown; effort?: unknown; reason?: unknown }
+export type Raw = { action?: unknown; target?: unknown; repo_dir?: unknown; cwd?: unknown; model?: unknown; effort?: unknown; window?: unknown; reason?: unknown }
 
 // The model's reply as an object: a fenced block or prose around it is cut
 // away; anything that is not one JSON object is an error, never a guess.
@@ -120,7 +122,7 @@ export function parseRoute(text: string): Raw | { error: string } {
 export type Decision =
   | { action: 'send'; target: Candidate; reason: string }
   | { action: 'adopt'; target: Candidate; reason: string }
-  | { action: 'spawn'; repoDir?: string; cwd?: string; model: string; effort: string; reason: string }
+  | { action: 'spawn'; repoDir?: string; cwd?: string; model: string; effort: string; window?: string; placeNote?: string; reason: string }
   | { action: 'unsure'; reason: string }
 
 // What coord.ts found on disk for the paths the router named: repoTop the
@@ -130,7 +132,9 @@ export type Paths = { repoTop?: string | null; cwdOk?: boolean }
 
 const str = (x: unknown) => (typeof x === 'string' ? x.trim() : '')
 
-export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: number, paths: Paths): Decision | { error: string } {
+// A window that is not one of `places` is dropped, not an error: the rest of
+// the answer stands and coord_spawn places the worker by its default.
+export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: number, paths: Paths, places: Place[] = [{ window: 'new', kind: 'new' }]): Decision | { error: string } {
   const action = str(raw.action)
   const reason = str(raw.reason)
   if (!reason) return { error: 'the router gave no reason' }
@@ -156,7 +160,9 @@ export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: 
   const effort = str(raw.effort)
   if (!isEffort(effort)) return { error: 'the router chose effort ' + JSON.stringify(raw.effort) + '; one of ' + EFFORTS.join(', ') }
   if (EFFORTS.indexOf(effort) > EFFORTS.indexOf(limits.maxEffort)) return { error: 'the router chose effort ' + effort + ', above the limit ' + limits.maxEffort }
-  return repoDir ? { action, repoDir: paths.repoTop!, model, effort, reason } : { action, cwd, model, effort, reason }
+  const win = str(raw.window)
+  const place = win && places.some((p) => p.window === win) ? { window: win } : win ? { placeNote: 'the router chose window ' + JSON.stringify(win) + ', not one of ' + places.map((p) => p.window).join(', ') + '; coord_spawn places it by default' } : {}
+  return repoDir ? { action, repoDir: paths.repoTop!, model, effort, ...place, reason } : { action, cwd, model, effort, ...place, reason }
 }
 
 // The tool's answer: the decision, its reason, and the call that acts on it.
@@ -164,6 +170,6 @@ export function routeText(d: Decision): string {
   const who = (c: Candidate) => (c.slug ?? c.name) + ' (pane ' + c.pane + ', ' + c.state + (c.attention !== 'none' ? '/' + c.attention : '') + ', ' + c.cwd + ')'
   if (d.action === 'send') return 'Route: send to ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: coord_send slug=' + d.target.slug + ' with the task' + (d.target.state === 'working' ? ' (it is mid-turn: the instruction waits for its turn to end)' : '') + '.'
   if (d.action === 'adopt') return 'Route: adopt ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: it is observed, so only the person can hand it over: ask them to run `/coord adopt ' + d.target.pane + '`, then coord_send it the task. If they say no, coord_spawn instead.'
-  if (d.action === 'spawn') return 'Route: spawn a new worker ' + (d.repoDir ? 'on a worktree of ' + d.repoDir : 'in ' + d.cwd) + ', ' + d.model + '/' + d.effort + '.\nReason: ' + d.reason + '\nNext: coord_spawn ' + (d.repoDir ? 'repo_dir=' + d.repoDir : 'cwd=' + d.cwd) + ' model=' + d.model + ' effort=' + d.effort + ', a slug for the task, and a brief with the person\'s words verbatim.'
+  if (d.action === 'spawn') return 'Route: spawn a new worker ' + (d.repoDir ? 'on a worktree of ' + d.repoDir : 'in ' + d.cwd) + ', ' + d.model + '/' + d.effort + (d.window ? ', ' + (d.window === 'new' ? 'in a new window' : 'in window ' + d.window) : '') + '.\nReason: ' + d.reason + (d.placeNote ? '\nPlace: ' + d.placeNote + '.' : '') + '\nNext: coord_spawn ' + (d.repoDir ? 'repo_dir=' + d.repoDir : 'cwd=' + d.cwd) + ' model=' + d.model + ' effort=' + d.effort + (d.window ? ' window=' + d.window : '') + ', a slug for the task, and a brief with the person\'s words verbatim.'
   return 'Route: the router cannot tell.\nReason: ' + d.reason + '\nNext: ask the person where this goes (the recommended guess first).'
 }
