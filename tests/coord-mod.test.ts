@@ -383,3 +383,37 @@ test('coord: an auto-adopted session the person just typed in still takes coord_
   expect(s.result).toBe('Sent to ops-k8s (%7). Note: the person typed in this pane lately (' + at + ', 1 min ago); the instruction is queued behind their turn and their draft is not touched.')
   expect(JSON.parse(files['/home/u/.claude/state/office/inbox/ops.json']!).text).toBe('[coordinator] x')
 })
+
+test('coord: coord_review adds and updates the queue file; an office confirm reaches the next composed prompt', async ($, on) => {
+  const REVIEW = '/home/u/.claude/state/office/coord/review/sid-1.json'
+  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  const submitted: string[] = []
+  const runs: string[][] = []
+  stubs(on, { files, submitted, panes: () => PANE, runs })
+  mock.clock(on)
+  on('prompt.compose', () => ({ sections: [] }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_review', ...input } as any) as any
+  const added = await call({ action: 'add', id: 'cc-mods#85', title: '검토 대기열', changed: '지휘 view에 🔎 검토', check: 'j/k로 넘겨 보기', links: ['https://github.com/keyolk/cc-mods/pull/85'] })
+  expect(added.result).toBe('Added cc-mods#85. 검토 대기 1건 (say only this in chat; the office shows the items).')
+  // Not coord/*.json, where the ledgers are globbed.
+  expect(runs).toContainEqual(['mkdir', '-p', '/home/u/.claude/state/office/coord/review'])
+  const updated = await call({ action: 'update', id: 'cc-mods#85', verified: '8899 live run' })
+  expect(updated.result).toContain('Updated cc-mods#85. 검토 대기 1건')
+  expect(JSON.parse(files[REVIEW]!).items[0]).toMatchObject({ id: 'cc-mods#85', title: '검토 대기열', verified: '8899 live run', state: 'open' })
+  expect((await call({ action: 'update', id: 'nope', title: 'x' })).deny).toContain('add it first')
+  expect((await call({ action: 'list' })).result).toContain('| cc-mods#85 | 검토 대기열 |')
+  const compose = async () => ((await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['terminal'], tools: ['Bash'], outputStyle: null, traits: [] })) as any).sections.find((s: any) => s.id === 'cc-mods:policy')?.text ?? ''
+  expect(await compose()).toContain('Review queue (coord_review): 1 open — cc-mods#85.')
+  // The office confirms in the file, then its prompt arrives.
+  const f = JSON.parse(files[REVIEW]!)
+  f.items[0].state = 'confirmed'
+  f.items[0].confirmedAt = Date.now()
+  files[REVIEW] = JSON.stringify(f)
+  await $.prompt.submit({ text: '[review] confirmed cc-mods#85', origin: { kind: 'plugin', name: 'cc-mods' }, wait: false } as any)
+  expect(submitted).toEqual(['[review] confirmed cc-mods#85'])
+  const after = await compose()
+  expect(after).toContain('# Coordinator mode (cc-mods)')
+  expect(after).not.toContain('Review queue (coord_review)')
+  expect((await call({ action: 'list' })).result).toContain('Review queue empty.\n1 confirmed in the last 7 days')
+})

@@ -79,7 +79,7 @@ import { renderCoordTab } from './views/coord'
 import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
-import { coordCommand, coordIdle, coordPrompt, coordRecheck, coordStart, coordTool, isCoordTool } from './coord'
+import { coordCommand, coordIdle, coordPrompt, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -4337,13 +4337,14 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // The coord_* tools (coord.ts), registered when the person turns the mode on.
   // A tool's arguments arrive spread on the event itself (as Bash's command
   // does), not under `input`.
-  on('tool.call', { tool: /coord_(roster|route|spawn|send|close)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
+  on('tool.call', { tool: /coord_(roster|route|spawn|send|close|review)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
 
   // The coordinator's [coord] wakes, looked at again where they leave the
   // queue (a plugin's prompt runs once the session is idle): a worker closed
   // since is no news.
   on('prompt.submit', { origin: { kind: 'plugin' } }, async ($: any, e: any, next: any) => {
     const text = String(e.text ?? '')
+    if (text.includes('[review] ')) await coordReviewRefresh($)
     const now = coordRecheck(text)
     if (now === undefined) return { drop: 'coord: every worker it named has ended since' }
     return now === text ? next(e) : next({ ...e, text: now })
@@ -4357,7 +4358,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // asks for routes it does not have (live: resources.js 404, an empty
     // office). The stamp is office.py's code_stamp(); an old server has no
     // /version and answers 404, which also counts as old.
-    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
+    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py', 'review.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
     const ver = (await $.process.run(['/usr/bin/curl', '-s', '-m', '2', url + 'version'], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout
     let running: { stamp?: string; pid?: number } | undefined
     try { running = JSON.parse(ver) } catch { running = undefined }

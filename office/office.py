@@ -41,7 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py")
 
 
 def code_stamp() -> str:
@@ -1345,7 +1345,7 @@ def act(body: dict) -> tuple[int, dict]:
     if kind in ("meeting", "meeting_end", "broadcast"):
         return group_act(body)
     if kind in command.KINDS:
-        # A brief answer or a worker instruction must reach the coordinator
+        # A brief answer, a worker instruction or a review verdict must reach the coordinator
         # even after it was away for a while.
         return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
     me = next((p for p in snapshot() if p["id"] == sid), None)
@@ -1714,7 +1714,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/command.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/review.js", "/command.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")

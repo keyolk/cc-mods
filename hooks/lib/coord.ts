@@ -509,8 +509,9 @@ export function overlaps(seen: PaneSeen[], l: Ledger, dir: string, git?: { commo
   return seen.filter((s) => s.sid !== l.sid && s.cwd && (norm(s.cwd) === d || norm(s.cwd).startsWith(d + '/') || same(s.cwd)))
 }
 
-// What the coordinator reads every turn: its role, its limits, its workers.
-export function coordSection(l: Ledger, now: number, language = 'Korean'): string {
+// What the coordinator reads every turn: its role, its limits, its workers,
+// and the review queue's line (lib/coordreview.ts reviewLine) when it has any.
+export function coordSection(l: Ledger, now: number, language = 'Korean', review?: string): string {
   // The quiet ones (every session the person runs, often twenty or more) go
   // on one line, so the table that rides on every turn stays the workers'.
   const mute = active(l).filter(quiet)
@@ -533,6 +534,8 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Only a yes/no on one small step that is easy to undo goes to the person in chat alone, without a brief.',
     "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: do not ask it again; it is in the office's 지휘 view.",
     "- Gather the person's questions: say once in chat `결정 N건 대기` with the brief paths, not a message per question, and ask them on one occasion, not as each arrives. Ask alone and at once only what stops a worker entirely.",
+    "- Finished work goes to the person's review queue, not only to chat: when you have verified and merged a worker's READY (or a worker finished something the person must judge), call `coord_review` add with id = the worker slug or the PR (cc-mods#85), title, changed (what changed, in the person's terms), verified (what you checked: tests, live run, CI on the sha; and what you did not), check (what the person should look at or try), risk, links (PR, brief, files). A later step of the same work (a follow-up PR, a fix after an issue) is `coord_review` update on the same id, not a new item. In chat say only the one line the tool returns, `검토 대기 N건`, never the items: the office's 지휘 view shows them under 🔎 검토. Do not write a one-off brief for finished work.",
+    "- `[review] confirmed <id>` is the person having looked at that work: it has left the queue, nothing to do. `[review] issue <id>: <words>` is a problem the person found in it, in their words: it is a task; send it to the worker that did it when it is still there, else route it with `coord_route`, and update the item when the fix is verified (it stays open until the person confirms it). When the person says in chat they checked an item, `coord_review` confirm it.",
     "- A report line `SKILL <name>: <problem> — <evidence>` is a skill that failed a worker. Give fixing it to a worker as its own task (route it like any task), with the line and its evidence verbatim, and tell that worker to use the meta:self-enhancer or meta:skill-creator skill. The worker that hit it does not edit the skill. Tell the person in one line.",
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
@@ -542,6 +545,7 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     'Limits (the person sets them with /coord limits): ' + limitsText(l.limits),
     rows.length ? '| worker | relation | model/effort | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
     ...(mute.length ? ['Adopted, the person\'s (not instructed yet; coord_roster has their state): ' + mute.map((w) => w.slug + ' ' + w.cwd).join(', ') + '.'] : []),
+    ...(review ? [review] : []),
   ].join('\n')
 }
 

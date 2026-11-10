@@ -15,6 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "office"))
 import command  # noqa: E402
 import coord  # noqa: E402
 import office  # noqa: E402
+import review  # noqa: E402
 
 COORD = "c0000000-0000-0000-0000-000000000001"
 WORKER = "a0000000-0000-0000-0000-000000000002"
@@ -422,7 +423,94 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "recent"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent"})
+            with urllib.request.urlopen(base + "/review.js") as r:
+                self.assertIn("javascript", r.headers["Content-Type"])
+                self.assertIn(b"function revKey", r.read())
+
+    def test_the_server_stamp_and_the_page_know_review(self):
+        # /office restarts a server whose stamp differs from the files on
+        # disk: register.ts must list the same files office.py stamps.
+        self.assertIn("review.py", office.SERVER_FILES)
+        reg = (pathlib.Path(__file__).parents[1] / "hooks" / "register.ts").read_text()
+        self.assertIn("'office.py', 'resources.py', 'coord.py', 'command.py', 'review.py'", reg)
+        page = (pathlib.Path(__file__).parents[1] / "office" / "office.html").read_text()
+        self.assertLess(page.index('src="review.js"'), page.index('src="command.js"'))
+
+
+class ReviewTest(BriefsCase):
+    def queue(self, items: list[dict], sid: str = COORD) -> pathlib.Path:
+        d = self.coords / "review"
+        d.mkdir(exist_ok=True)
+        f = d / f"{sid}.json"
+        f.write_text(json.dumps({"sid": sid, "name": "cc-mods-d9", "items": items}, ensure_ascii=False))
+        return f
+
+    def item(self, id: str, **kw) -> dict:
+        return {"id": id, "title": "T " + id, "changed": "c", "verified": "v", "check": "k", "risk": "r", "links": ["https://github.com/keyolk/cc-mods/pull/85"], "state": "open", "at": 1000, "updatedAt": 1000, **kw}
+
+    def test_the_view_lists_open_items_oldest_first_with_their_coordinator(self):
+        self.ledger([])
+        self.queue([self.item("b", at=2000), self.item("a", at=1000), self.item("done", state="confirmed", confirmedAt=review._now_ms())])
+        # A ledger in coord/ is not a queue, and a queue is not a ledger.
+        self.assertEqual([d["sid"] for d in coord.ledgers()], [COORD])
+        got = command.view([])["reviews"]
+        self.assertEqual([(r["id"], r["coord"], r["coordName"]) for r in got], [("a", COORD, "cc-mods-d9"), ("b", COORD, "cc-mods-d9")])
+        self.assertEqual(got[0]["links"], ["https://github.com/keyolk/cc-mods/pull/85"])
+
+    def test_confirm_takes_it_off_the_list_keeps_it_in_the_file_and_tells_the_coordinator(self):
+        f = self.queue([self.item("cc-mods#85"), self.item("other")])
+        code, j = office.command.act({"kind": "review_confirm", "coord": COORD, "id": "cc-mods#85"}, self.put)
+        self.assertEqual((code, j["left"]), (200, 1))
+        self.assertEqual(self.sent, [(COORD, "[review] confirmed cc-mods#85")])
+        kept = json.loads(f.read_text())["items"]
+        self.assertEqual([(i["id"], i["state"]) for i in kept], [("cc-mods#85", "confirmed"), ("other", "open")])
+        self.assertEqual([r["id"] for r in review.items()], ["other"])
+        self.assertEqual(review.confirm(COORD, "cc-mods#85", self.put)[0], 409)
+
+    def test_an_issue_keeps_it_open_notes_the_words_and_sends_them(self):
+        f = self.queue([self.item("tweb-240", state="confirmed", confirmedAt=5)])
+        code, _ = review.act({"kind": "review_issue", "coord": COORD, "id": "tweb-240", "value": " reload 경우 다시 봐 줘 "}, self.put)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.sent, [(COORD, "[review] issue tweb-240: reload 경우 다시 봐 줘")])
+        it = json.loads(f.read_text())["items"][0]
+        self.assertEqual((it["state"], "confirmedAt" in it, [i["text"] for i in it["issues"]]), ("open", False, ["reload 경우 다시 봐 줘"]))
+        self.assertEqual(review.items()[0]["issues"][0]["text"], "reload 경우 다시 봐 줘")
+
+    def test_refusals(self):
+        self.queue([self.item("a")])
+        self.assertEqual(review.issue(COORD, "a", "  ", self.put)[0], 400)
+        self.assertEqual(review.confirm(COORD, "nope", self.put)[0], 404)
+        self.assertEqual(review.confirm("../../x", "a", self.put)[0], 400)
+        self.assertEqual(review.confirm(WORKER, "a", self.put)[0], 404)
+        self.assertEqual(self.sent, [])
+
+    def test_confirmed_items_older_than_a_week_go_at_the_next_write(self):
+        old = review._now_ms() - review.KEEP_MS - 1
+        f = self.queue([self.item("old", state="confirmed", confirmedAt=old), self.item("recent", state="confirmed", confirmedAt=review._now_ms()), self.item("a")])
+        review.confirm(COORD, "a", self.put)
+        self.assertEqual([i["id"] for i in json.loads(f.read_text())["items"]], ["recent", "a"])
+
+    def test_a_half_written_queue_is_skipped_not_fatal(self):
+        d = self.coords / "review"
+        d.mkdir()
+        (d / f"{COORD}.json").write_text('{"items": [')
+        self.assertEqual(review.items(), [])
+
+    def test_seed_adds_and_updates_by_id_and_the_script_reads_stdin(self):
+        self.ledger([])
+        self.queue([self.item("a", state="confirmed", confirmedAt=5)])
+        n = review.seed(COORD, [{"id": "a", "title": "A again", "check": "새로 볼 것", "links": ["x"]}, {"id": "b", "title": "B", "changed": "c"}])
+        self.assertEqual(n, 2)
+        got = {r["id"]: r for r in review.items()}
+        self.assertEqual((got["a"]["title"], got["a"]["check"], got["a"]["changed"], got["a"]["links"]), ("A again", "새로 볼 것", "c", ["https://github.com/keyolk/cc-mods/pull/85", "x"]))
+        self.assertEqual(sorted(got), ["a", "b"])
+        with self.assertRaises(ValueError):
+            review.seed(COORD, [{"id": "bad id", "title": "x"}])
+        script = pathlib.Path(__file__).parents[1] / "office" / "review.py"
+        r = subprocess.run([sys.executable, str(script), "seed", MAKER, "-"], input=json.dumps([{"id": "c", "title": "C"}]), capture_output=True, text=True, env={**os.environ, "HOME": str(self.tmp)}, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.tmp / ".claude/state/office/coord/review" / f"{MAKER}.json").exists())
 
 
 # command.js run under node with just enough of a page for its keys: the
@@ -435,6 +523,8 @@ KEYS_HARNESS = textwrap.dedent(r"""
       localStorage: { getItem: () => null, setItem() {} },
       document: { createElement: el, getElementById: el, head: el(), body: el() } }
     vm.createContext(ctx)
+    // review.js comes first, as office.html loads it.
+    vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, 'review.js'), 'utf8'), ctx)
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
@@ -465,6 +555,22 @@ KEYS_HARNESS = textwrap.dedent(r"""
           calls: [{ sid: 's1', name: 'one', window: 'w:1', pane: '%1' }, { sid: 's2', name: 'two', window: 'w:2', pane: '%2' }] }
         if (!cmd.on) press('c')
         cmd.sel = { sid: 's1', name: 'one', window: 'w:1' }; cmd.ask = { sid: 's1', ...ask }
+      }
+      // Two review items and one waiting session; confirms and issues recorded.
+      var reviewed = [], revConfirmReal = revConfirm, revIssueReal = revIssue
+      revConfirm = (s) => { reviewed.push(['confirm', s.review]) }
+      revIssue = (s, text) => { reviewed.push(['issue', s.review, text]) }
+      function reviews() {
+        cmd.data = { pending: [{ file: 'a.html', path: '/b/a.html', title: 'A', decision: { question: 'Z?', options: [{ label: 'Y' }] } }], coordinators: [],
+          calls: [{ sid: 's1', name: 'one', window: 'w:1', pane: '%1' }],
+          reviews: [{ coord: 'c1', coordName: 'd9', id: 'cc-mods#85', title: 'R1', links: [] }, { coord: 'c1', coordName: 'd9', id: 'tweb-240', title: 'R2', links: [] }] }
+        if (!cmd.on) press('c')
+        cmd.sel = { review: 'cc-mods#85', coord: 'c1', title: 'R1' }
+      }
+      function inRevBox(key, value = '', more = {}) {
+        let stopped = false, blurred = false
+        const e = { key, shiftKey: false, isComposing: false, keyCode: 0, ...more, target: { value, blur: () => { blurred = true } }, preventDefault: () => { stopped = true } }
+        return [revBoxKey(e, cmd.sel), stopped, blurred]
       }
       function inCallBox(key, value = '', more = {}) {
         let stopped = false, blurred = false
@@ -649,6 +755,86 @@ class CommandKeysTest(unittest.TestCase):
             })()
         """)
         self.assertEqual(got, [[["s1", "네", False], ["s1", "네", True]], ["s1", True], "s2", ["s1"]])
+
+
+    def test_j_and_k_walk_briefs_sessions_then_review_items(self):
+        got = self.run_js("""
+            reviews(); cmd.sel = null
+            const seen = []
+            for (let n = 0; n < 5; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid || cmd.sel.review) }
+            press('k'); seen.push(cmd.sel.file || cmd.sel.sid || cmd.sel.review)
+            return seen
+        """)
+        self.assertEqual(got, ["a.html", "s1", "cc-mods#85", "tweb-240", "a.html", "tweb-240"])
+
+    def test_a_review_item_is_confirmed_by_1_then_enter_and_nothing_else(self):
+        got = self.run_js("""
+            reviews()
+            const early = press('Enter'), two = press('2'), nine = press('9')
+            press('1'); const armed = cmd.armed
+            press('Enter')
+            return [early, two, nine, armed, reviewed]
+        """)
+        self.assertEqual(got, [False, False, False, {"review": "cc-mods#85"}, [["confirm", "cc-mods#85"]]])
+
+    def test_enter_in_a_review_box_sends_the_issue_or_the_armed_confirm_or_says_what_to_do(self):
+        got = self.run_js("""
+            reviews()
+            const empty = inRevBox('Enter', '  ')
+            cmd.armed = { review: 'cc-mods#85' }
+            const words = inRevBox('Enter', ' reload 경우 미재현 ')
+            const armed = inRevBox('Enter', '')
+            const other = [['Enter', { isComposing: true }], ['Enter', { keyCode: 229 }], ['Enter', { shiftKey: true }], ['j', {}], ['1', {}], ['m', {}]].map(([k, m]) => inRevBox(k, 'x', m)[0])
+            return [empty, words, armed, inRevBox('Escape', 'x'), other, reviewed, toasts.length]
+        """)
+        self.assertEqual(got[:4], [[True, True, False]] * 3 + [[True, True, True]])
+        self.assertEqual(got[4], [False] * 6)
+        self.assertEqual(got[5], [["issue", "cc-mods#85", "reload 경우 미재현"], ["confirm", "cc-mods#85"]])
+        self.assertEqual(got[6], 1)
+
+    def test_keys_typed_in_a_review_box_never_reach_the_view_and_a_review_keeps_the_floor_keys(self):
+        # Ownership: the item takes 1, Enter (armed) and m; the box takes
+        # everything typed; the floor keys still pass through.
+        got = self.run_js("""
+            reviews()
+            const typed = ['j', 'k', '1', '2', 'Enter', 'm', 'i', 'd', 'g', 'Escape'].filter((k) => press(k, true))
+            const still = [cmd.sel.review, cmd.armed, reviewed.length]
+            const floor = ['n', 'p', 'v', 'f', '0', 'Tab', 'ArrowUp', '?', ',', 'g'].filter((k) => press(k))
+            press('Escape'); const shut = [cmd.sel, cmd.on]
+            return [typed, still, floor, shut, focused.length]
+        """)
+        self.assertEqual(got, [[], ["cc-mods#85", None, 0], [], [None, True], 0])
+
+    def test_alt_m_goes_to_a_review_box_only_with_a_review_picked(self):
+        # TWeb's normal mode keeps bare m, so ⌥M does it too; typed in a box it is the box's.
+        got = self.run_js("""
+            let boxed = 0
+            revFocus = () => { boxed++ }
+            reviews()
+            const a = press('m', false, true), inBox = press('m', true, true)
+            cmd.sel = { file: 'a.html' }; const onBrief = press('m', false, true)
+            cmd.sel = { sid: 's1', name: 'one' }; const onCall = press('m', false, true)
+            cmd.sel = { review: 'tweb-240', coord: 'c1' }; card.style.display = 'block'; const cardUp = press('m', false, true)
+            return [a, inBox, onBrief, onCall, cardUp, boxed]
+        """)
+        self.assertEqual(got, [True, False, False, False, False, 1])
+
+    def test_a_confirm_goes_on_to_the_next_item_and_an_issue_stays(self):
+        got = self.run_js("""
+            return (async () => {
+              reviews()
+              const posts = []
+              cmdPost = async (body) => { posts.push(body); return { ok: true, sent: 'x' } }
+              await revIssueReal(cmd.sel, '다시 봐 줘')
+              const afterIssue = [cmd.sel.review, cmd.data.reviews.length, cmd.data.reviews[0].issues.map((i) => i.text)]
+              await revConfirmReal(cmd.sel)
+              const afterOne = [cmd.sel.review, cmd.data.reviews.map((r) => r.id)]
+              await revConfirmReal(cmd.sel)
+              return [posts, afterIssue, afterOne, cmd.sel, cmd.data.reviews.length]
+            })()
+        """)
+        self.assertEqual(got[0], [{"kind": "review_issue", "coord": "c1", "id": "cc-mods#85", "value": "다시 봐 줘"}, {"kind": "review_confirm", "coord": "c1", "id": "cc-mods#85"}, {"kind": "review_confirm", "coord": "c1", "id": "tweb-240"}])
+        self.assertEqual(got[1:], [["cc-mods#85", 2, ["다시 봐 줘"]], ["tweb-240", ["tweb-240"]], None, 0])
 
 
 if __name__ == "__main__":

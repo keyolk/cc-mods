@@ -2985,8 +2985,8 @@ test('a command that ran and printed a policy block message is not a block: a la
 
 test('/office restarts a server left over from older code and keeps a current one', async ($, on) => {
   // fs.stat answers mtimeMs 1 for every file, so the code on disk is
-  // office.py:0,resources.py:0,coord.py:0,command.py:0. The server is "old" until it is restarted.
-  let stamp = 'office.py:-1,resources.py:-1,coord.py:-1,command.py:-1'
+  // office.py:0,resources.py:0,coord.py:0,command.py:0,review.py:0. The server is "old" until it is restarted.
+  let stamp = 'office.py:-1,resources.py:-1,coord.py:-1,command.py:-1,review.py:-1'
   let alive = true
   const runs = baseStubs(on, {
     pane: '%42',
@@ -2994,7 +2994,7 @@ test('/office restarts a server left over from older code and keeps a current on
       if (a[0] === '/usr/bin/curl' && String(a.at(-1)).endsWith('/version')) return alive ? { code: 0, out: JSON.stringify({ stamp, pid: 4242 }) } : { code: 7, out: '' }
       if (a[0] === '/usr/bin/curl') return alive ? { code: 0, out: '200' } : { code: 7, out: '000' }
       if (a[0] === 'sh' && String(a[2]).includes('kill')) { alive = false; return { code: 0, out: '' } }
-      if (a[0] === 'sh' && String(a[2]).includes('nohup')) { alive = true; stamp = 'office.py:0,resources.py:0,coord.py:0,command.py:0'; return { code: 0, out: '' } }
+      if (a[0] === 'sh' && String(a[2]).includes('nohup')) { alive = true; stamp = 'office.py:0,resources.py:0,coord.py:0,command.py:0,review.py:0'; return { code: 0, out: '' } }
       if (a[0] === 'sh') return { code: 0, out: '' }
       return undefined
     },
@@ -3055,7 +3055,7 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   const cmd = (args: string) => ({ command: 'coord', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as any
   await $.command.run(cmd('on'))
-  expect(registered).toEqual(['coord_roster', 'coord_route', 'coord_spawn', 'coord_send', 'coord_close'])
+  expect(registered).toEqual(['coord_roster', 'coord_route', 'coord_spawn', 'coord_send', 'coord_close', 'coord_review'])
   const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', ...input } as any).catch((err: unknown) => ({ error: String(err) }))
   const over: any = await call({ slug: 'tmc-x', model: 'sonnet', effort: 'max', brief: 'b', repo_dir: '/src/tmc' })
   expect(JSON.stringify(over)).toContain('above the limit high')

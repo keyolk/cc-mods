@@ -313,7 +313,26 @@ sessions, and `G` (`⌥G` in the box, or `↗ 창으로`) brings its tmux pane i
 front as the card's `G` does (`/focus`, `cc-focus`). That answer goes to the session itself, as the card's reply or key
 does, not through `coord_say`, so a coordinator's hold on the worker never
 stops it. The cockpit's Coord tab (0) lists
-the same decisions as text. A session's card shows the newest brief it is
+the same decisions as text.
+
+**Review queue (🔎 검토).** Finished work the person should judge is a list,
+not a one-off brief: the coordinator puts each verified and merged READY in
+it with `coord_review` (add; the same id again, or update, is the same work's
+later step: the fields given overwrite, links pile up, a confirmed item opens
+again; confirm; list) and says only `검토 대기 N건` in chat. Each
+coordinator's queue is `~/.claude/state/office/coord/review/<sid>.json`
+(`hooks/lib/coordreview.ts`, `office/review.py`; not `coord/*.json`, where the
+ledgers are). The 지휘 view lists the open items under 🔎 검토, after the
+waiting sessions; `j/k` reach them after those. A picked item opens where a
+brief does: 변경, 검증 (what was checked and what was not), 확인할 것, 위험,
+links (a brief opens in the same pane, anything else where its coordinator's
+links go). `1` then Enter (or ✅ 확인함) marks it confirmed: it leaves the list,
+stays in the file for 7 days, and the coordinator gets `[review] confirmed
+<id>`. The box under it (`m`, or `⌥M` where TWeb's normal mode keeps bare `m`;
+or ⚠ 문제 있음) sends `[review] issue <id>: <words>`, a task for the
+coordinator; the item stays open with the words on it. `python3
+office/review.py seed <coordinator sid> <items.json|->` puts a list of items
+into a queue once (a one-off brief's items, for instance). A session's card shows the newest brief it is
 recorded on (`sessions[].id` in the sidecar) as a badge that opens it.
 
 ## Archive folders (`~/exp/<date>_<topic>/`)
