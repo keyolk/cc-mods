@@ -1925,7 +1925,9 @@ const VIEW_EXT = /\.(html?|svg|png|jpe?g|gif|webp|pdf|md|txt|log|json|csv|ya?ml)
 const canView = (p) => VIEW_EXT.test(p) || /\/exp\/[^/]+\/?$/.test(p)
 const viewer = document.createElement('div'); viewer.id = 'viewer'; document.body.appendChild(viewer)
 async function viewFile(path, sid = cardSid) {
-  const url = '/file?sid=' + encodeURIComponent(sid) + '&path=' + encodeURIComponent(path)
+  // A brief opens at its own path so the links inside it resolve in ~/briefs.
+  const brief = path.match(/\/briefs\/([\w.-]+\.html)$/)
+  const url = brief ? '/briefs/' + brief[1] : '/file?sid=' + encodeURIComponent(sid) + '&path=' + encodeURIComponent(path)
   const name = path.split('/').filter(Boolean).pop()
   viewer.innerHTML = '<div class="bar"><b>👁 ' + esc(name) + '</b><span class="m">' + esc(path) + '</span><button class="out"><kbd>O</kbd> ↗ 밖으로</button><button class="place" title="어디서 열지 고르기 (⇧O)">▾</button><button class="x">✕</button></div><div class="body"></div>'
   viewer.style.display = 'flex'
@@ -1980,6 +1982,8 @@ function pickPlace(k) {
 }
 function hidePlaces() { placeMenu.style.display = 'none'; placeMenu.v = null; const b = placeMenu.back; placeMenu.back = null; if (b && b.isConnected && b !== document.body) b.focus({ preventScroll: true }) }
 addEventListener('mousedown', (e) => { if (placeMenu.v && !e.target.closest('#placemenu, .place')) hidePlaces() }, true)
+// A framed brief says which page it shows now (command.js moves the bar and the answers with it).
+addEventListener('message', (ev) => { if (typeof cmdFrameMsg === 'function') cmdFrameMsg(ev) })
 
 // ---------- settings (⚙) ----------
 // The office's own choices, kept by keep(): where links and files open

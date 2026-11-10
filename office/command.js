@@ -398,6 +398,29 @@ function cmdRenderSay() {
   cmdRenderSent()
 }
 
+// ↗ 밖으로 opens this brief alone in the browser (the server's `open`); the
+// office page is the person's screen and never moves.
+function cmdBriefBar(bar, s) {
+  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+  bar.querySelector('.out').onclick = async () => { const j = await cmdPost({ kind: 'brief_open', file: s.file, via: lastPlace(s.path) }); if (j) toast('↗ ' + (j.sent || '열었습니다')) }
+  bar.querySelector('.shut').onclick = cmdShut
+}
+
+// The frame told which page it shows now (office/command.py FRAME_NOTE): a link
+// inside the brief moved it. The bar and the answer buttons follow, so they
+// never stay under a page they are not about; the frame itself is not rebuilt.
+// office.html listens for 'message' and calls this.
+function cmdFrameMsg(ev) {
+  const fr = cmdEl.querySelector('.doc iframe')
+  const m = fr && ev.source === fr.contentWindow && ev.data && typeof ev.data.officeBrief === 'string' && ev.data.officeBrief.match(/^\/briefs\/([\w.-]+\.html)$/)
+  if (!m || !cmd.sel || !cmd.sel.file || m[1] === cmd.sel.file) return
+  const known = (cmd.data?.pending || []).find((p) => p.file === m[1])
+  cmd.sel = { file: m[1], path: known ? known.path : '~/briefs/' + m[1], title: known ? known.title : m[1] }
+  cmd.frame = cmd.sel.path; cmd.armed = null; cmd.q = null; cmd.row = null
+  cmdBriefBar(cmdEl.querySelector('.bar'), cmd.sel)
+  cmdRenderDoc()
+}
+
 function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
   cmdEl.classList.toggle('doc-on', !!s)
@@ -408,13 +431,14 @@ function cmdRenderDoc() {
   if (s.revs) return cmdRev() ? revRenderList(bar, doc, dec, s) : cmdShut()
   if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
+  // It loads /briefs/<name>, not /file?path=: a link inside the brief
+  // (← 모든 브리프, another brief) then resolves beside it in ~/briefs. Against
+  // /file it became "/index.html", the office page, framed in itself.
   if (cmd.frame !== s.path) {
     cmd.frame = s.path
-    bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
-    bar.querySelector('.out').onclick = () => openLink(s.path)
-    bar.querySelector('.shut').onclick = cmdShut
+    cmdBriefBar(bar, s)
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;min-height:0'
-    doc.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="/file?sid=command&path=' + encodeURIComponent(s.path) + '"></iframe>'
+    doc.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="/briefs/' + encodeURIComponent(s.file) + '"></iframe>'
   }
   const p = cmdPending(s.file)
   const act = p && cmdActive(p)

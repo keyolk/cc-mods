@@ -551,7 +551,14 @@ else the first name of your account's full name, else your login name.
 - **Briefs**: any `~/briefs/*.html` opens in the viewer from any session's
   card (the path is resolved first, so a link in that folder pointing
   elsewhere, or `..`, is refused); the card's badge is that session's newest
-  brief. `D` switches to the 🎖 지휘 view (see Coordinator mode).
+  brief. `D` switches to the 🎖 지휘 view (see Coordinator mode). A brief is
+  served at `/briefs/<name>.html`, so the links inside it (`← 모든 브리프` →
+  `index.html`, another brief) resolve in `~/briefs` and not against the
+  office's own root; the 지휘 view follows the frame to the page it shows (the
+  bar, and no answer buttons under a brief they are not about). `↗ 밖으로` on a
+  brief opens it alone in a window of its own (the default browser, or the
+  place picked in ⚙), never in the office page. The office page itself sends
+  `frame-ancestors 'none'`: nothing can frame it.
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only

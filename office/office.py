@@ -799,6 +799,9 @@ VIEW_TYPES = {".html": "text/html", ".htm": "text/html", ".svg": "image/svg+xml"
 VIEW_MAX = 20 * 1024 * 1024
 
 
+NO_FRAME = {"Content-Security-Policy": "frame-ancestors 'none'", "X-Frame-Options": "DENY"}
+
+
 def viewable(sid: str, path: str) -> tuple[int, bytes, str, dict]:
     # A brief (~/briefs/*.html) is anyone's to read: a coordinator's question
     # is shown beside every session it is about.
@@ -1676,6 +1679,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps({"stamp": STAMP, "pid": os.getpid()}).encode(), "application/json")
         if self.path.startswith("/next"):
             return self.send(200, json.dumps({"n": NEXT["n"]}).encode(), "application/json")
+        if self.path == "/briefs" or self.path.startswith("/briefs/"):  # not /briefline.js
+            from urllib.parse import unquote, urlparse
+
+            name = unquote(urlparse(self.path).path[len("/briefs/"):])
+            return self.send(*command.serve_brief(name))
         if self.path.startswith("/file"):
             from urllib.parse import parse_qs, urlparse
 
@@ -1729,7 +1737,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
                 page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_PREFS__", json.dumps(prefs()).replace("<", "\\u003c").encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
-                return self.send(200, page, "text/html; charset=utf-8")
+                # Nothing frames the office: a link inside a framed brief that
+                # resolved to "/" once put the whole office in its own frame.
+                return self.send(200, page, "text/html; charset=utf-8", NO_FRAME)
         self.send(404, b"not found", "text/plain")
 
 
