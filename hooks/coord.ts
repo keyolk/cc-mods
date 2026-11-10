@@ -14,6 +14,7 @@ import { repoFromRemote } from './lib/prs'
 import { ROUTER_MODEL, candidates, checkRoute, parsePrompts, parseRoute, routeRequest, routeText, type Paths, type Raw } from './lib/coordroute'
 import { BOX_FMT, parseBoxes, pick, places, spots, type PaneBox } from './lib/coordplace'
 import type { Policy } from './lib/policy'
+import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, upsert, type ReviewFile } from './lib/coordreview'
 
 // What register.ts lends: the session, and its policy. God mode keeps "the
 // policy before" and puts it back when it ends, so while god is on the
@@ -71,6 +72,25 @@ const TOOLS = {
     description: 'Coordinator mode: end a worker. Owned: kills the pane coord_spawn made for it (or its fallback window) and removes its worktree (refused when the worktree has uncommitted changes). Adopted: hands it back to the person (the session and its pane keep running) and it is not adopted again.',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' } }, required: ['slug'] },
   },
+  review: {
+    name: 'coord_review',
+    description:
+      "Coordinator mode: the review queue, finished work the person should judge (the office's 지휘 view shows it under 🔎 검토; the person's 확인함 or 문제 있음 comes back as `[review] confirmed <id>` or `[review] issue <id>: <words>`). add: a new item, or the same id again for the same work's later step (fields given overwrite, links pile up, a confirmed item opens again). update: an id already there. confirm: the person said in chat they looked at it. list: the open items. Every result ends with the open count to say in chat as `검토 대기 N건`.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'update', 'confirm', 'list'] },
+        id: { type: 'string', description: 'the work: the worker slug or the PR (cc-mods#85); letters, digits, . # _ -' },
+        title: { type: 'string', description: 'one line the person recognises the work by' },
+        changed: { type: 'string', description: 'what changed, in the words the person would use' },
+        verified: { type: 'string', description: 'what you checked (tests, live run, CI on the sha) and what you did not' },
+        check: { type: 'string', description: 'what the person should look at or try themselves' },
+        risk: { type: 'string', description: 'what could go wrong, or is untested' },
+        links: { type: 'array', items: { type: 'string' }, description: 'PR URLs, brief paths, files' },
+      },
+      required: ['action'],
+    },
+  },
 }
 
 let ledger: Ledger | undefined
@@ -88,12 +108,17 @@ const READY_WAIT_MS = 20_000
 // The tool by its name, whether or not this module has registered it yet.
 function kindOf(tool: string): keyof typeof TOOLS | undefined {
   if (toolNames[tool]) return toolNames[tool]
-  const m = /^mcp__cc-mods__coord_(roster|route|spawn|send|close)$/.exec(tool)
+  const m = /^mcp__cc-mods__coord_(roster|route|spawn|send|close|review)$/.exec(tool)
   return m ? (m[1] as keyof typeof TOOLS) : undefined
 }
 
 const dir = () => ctx!.home() + '/.claude/state/office/coord'
 const file = () => dir() + '/' + ctx!.sid() + '.json'
+// Not dir()/*.json: that glob is the ledgers (lib/coordreview.ts).
+const reviewFile = () => dir() + '/review/' + ctx!.sid() + '.json'
+// The queue as last read: coordSection's line. The office writes confirms
+// into the file, so it is read again each tick and before every change.
+let review: ReviewFile | undefined
 
 async function sh($: any, argv: string[], opts: Record<string, unknown> = {}) {
   try {
@@ -157,7 +182,18 @@ export function coordLedger(): Ledger | undefined {
 }
 
 export function coordPrompt(now: number): string | undefined {
-  return ledger?.on ? coordSection(ledger, now) : undefined
+  return ledger?.on ? coordSection(ledger, now, 'Korean', reviewLine(review)) : undefined
+}
+
+async function readReview($: any): Promise<ReviewFile> {
+  review = parseReview(await readText($, reviewFile()), ctx!.sid(), ledger?.name ?? ctx!.sid().slice(0, 8))
+  return review
+}
+
+// register.ts, when a `[review] …` prompt from the office arrives: the
+// person's confirm is in the file already, so the turn's line counts it.
+export async function coordReviewRefresh($: any) {
+  if (ledger?.on && ctx) await readReview($)
 }
 
 export async function coordStart($: any, c: Ctx) {
@@ -204,6 +240,7 @@ async function turnOn($: any, fresh: boolean) {
 // framed prompt; the rest only updates the ledger the office draws.
 let ticking = false
 async function tick($: any) {
+  if (ledger?.on && !ticking) await readReview($)
   if (ticking || !ledger?.on || (!active(ledger).length && !ledger.limits.autoAdopt)) return
   ticking = true
   try {
@@ -371,6 +408,7 @@ export async function coordTool($: any, tool: string, input: any): Promise<{ res
   if (kind === 'spawn') return withPending(await spawn($, input ?? {}))
   if (kind === 'send') return withPending(await send($, input ?? {}))
   if (kind === 'close') return withPending(await close($, input ?? {}))
+  if (kind === 'review') return withPending(await reviewTool($, input ?? {}))
   return { deny: 'unknown coordinator tool' }
 }
 
@@ -606,6 +644,33 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
   const l = w.instructed ? ledger! : { ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, instructed: now } : x)) }
   await save($, logged(l, 'send', w.slug + ': ' + text.slice(0, 200), now))
   return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' + typedNote(w, now) }
+}
+
+async function reviewTool($: any, i: any): Promise<{ result: string } | { deny: string }> {
+  const action = String(i.action ?? 'list')
+  const now = Date.now()
+  const f = await readReview($)
+  if (action === 'list') return { result: reviewTable(f) }
+  let next: ReviewFile | string
+  let said: string
+  if (action === 'confirm') {
+    next = confirmed(f, String(i.id ?? ''), now)
+    said = 'Confirmed ' + i.id + '; it left the queue.'
+  } else if (action === 'add' || action === 'update') {
+    const r = upsert(f, action, i, now)
+    next = typeof r === 'string' ? r : r.file
+    said = typeof r === 'string' ? '' : (r.fresh ? 'Added ' : 'Updated ') + r.item.id + '.'
+  } else return { deny: 'coord_review: action is add, update, confirm or list' }
+  if (typeof next === 'string') return { deny: 'coord_review: ' + next }
+  await sh($, ['mkdir', '-p', dir() + '/review'])
+  const out = pruned(next, now)
+  try {
+    await $.fs.write(reviewFile(), JSON.stringify(out, null, 1))
+  } catch (e) {
+    return { deny: 'coord_review: could not write ' + reviewFile() + ': ' + String(e) }
+  }
+  review = out
+  return { result: said + ' ' + countText(out) + ' (say only this in chat; the office shows the items).' }
 }
 
 async function close($: any, i: any): Promise<{ result: string } | { deny: string }> {

@@ -38,11 +38,12 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
+import review  # noqa: E402 - office/review.py, finished work the person should judge
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
-KINDS = ("brief_answer", "coord_say")
+KINDS = ("brief_answer", "coord_say", *review.KINDS)
 RECENT = 8  # briefs listed in the command panel
 # file -> (sidecar mtime, sidecar), (html mtime, title): 180 briefs are read
 # on every poll of the view, so only a changed file is read again.
@@ -258,9 +259,9 @@ def _coord_name(sid: str | None) -> str | None:
 
 
 def view(people: list[dict]) -> dict:
-    """What the command view draws: the waiting decisions, and each
-    coordinator with its live workers, their state from the office's own
-    snapshot and the brief each is on."""
+    """What the command view draws: the waiting decisions, each coordinator
+    with its live workers (their state from the office's own snapshot and the
+    brief each is on), and the finished work waiting on the person's look."""
     by_sid = {p["id"]: p for p in people}
     latest = latest_by_session()
 
@@ -296,7 +297,7 @@ def view(people: list[dict]) -> dict:
     recent = []
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
         recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
-    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "recent": recent}
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": review.items(), "recent": recent}
 
 
 # What a session waiting on the person shows in the view's left pane: the
@@ -459,6 +460,8 @@ def act(body: dict, inbox_put) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
         return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""))
+    if kind in review.KINDS:
+        return review.act(body, inbox_put)
     if kind == "coord_say":
         return say(str(body.get("coord") or ""), str(body.get("slug") or ""), str(body.get("value") or ""), inbox_put)
     return 400, {"error": "unknown action"}

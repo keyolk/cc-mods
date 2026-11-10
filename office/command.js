@@ -14,6 +14,9 @@
 // way: the end of its last answer, the choice on its screen (or the card's
 // quick replies) and a box; an answer goes straight to that session, as the
 // floor card's reply does, never through a coordinator.
+// Finished work a coordinator put up for the person's look (🔎 검토,
+// office/review.js) opens there too: 확인함 takes it off, 문제 있음 sends the
+// person's words to its coordinator.
 // An instruction for a worker goes to its coordinator, never to the worker:
 // typing to a worker yourself is what the office floor's card is for.
 //
@@ -160,12 +163,15 @@ function cmdActive(p) {
 function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmd.q = null }
 const cmdCall = (sid) => (cmd.data?.calls || []).find((c) => c.sid === sid)
 function cmdPickCall(c) { cmd.sel = { sid: c.sid, name: c.name, window: c.window }; cmd.armed = null; cmd.q = null; cmd.force = null; cmdAsk() }
-// What j/k walk: the waiting briefs, then the sessions waiting on the person.
+// review.js, unless the server that sent this page has none.
+const cmdRev = () => typeof revList === 'function'
+// What j/k walk: the waiting briefs, then the sessions waiting on the
+// person, then the finished work waiting on their look.
 function cmdItems() {
-  return [...(cmd.data?.pending || []).map((p) => ({ p })), ...(cmd.data?.calls || []).map((c) => ({ c }))]
+  return [...(cmd.data?.pending || []).map((p) => ({ p })), ...(cmd.data?.calls || []).map((c) => ({ c })), ...(cmdRev() ? revList() : []).map((r) => ({ r }))]
 }
-const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : cmd.sel.sid === it.c.sid)
-function cmdGo(it) { if (it.p) cmdPick(it.p); else cmdPickCall(it.c); cmdRender() }
+const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : it.r ? revIsSel(it.r) : cmd.sel.sid === it.c.sid)
+function cmdGo(it) { if (it.p) cmdPick(it.p); else if (it.r) revPick(it.r); else cmdPickCall(it.c); cmdRender() }
 
 async function cmdAsk() {
   const sid = cmd.sel?.sid
@@ -214,6 +220,7 @@ function cmdRender() {
   const calls = d.calls || []
   out.push('<h3>🙋 나를 기다리는 세션 <span class="m">' + calls.length + ' · 누르면 옆에 열림 · j/k</span></h3>')
   out.push(calls.length ? '<ul class="feed">' + calls.map((c) => '<li data-call="' + cmdEsc(c.sid) + '"' + (cmd.sel && cmd.sel.sid === c.sid ? ' class="sel"' : '') + '>' + (c.attention === 'alert' ? '❗ ' : '❓ ') + cmdEsc(c.name) + ' <span class="m">' + cmdEsc([c.window, c.boss ? '🎖 ' + c.boss : '', Date.now() - (cmd.sent[c.sid] || 0) < 60000 ? '📨 답 보냄' : ''].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<div class="m" style="margin-bottom:10px">없습니다.</div>')
+  if (cmdRev()) out.push(revSection())
   const recent = d.recent || []
   out.push('<h3>📄 최근 브리프 <span class="m">누르면 옆에 열림</span></h3>')
   out.push(recent.length ? '<ul class="feed">' + recent.map((b) => '<li data-brief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.file) + '">' + (b.pending ? '⏳ ' : '') + cmdEsc(b.title) + ' <span class="m">' + cmdEsc([b.by, cmdAgo(new Date(b.at * 1000).toISOString())].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>' : '<div class="m">브리프가 없습니다.</div>')
@@ -224,6 +231,7 @@ function cmdRender() {
 }
 
 function cmdClick(ev) {
+  if (cmdRev() && revClick(ev)) return
   const li = ev.target.closest('li[data-call]')
   if (li) { const c = cmdCall(li.dataset.call); if (c) { cmdPickCall(c); cmdRender() } return }
   const a = ev.target.closest('[data-brief]')
@@ -289,6 +297,7 @@ function cmdRenderDoc() {
   cmdEl.classList.toggle('doc-on', !!s)
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
   if (s.sid) return cmdRenderCall(bar, doc, dec, s)
+  if (s.review) return cmdRev() ? revRenderDoc(bar, doc, dec, s) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
   if (cmd.frame !== s.path) {
     cmd.frame = s.path
@@ -453,7 +462,7 @@ async function cmdReply(s, body, label) {
   cmd.sent[s.sid] = Date.now()
   // On to the next one waiting, as an answered brief goes on to the next brief.
   const items = cmdItems(), at = items.findIndex(cmdIsSel)
-  const next = [...items.slice(at + 1), ...items.slice(0, Math.max(0, at))].find((it) => it.p || Date.now() - (cmd.sent[it.c.sid] || 0) > 60000)
+  const next = [...items.slice(at + 1), ...items.slice(0, Math.max(0, at))].find((it) => !it.c || Date.now() - (cmd.sent[it.c.sid] || 0) > 60000)
   if (next) cmdGo(next)
   else { cmdShut(); cmdRender() }
 }
@@ -531,9 +540,10 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // (first closing an open brief); in the instruction box or the note, Esc
 // only leaves the box and the next Esc closes. i to the instruction box, m
 // to the active question's box; j/k through the waiting briefs and then the
-// sessions waiting on the person; a digit arms an option of the active
-// question (a picked session's choice or quick reply) and Enter sends it, so
-// one stray key never decides. G (⌥G in its box) goes to a picked session's
+// sessions waiting on the person and then the review items; a digit arms an
+// option of the active question (a picked session's choice or quick reply;
+// 1 a review item's 확인함) and Enter sends it, so one stray key never
+// decides. G (⌥G in its box) goes to a picked session's
 // tmux pane. In a box every key is typing; its Enter is cmdNoteKey's
 // (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
@@ -541,6 +551,8 @@ function commandKey(e, k, typing) {
   if (k === 'c' && (e.altKey || !typing) && !cardUp) { e.preventDefault(); setCommand(!cmd.on); return true }
   // ⌥G to the picked session's pane works in its box too, as on the card.
   if (k === 'g' && e.altKey && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdFocus(cmd.sel); return true }
+  // ⌥M to a picked review item's box: TWeb's normal mode keeps bare m (live, 8899).
+  if (k === 'm' && e.altKey && !typing && cmd.on && cmd.sel?.review && cmdRev() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); revFocus(); return true }
   if (e.altKey || typing) return false
   if (!cmd.on) {
     if (k === 'd') { e.preventDefault(); setCommand(true); return true }
@@ -568,6 +580,7 @@ function commandKey(e, k, typing) {
     if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-call]')?.focus())
     if (k === 'g') return hit(() => cmdFocus(s))
   }
+  if (cmd.sel?.review && cmdRev() && revKey(k, cmd.sel, hit)) return true
   const p = cmd.sel && cmdPending(cmd.sel.file)
   const q = p && cmdActive(p)
   if (q && /^[1-9]$/.test(k) && +k <= q.options.length) return hit(() => { cmd.armed = { q: q.id, i: +k - 1 }; cmdRenderDoc(); toast('Enter로 「' + q.options[+k - 1].label + '」 보내기') })
