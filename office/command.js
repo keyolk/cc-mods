@@ -478,7 +478,7 @@ function cmdRenderDoc() {
     })
     const note = box.querySelector('.note')
     note.value = typed[q.id] || ''
-    note.onkeydown = (e) => cmdNoteKey(e, p, q)
+    cmdBoxKeys(note, (e) => cmdNoteKey(e, p, q))
     // Typing in a question's box, or a click on it, makes it the one the digits arm.
     note.onfocus = () => { if (multi && cmd.q !== q.id) { cmd.q = q.id; cmdRenderDoc() } }
     box.onclick = (e) => { if (multi && cmd.q !== q.id && !e.target.closest('button')) { cmd.q = q.id; cmdRenderDoc() } }
@@ -561,14 +561,14 @@ function cmdRenderCall(bar, doc, dec, s) {
   const fresh = dec.querySelector('.note[data-call]')
   if (keep && fresh) {
     fresh.replaceWith(keep)
-    keep.onkeydown = (e) => cmdCallKey(e, s)
+    cmdBoxKeys(keep, (e) => cmdCallKey(e, s))
     if (focused) keep.focus({ preventScroll: true })
     return
   }
   const note = dec.querySelector('.note')
   if (note) {
     note.value = typed
-    note.onkeydown = (e) => cmdCallKey(e, s)
+    cmdBoxKeys(note, (e) => cmdCallKey(e, s))
     if (focused) note.focus()
   }
 }
@@ -583,6 +583,13 @@ function cmdFocus(s) {
   focusPane(pane)
   toast('↗ ' + (s.summary || s.name) + ' (' + pane + ')')
 }
+
+// A box's own keys go in through this, never as `el.onkeydown = (e) => key(e)`:
+// a handler property that returns false cancels the event, and the box key
+// functions return false for every key they leave alone, so each letter and
+// each Hangul jamo typed by hand was cancelled before it reached the box.
+// (`tweb type` inserts text without a keydown, which is why it still typed.)
+function cmdBoxKeys(el, key) { el.onkeydown = (e) => { key(e) } }
 
 // Keys in a session's box: Enter sends the words typed, or with none the
 // quick reply armed (a brief's box sends the armed option with the words as

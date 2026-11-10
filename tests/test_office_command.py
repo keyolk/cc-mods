@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -997,6 +998,44 @@ class CommandKeysTest(unittest.TestCase):
             return [old.removed, fresh.replacedWith === old, !!old.focused, typeof old.onkeydown]
         """)
         self.assertEqual(got, [1, True, True, "function"])
+
+    def test_letters_and_hangul_typed_by_hand_in_the_reply_box_are_never_cancelled(self):
+        # The browser cancels a key whose handler property returns false. The
+        # box's key function returns false for each key it leaves alone, so
+        # handed straight to onkeydown it ate every letter typed by hand
+        # (`tweb type` inserts without a keydown, and so typed). Here the
+        # handler the box really carries gets the keys, under that rule.
+        got = self.run_js("""
+            const note = { tagName: 'INPUT', dataset: { call: 'sid1' }, style: {}, value: '', focus() {}, remove() {}, blur() {} }
+            const dec = { dataset: {}, style: {}, contains: () => false, appendChild() {}, querySelector: (q) => (q.startsWith('.note') ? (dec.rebuilt ? note : null) : q === '.opts' ? { appendChild() {} } : null) }
+            Object.defineProperty(dec, 'innerHTML', { set() { dec.rebuilt = true }, get: () => '' })
+            cmd.ask = { sid: 'sid1', text: 't', suggestions: ['a'], dialog: null, inbox: null }
+            cmdAsk = () => {}
+            cmdRenderCall({ innerHTML: '', querySelector: () => ({ onclick: null, textContent: '' }) }, { querySelector: () => ({ dataset: { key: 'k' }, innerHTML: '' }), className: '', style: {}, innerHTML: '' }, dec, { sid: 'sid1', name: 'n' })
+            // A letter, the view's own keys, a digit, and Hangul from the IME
+            // (TWeb's keydown under the Korean layout has no key; a composing one is 229).
+            const keys = [['a', {}], ['j', {}], ['k', {}], ['x', {}], ['t', {}], ['g', {}], ['b', {}], ['m', {}], ['1', {}], ['[', {}], ['', {}], ['ㅎ', { isComposing: true, keyCode: 229 }], ['Process', { keyCode: 229 }]]
+            const cancelled = keys.filter(([k, m]) => {
+              let stopped = false
+              const e = { key: k, shiftKey: false, altKey: false, isComposing: false, keyCode: 0, ...m, target: note, preventDefault: () => { stopped = true } }
+              return note.onkeydown(e) === false || stopped
+            }).map(([k]) => k)
+            // Enter and Escape are still the box's.
+            let sent = false, left = false
+            note.value = '네'
+            note.onkeydown({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, target: note, preventDefault: () => { sent = true } })
+            note.onkeydown({ key: 'Escape', target: { blur: () => { left = true } }, preventDefault() {} })
+            return [cancelled, sent, left, replies]
+        """)
+        self.assertEqual(got, [[], True, True, [["sid1", {"kind": "reply", "value": "네"}, "답장"]]])
+
+    def test_no_box_hands_its_key_function_straight_to_onkeydown(self):
+        # Every box's keys go in through cmdBoxKeys: an arrow with no braces
+        # returns what the key function returns, and false cancels the key.
+        office = pathlib.Path(__file__).parents[1] / "office"
+        bare = re.compile(r"\.onkeydown\s*=\s*(?:async\s*)?\(?\w*\)?\s*=>(?!\s*\{)")
+        found = [f"{f.name}:{i}" for f in sorted([*office.glob("*.js"), office / "office.html"]) for i, line in enumerate(f.read_text().splitlines(), 1) if bare.search(line) and not line.lstrip().startswith('//')]
+        self.assertEqual(found, [])
 
     def test_the_brief_bar_posts_a_brief_open_and_never_the_session_path(self):
         got = self.run_js("""
