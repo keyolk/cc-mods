@@ -17,6 +17,7 @@ import command  # noqa: E402
 import coord  # noqa: E402
 import office  # noqa: E402
 import review  # noqa: E402
+import slx  # noqa: E402
 
 COORD = "c0000000-0000-0000-0000-000000000001"
 WORKER = "a0000000-0000-0000-0000-000000000002"
@@ -45,6 +46,11 @@ class BriefsCase(unittest.TestCase):
         self.cli = mock.patch.object(command, "brief_bin", return_value=None)
         self.cli.start()
         self.addCleanup(self.cli.stop)
+        # The view reads the slx inbox; this machine's slx must not answer.
+        p = mock.patch.object(slx, "binary", return_value=None)
+        p.start()
+        self.addCleanup(p.stop)
+        slx._cache.update(at=0.0, out=None)
         coord._cache.update(at=0.0, ledgers=[])
         coord._sums.update(at=0.0, sums={})
         command._side.clear()
@@ -423,7 +429,7 @@ class AskingTest(BriefsCase):
         self.ledger([{"slug": "w", "sid": WORKER}])
         people = [{"id": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": {"name": "cc-mods-d9", "slug": "w"}}, {"id": MAKER, "name": "m", "attention": "none"}]
         calls = command.view(people)["calls"]
-        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": None, "since": None}])
+        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": None, "since": None, "slx": None}])
 
     def test_asking_reads_the_answer_tail_and_the_screen(self):
         me = {"pane": "%9", "wid": "@3", "window": "cc:3", "name": "w", "cwd": "/src/x"}
@@ -488,19 +494,24 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "turn"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "turn", "slx"})
             with urllib.request.urlopen(base + "/review.js") as r:
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function revKey", r.read())
+            with urllib.request.urlopen(base + "/slx.js") as r:
+                self.assertIn("javascript", r.headers["Content-Type"])
+                self.assertIn(b"function slxKey", r.read())
 
     def test_the_server_stamp_and_the_page_know_review(self):
         # /office restarts a server whose stamp differs from the files on
         # disk: register.ts must list the same files office.py stamps.
         self.assertIn("review.py", office.SERVER_FILES)
+        self.assertIn("slx.py", office.SERVER_FILES)
         reg = (pathlib.Path(__file__).parents[1] / "hooks" / "register.ts").read_text()
-        self.assertIn("'office.py', 'resources.py', 'coord.py', 'command.py', 'review.py'", reg)
+        self.assertIn("'office.py', 'resources.py', 'coord.py', 'command.py', 'review.py', 'slx.py'", reg)
         page = (pathlib.Path(__file__).parents[1] / "office" / "office.html").read_text()
         self.assertLess(page.index('src="review.js"'), page.index('src="command.js"'))
+        self.assertLess(page.index('src="slx.js"'), page.index('src="command.js"'))
 
 
 class ReviewTest(BriefsCase):
@@ -588,8 +599,8 @@ KEYS_HARNESS = textwrap.dedent(r"""
       localStorage: { getItem: () => null, setItem() {} },
       document: { createElement: el, getElementById: el, head: el(), body: el() } }
     vm.createContext(ctx)
-    // review.js, crew.js, look.js and briefline.js come first, as office.html loads them.
-    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
+    // review.js, crew.js, look.js, briefline.js and slx.js come first, as office.html loads them.
+    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
