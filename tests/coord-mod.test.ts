@@ -9,7 +9,11 @@ const ledgerJson = () => JSON.stringify({ on: true, sid: 'sid-1', name: 'cc-mods
 // The worker's pane as tmux lists it (PANES_FMT): deciding a Read.
 const PANE = '%365\t@134\tw4\twaiting\taction\t/r/bd\t\tRead ~/r/prompt.txt'
 
-function stubs(on: any, o: { files: Record<string, string>; submitted: string[]; panes: () => string; run?: (argv: string[]) => string | undefined; runs?: string[][] }) {
+// A peer message (session.send) reaches no session unless a test says so:
+// coord_send then falls back to the office inbox.
+const NO_PEER = { isDelivered: false, reason: 'no live session on this machine has id w' }
+
+function stubs(on: any, o: { files: Record<string, string>; submitted: string[]; panes: () => string; run?: (argv: string[]) => string | undefined; runs?: string[][]; peer?: (e: any) => unknown }) {
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? '%1' : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
@@ -40,6 +44,7 @@ function stubs(on: any, o: { files: Record<string, string>; submitted: string[];
   })
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
+  on('session.send', (_$: any, e: any) => o.peer?.(e) ?? NO_PEER)
 }
 
 test('coord: a coord tool called while a reload is still starting the module is answered', async ($, on) => {
@@ -307,16 +312,53 @@ test('coord: a claude -p child naming the worker\'s pane does not make the worke
   expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeGreaterThan(0)
 })
 
-test('coord: coord_send writes the instruction to the inbox marked keep, and merges with an older one keeping it', async ($, on) => {
+test('coord: coord_send goes as a peer message, which reaches a worker mid-turn; no inbox file is written', async ($, on) => {
+  // Live (2026-11-10): a plugin prompt through the inbox waited 25 minutes
+  // for office-say-first's turn to end; a peer message is read at the
+  // worker's next tool call.
+  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  const peers: any[] = []
+  stubs(on, { files, submitted: [], panes: () => '', peer: (e) => (peers.push(e), { isDelivered: true }) })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'first' } as any)
+  expect(peers.map((e) => [e.to, e.text])).toEqual([[expect.stringContaining('w4'), '[coordinator] first']])
+  expect(r.result).toBe('Sent to brief-decision-4 (%365): delivered into its session (mid-turn: at its next tool call).')
+  expect(Object.keys(files).some((f) => f.includes('/inbox/'))).toBe(false)
+  expect(JSON.parse(files[LEDGER]!).log.at(-1)).toMatchObject({ kind: 'send', text: 'brief-decision-4: first' })
+})
+
+test('coord: with no peer message, coord_send writes the inbox marked keep with its sender, and merges with an older one keeping its age', async ($, on) => {
   const files: Record<string, string> = { [LEDGER]: ledgerJson() }
   stubs(on, { files, submitted: [], panes: () => '' })
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   const inbox = '/home/u/.claude/state/office/inbox/w4.json'
-  await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'first' } as any)
-  expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first', keep: true })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'first' } as any)
+  expect(r.result).toContain('left in its office inbox (no peer message: no live session on this machine has id w)')
+  expect(r.result).toContain('a [coord] wake tells you if it never does')
+  const one = JSON.parse(files[inbox]!)
+  expect(one).toMatchObject({ text: '[coordinator] first', keep: true, from: 'sid-1', slug: 'brief-decision-4' })
   await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'second' } as any)
-  expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first\n\n[coordinator] second', keep: true })
+  expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first\n\n[coordinator] second', keep: true, at: one.at })
+})
+
+test('coord: an instruction past the inline limit goes whole to a file the worker reaches; the message carries its head and path', async ($, on) => {
+  const ledger = JSON.parse(ledgerJson())
+  ledger.workers[0].addDirs = ['/home/u/briefs', '/home/u/research/brief-decision-4']
+  const files: Record<string, string> = { [LEDGER]: JSON.stringify(ledger) }
+  const peers: any[] = []
+  stubs(on, { files, submitted: [], panes: () => '', peer: (e) => (peers.push(e), { isDelivered: true }) })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const long = 'do this: ' + 'y'.repeat(120_000) + ' END'
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: long } as any)
+  const path = Object.keys(files).find((f) => f.startsWith('/home/u/research/brief-decision-4/coord-'))!
+  expect(files[path]).toBe(long)
+  expect(peers[0].text.length).toBeLessThan(3_000)
+  expect(peers[0].text.startsWith('[coordinator] do this: yyy')).toBe(true)
+  expect(peers[0].text).toContain('전문: ' + path)
+  expect(r.result).toContain('Its 120013 characters went to a file')
 })
 
 test('coord: with the mode on every live session is adopted but another coordinator and its owned workers; coord_send reaches one; coord_close hands it back for good', async ($, on) => {
@@ -351,7 +393,7 @@ test('coord: with the mode on every live session is adopted but another coordina
   expect(w().endedAt).toBeUndefined()
   // Typed in 20 minutes ago: past the hold, so it takes an instruction.
   const sent: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'ops-k8s', text: 'the person says: keep the alert' } as any)
-  expect(sent.result).toBe('Sent to ops-k8s (%7).')
+  expect(sent.result.startsWith('Sent to ops-k8s (%7): left in its office inbox')).toBe(true)
   expect(JSON.parse(files['/home/u/.claude/state/office/inbox/ops.json']!).text).toBe('[coordinator] the person says: keep the alert')
   expect(w().instructed).toBeGreaterThan(0)
   const closed: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'ops-k8s' } as any)
@@ -380,7 +422,7 @@ test('coord: an auto-adopted session the person just typed in still takes coord_
   expect(r.result).toContain('| ops-k8s | adopted (auto) ops-k8s | %7 | done person typed ' + at + ' |')
   const s: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'ops-k8s', text: 'x' } as any)
   expect(s.deny).toBeUndefined()
-  expect(s.result).toBe('Sent to ops-k8s (%7). Note: the person typed in this pane lately (' + at + ', 1 min ago); the instruction is queued behind their turn and their draft is not touched.')
+  expect(s.result.endsWith('. Note: the person typed in this pane lately (' + at + ', 1 min ago); their draft is not touched.')).toBe(true)
   expect(JSON.parse(files['/home/u/.claude/state/office/inbox/ops.json']!).text).toBe('[coordinator] x')
 })
 

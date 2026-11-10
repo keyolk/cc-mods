@@ -380,6 +380,17 @@ class SayAndViewTest(BriefsCase):
             with open(os.path.join(self.tmp, "inbox", WORKER + ".json")) as f:
                 self.assertNotIn("keep", json.load(f))
 
+    def test_a_message_cc_mods_took_but_has_not_seen_go_in_still_waits(self):
+        inbox = self.tmp / "inbox"
+        with mock.patch.object(office, "INBOX", str(inbox)):
+            self.assertIsNone(office.inbox_waiting(WORKER))
+            os.makedirs(inbox, exist_ok=True)
+            with open(inbox / (WORKER + ".json.sending"), "w") as f:
+                json.dump({"text": "[coordinator] go", "at": 5}, f)
+            self.assertEqual(office.inbox_waiting(WORKER), {"text": "[coordinator] go", "at": 5})
+            office.inbox_put(WORKER, "newer")
+            self.assertEqual(office.inbox_waiting(WORKER)["text"], "newer")
+
 
 
 class AskingTest(BriefsCase):

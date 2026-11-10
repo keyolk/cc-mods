@@ -13,7 +13,7 @@ const TEST_ORG = JSON.stringify({
   argocdDomains: { 'tools.acme.io': '', 'edge.acme.io': ' (edge)' },
 })
 
-function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; failSubmit?: { left: number }; writeBack?: boolean; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined; seen?: (e: any) => void } = {}) {
+function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; failSubmit?: { left: number }; submitResult?: (e: any) => unknown; peer?: (e: any) => unknown; writeBack?: boolean; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined; seen?: (e: any) => void } = {}) {
   const runs = opts.runs ?? []
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? opts.pane : undefined }))
@@ -81,10 +81,26 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
   on('prompt.submit', (_$: any, e: any) => {
     if (opts.failSubmit && opts.failSubmit.left-- > 0) throw new Error('submit refused')
     opts.submitted?.push(e.text)
-    return { text: e.text }
+    return opts.submitResult?.(e) ?? { text: e.text }
   })
+  on('session.send', (_$: any, e: any) => opts.peer?.(e) ?? { isDelivered: false, reason: 'no live session' })
   return runs
 }
+
+// rm and mv over a test's files, as the inbox takes and removes its file.
+const fsRun = (files: Record<string, string>) => (a: string[]) => {
+  const rel = (p: string) => p.replace(/^.*\/\.claude\//, '.claude/')
+  if (a[0] === 'rm') return (delete files[rel(a.at(-1)!)], { code: 0, out: '' })
+  if (a[0] === 'mv') {
+    const [from, to] = a.slice(-2).map(rel)
+    if (!(from! in files)) return { code: 1, out: '' }
+    files[to!] = files[from!]!
+    delete files[from!]
+    return { code: 0, out: '' }
+  }
+  return undefined
+}
+const INBOX = '.claude/state/office/inbox/sid-1.json'
 
 test('Claude cannot self-grant session policy through Bash', async ($, on) => {
   baseStubs(on)
@@ -331,52 +347,135 @@ const COCKPIT = {
 test('office: a reply left for this session from the office goes in as the person\'s prompt, once; a stale one is dropped', async ($, on) => {
   const submitted: string[] = []
   const files: Record<string, string> = {}
-  const runs = baseStubs(on, { pane: '%42', submitted, files, run: (a) => (a[0] === 'rm' ? (delete files[a.at(-1)!.replace(/^.*\/\.claude\//, '.claude/')], { code: 0, out: '' }) : undefined) })
+  const runs = baseStubs(on, { pane: '%42', submitted, files, run: fsRun(files) })
   const clock = mock.clock(on)
   on('store.keys', () => ({ value: [] }))
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
-  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: '1번으로 해 주세요', at: Date.now() / 1000 })
+  files[INBOX] = JSON.stringify({ text: '1번으로 해 주세요', at: Date.now() / 1000 })
   await clock.advance(2_100)
   expect(submitted).toContain('1번으로 해 주세요')
-  expect(runs.some((a) => a[0] === 'rm' && String(a.at(-1)).endsWith('/.claude/state/office/inbox/sid-1.json'))).toBe(true)
+  // Taken aside first, removed once it went in.
+  expect(runs.some((a) => a[0] === 'mv' && String(a.at(-1)).endsWith('/.claude/state/office/inbox/sid-1.json.sending'))).toBe(true)
+  expect(files[INBOX]).toBeUndefined()
+  expect(files[INBOX + '.sending']).toBeUndefined()
   await clock.advance(4_100)
   expect(submitted.filter((t) => t === '1번으로 해 주세요')).toHaveLength(1)
-  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'old', at: Date.now() / 1000 - 600 })
+  files[INBOX] = JSON.stringify({ text: 'old', at: Date.now() / 1000 - 600 })
   await clock.advance(2_100)
   expect(submitted).not.toContain('old')
   // A brief answer or a worker's report is kept: it goes in late, saying how late.
-  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: '[brief answer] a.html: A', at: Date.now() / 1000 - 600, keep: true })
+  files[INBOX] = JSON.stringify({ text: '[brief answer] a.html: A', at: Date.now() / 1000 - 600, keep: true })
   await clock.advance(2_100)
   expect(submitted).toContain('(10분 전 office inbox에 들어온 메시지)\n[brief answer] a.html: A')
   // Not past a day.
-  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'ancient', at: Date.now() / 1000 - 2 * 86400, keep: true })
+  files[INBOX] = JSON.stringify({ text: 'ancient', at: Date.now() / 1000 - 2 * 86400, keep: true })
   await clock.advance(2_100)
   expect(submitted).not.toContain('ancient')
 })
 
-test('office: a coordinator instruction older than two minutes (keep) is delivered; a failed submit puts it back, up to a limit', async ($, on) => {
+test('office: while a turn runs the inbox is left alone, and what piled up goes in together when it ends', async ($, on) => {
+  // Live (2026-11-10, office-say-first): taken mid-turn, the first
+  // instruction waited 25 minutes in the engine's queue and held the inbox
+  // shut; the next three sat in the file.
+  const submitted: string[] = []
+  const files: Record<string, string> = {}
+  baseStubs(on, { pane: '%42', submitted, files, run: fsRun(files) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await $.turn.start({ turnId: 't1', text: 'a long job' } as any)
+  files[INBOX] = JSON.stringify({ text: '[coordinator] one', at: Date.now() / 1000, keep: true })
+  await clock.advance(2_100)
+  files[INBOX] = JSON.stringify({ text: '[coordinator] one\n\n[coordinator] two', at: Date.now() / 1000, keep: true })
+  await clock.advance(2_100 * 3)
+  expect(submitted).toEqual([])
+  expect(JSON.parse(files[INBOX]!).text).toBe('[coordinator] one\n\n[coordinator] two')
+  await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 5, isAborted: false, usage: null } as any)
+  await clock.advance(2_100)
+  expect(submitted).toEqual(['[coordinator] one\n\n[coordinator] two'])
+  expect(files[INBOX]).toBeUndefined()
+  expect(files[INBOX + '.sending']).toBeUndefined()
+})
+
+test('office: a submit that fails or is dropped puts the message back with its keep and age, under what arrived meanwhile; a long one goes in whole', async ($, on) => {
   const submitted: string[] = []
   const files: Record<string, string> = {}
   const failSubmit = { left: 1 }
-  baseStubs(on, { pane: '%42', submitted, files, failSubmit, writeBack: true, run: (a) => (a[0] === 'rm' ? (delete files[a.at(-1)!.replace(/^.*\/\.claude\//, '.claude/')], { code: 0, out: '' }) : undefined) })
+  let drop = true
+  baseStubs(on, { pane: '%42', submitted, files, failSubmit, writeBack: true, run: fsRun(files), submitResult: (e) => (drop ? ((drop = false), { drop: 'a hook said no' }) : { text: e.text }) })
   const clock = mock.clock(on)
   on('store.keys', () => ({ value: [] }))
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   const at = Date.now() / 1000 - 600
-  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: '[coordinator] long job', at, keep: true })
+  files[INBOX] = JSON.stringify({ text: '[coordinator] long job', at, keep: true, from: 'c1', slug: 'w' })
   await clock.advance(2_100)
-  // First submit fails: the message is back in the inbox with its keep and age.
+  // First submit is refused: back in the inbox with its keep, age and sender.
   expect(submitted).toEqual([])
-  expect(JSON.parse(files['.claude/state/office/inbox/sid-1.json']!)).toMatchObject({ text: '[coordinator] long job', at, keep: true, tries: 1 })
+  expect(JSON.parse(files[INBOX]!)).toMatchObject({ text: '[coordinator] long job', at, keep: true, tries: 1, from: 'c1', slug: 'w' })
+  // The second is dropped by a hook: back again, the newer one after it.
+  const back = JSON.parse(files[INBOX]!)
   await clock.advance(2_100)
-  expect(submitted).toEqual(['(10분 전 office inbox에 들어온 메시지)\n[coordinator] long job'])
-  expect(files['.claude/state/office/inbox/sid-1.json']).toBeUndefined()
-  // A submit that never works is dropped after the limit.
-  failSubmit.left = 99
-  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'stuck', at: Date.now() / 1000, keep: true })
+  expect(submitted).toHaveLength(1)
+  expect(JSON.parse(files[INBOX]!)).toMatchObject({ text: '[coordinator] long job', at: back.at, tries: 2 })
+  files[INBOX] = JSON.stringify({ ...JSON.parse(files[INBOX]!), text: '[coordinator] long job\n\n[coordinator] and this' })
+  await clock.advance(2_100)
+  expect(submitted.at(-1)).toBe('(10분 전 office inbox에 들어온 메시지)\n[coordinator] long job\n\n[coordinator] and this')
+  expect(files[INBOX]).toBeUndefined()
+  // 150,000 characters go in whole (a live probe took them so).
+  const long = '[coordinator] ' + 'z'.repeat(150_000) + ' END'
+  files[INBOX] = JSON.stringify({ text: long, at: Date.now() / 1000, keep: true })
+  await clock.advance(2_100)
+  expect(submitted.at(-1)).toBe(long)
+})
+
+test('office: a coordinator instruction that never goes in is kept under failed, and its coordinator gets a [coord] wake (peer, else its inbox)', async ($, on) => {
+  const submitted: string[] = []
+  const files: Record<string, string> = {}
+  const failSubmit = { left: 99 }
+  const peers: any[] = []
+  let reach = true
+  baseStubs(on, { pane: '%42', submitted, files, failSubmit, writeBack: true, run: fsRun(files), peer: (e) => (peers.push(e), reach ? { isDelivered: true } : { isDelivered: false, reason: 'gone' }) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  files[INBOX] = JSON.stringify({ text: '[coordinator] stuck', at: Date.now() / 1000, keep: true, from: 'coord-sid', slug: 'w-slug' })
   await clock.advance(2_100 * 8)
-  expect(files['.claude/state/office/inbox/sid-1.json']).toBeUndefined()
-  expect(submitted).not.toContain('stuck')
+  expect(files[INBOX]).toBeUndefined()
+  expect(submitted).toEqual([])
+  expect(peers).toHaveLength(1)
+  expect(peers[0].to).toContain('coord-sid')
+  expect(peers[0].text.startsWith('[coord] w-slug: 지시 전달 실패 (submit refused')).toBe(true)
+  expect(peers[0].text).toContain('5회 시도): "[coordinator] stuck"')
+  const failed = Object.keys(files).filter((f) => f.includes('/inbox/failed/sid-1-'))
+  expect(failed).toHaveLength(1)
+  expect(JSON.parse(files[failed[0]!]!)).toMatchObject({ text: '[coordinator] stuck', tries: 5, from: 'coord-sid' })
+  // No peer message reaches the coordinator: the wake goes to its inbox.
+  reach = false
+  files[INBOX] = JSON.stringify({ text: '[coordinator] again', at: Date.now() / 1000, keep: true, from: 'coord-sid', slug: 'w-slug' })
+  await clock.advance(2_100 * 8)
+  const wake = JSON.parse(files['.claude/state/office/inbox/coord-sid.json']!)
+  expect(wake.keep).toBe(true)
+  expect(wake.text).toContain('[coord] w-slug: 지시 전달 실패')
+  // A reply from the office (no sender) only says so here.
+  files[INBOX] = JSON.stringify({ text: 'plain reply', at: Date.now() / 1000 })
+  await clock.advance(2_100 * 8)
+  expect(peers).toHaveLength(2)
+})
+
+test('office: a message left aside by a reload while its submit waited goes back in front, saying it may be a repeat', async ($, on) => {
+  const submitted: string[] = []
+  const files: Record<string, string> = {}
+  baseStubs(on, { pane: '%42', submitted, files, writeBack: true, run: fsRun(files) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  files[INBOX + '.sending'] = JSON.stringify({ text: '[coordinator] first', at: Date.now() / 1000, keep: true })
+  files[INBOX] = JSON.stringify({ text: '[coordinator] second', at: Date.now() / 1000, keep: true })
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(2_100)
+  expect(submitted).toEqual(['(전달 확인 전에 다시 보냄: 이미 받았다면 무시)\n[coordinator] first\n\n[coordinator] second'])
+  expect(files[INBOX + '.sending']).toBeUndefined()
 })
 
 test('the policy pane draws a row per capability and applies a mode', async ($, on) => {
