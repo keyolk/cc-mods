@@ -179,13 +179,12 @@ class BriefFrameTest(BriefsCase):
         popen.assert_called_once()
         self.assertEqual(popen.call_args[0][0], ["open", str((self.repo / f).resolve())])
 
-    def test_a_picked_place_goes_through_tmux_chrome_open_and_an_unknown_one_is_refused(self):
+    def test_a_picked_tweb_place_still_opens_with_open_never_tmux_chrome_open(self):
+        # tmux-chrome-open lands in the caller's tmux window: the office's own pane.
         f = self.brief("2026-11-08-a")
-        with mock.patch.object(command.os, "access", return_value=True), mock.patch.object(command.subprocess, "Popen") as popen:
+        with mock.patch.object(command.subprocess, "Popen") as popen:
             self.assertEqual(command.act({"kind": "brief_open", "file": f, "via": "tweb-chrome"}, self.put)[0], 200)
-        args, kw = popen.call_args
-        self.assertEqual(args[0][1], "file://" + str((self.repo / f).resolve()))
-        self.assertEqual(kw["env"]["TMUX_CHROME_BROWSER"], "tweb-chrome")
+            self.assertEqual(popen.call_args[0][0][0], "open")
         with mock.patch.object(command.subprocess, "Popen") as popen:
             self.assertEqual(command.act({"kind": "brief_open", "file": f, "via": "finder"}, self.put)[0], 400)
         popen.assert_not_called()
@@ -982,6 +981,22 @@ class CommandKeysTest(unittest.TestCase):
         self.assertEqual(got[0], ["a.html", 0])
         self.assertEqual(got[1], ["b.html", "/b/b.html", "/b/b.html"])
         self.assertEqual(got[2:], ["index.html", "~/briefs/index.html", ["b.html", "index.html"]])
+
+    def test_a_redraw_keeps_the_reply_box_itself_so_the_caret_and_the_composition_survive(self):
+        # The 3 s poll redraws the decision strip; the box under the person's hands is put back, not remade.
+        got = self.run_js("""
+            const mk = (tag) => { const e = { tagName: tag, dataset: {}, style: {}, removed: 0, replaced: 0, value: '', classList: { toggle() {} } }; e.remove = () => { e.removed++ }; e.focus = () => { e.focused = true }; return e }
+            const old = mk('INPUT'); old.dataset.call = 'sid1'; old.value = 'hel'
+            const fresh = mk('INPUT'); fresh.dataset.call = 'sid1'; fresh.replaceWith = (n) => { fresh.replacedWith = n }
+            const dec = { dataset: { key: 'x' }, style: {}, contains: () => true, appendChild() {}, querySelector: (q) => (q.startsWith('.note[data-call]') ? (dec.rebuilt ? fresh : old) : q === '.opts' ? { appendChild() {} } : null) }
+            Object.defineProperty(dec, 'innerHTML', { set() { dec.rebuilt = true }, get: () => '' })
+            document.activeElement = old
+            cmd.ask = { sid: 'sid1', text: 't', suggestions: ['a'], dialog: null, inbox: null }
+            cmdAsk = () => {}
+            cmdRenderCall({ innerHTML: '', querySelector: () => ({ onclick: null, textContent: '' }) }, { querySelector: () => ({ dataset: { key: 'k' }, innerHTML: '' }), className: '', style: {}, innerHTML: '' }, dec, { sid: 'sid1', name: 'n' })
+            return [old.removed, fresh.replacedWith === old, !!old.focused, typeof old.onkeydown]
+        """)
+        self.assertEqual(got, [1, True, True, "function"])
 
     def test_the_brief_bar_posts_a_brief_open_and_never_the_session_path(self):
         got = self.run_js("""

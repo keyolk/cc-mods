@@ -106,18 +106,16 @@ def serve_brief(name: str) -> tuple[int, bytes, str, dict]:
 
 def open_outside(name: str, via: str = "") -> tuple[int, dict]:
     """↗ 밖으로: the brief alone, in a window or tab of its own, never in the
-    office page (the person's screen). With no session to ask, `session` means
-    the default browser; the person's own pick (tweb*, chrome) goes through
-    tmux-chrome-open, which opens a tab and moves nothing already open."""
+    office page (the person's screen). Always the default browser's `open`:
+    tmux-chrome-open opens in the caller's tmux window, and the server's window
+    can be the office's own, where the brief landed in the office's pane (seen
+    on a live run with the place set to TWeb). `via` is accepted only so the
+    page's remembered place does not make the click fail."""
     path = brief_by_name(name)
     if not path:
         return 404, {"error": "not a brief"}
     if via not in ("", "session", "default", "tweb", "tweb-chrome", "tweb-webkit", "chrome"):
         return 400, {"error": "unknown place to open"}
-    opener = os.path.expanduser("~/.local/bin/tmux-chrome-open")
-    if via in ("tweb", "tweb-chrome", "tweb-webkit", "chrome") and os.access(opener, os.X_OK):
-        subprocess.Popen([opener, "file://" + path], env={**os.environ, "TMUX_CHROME_BROWSER": via}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return 200, {"ok": True, "sent": "opened in " + via}
     subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return 200, {"ok": True, "sent": "opened in the default browser"}
 

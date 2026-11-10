@@ -1926,7 +1926,7 @@ const canView = (p) => VIEW_EXT.test(p) || /\/exp\/[^/]+\/?$/.test(p)
 const viewer = document.createElement('div'); viewer.id = 'viewer'; document.body.appendChild(viewer)
 async function viewFile(path, sid = cardSid) {
   // A brief opens at its own path so the links inside it resolve in ~/briefs.
-  const brief = path.match(/\/briefs\/([\w.-]+\.html)$/)
+  const brief = path.match(/^(?:~|\/Users\/[^/]+)\/briefs\/([\w.-]+\.html)$/)
   const url = brief ? '/briefs/' + brief[1] : '/file?sid=' + encodeURIComponent(sid) + '&path=' + encodeURIComponent(path)
   const name = path.split('/').filter(Boolean).pop()
   viewer.innerHTML = '<div class="bar"><b>👁 ' + esc(name) + '</b><span class="m">' + esc(path) + '</span><button class="out"><kbd>O</kbd> ↗ 밖으로</button><button class="place" title="어디서 열지 고르기 (⇧O)">▾</button><button class="x">✕</button></div><div class="body"></div>'
