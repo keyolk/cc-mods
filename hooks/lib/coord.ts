@@ -546,10 +546,15 @@ export function overlaps(seen: PaneSeen[], l: Ledger, dir: string, git?: { commo
 // What the coordinator reads every turn: its role, its limits, its workers,
 // and the review queue's line (lib/coordreview.ts reviewLine) when it has any.
 export function coordSection(l: Ledger, now: number, language = 'Korean', review?: string): string {
-  // The quiet ones (every session the person runs, often twenty or more) go
-  // on one line, so the table that rides on every turn stays the workers'.
-  const mute = active(l).filter(quiet)
-  const rows = active(l).filter((w) => !quiet(w)).map((w) => '| ' + w.slug + ' | ' + w.relation + (w.auto ? ' (auto)' : '') + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (typedLately(w, now) ? ' (person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) + ')' : '') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
+  return coordRules(l, language) + '\n' + coordRoster(l, now, review)
+}
+
+// The two halves of coordSection. The rules change only with the limits or
+// the name; the roster changes with every worker's state. Where the section
+// cannot ride in the system prompt (cc-plugin-sec-default, see register.ts
+// contextNotes) each half is a conversation row of its own, re-sent only
+// when it changed: the rules, several KB, then go once, not every turn.
+export function coordRules(l: Ledger, language = 'Korean'): string {
   return [
     '# Coordinator mode (cc-mods)',
     'You are `' + l.name + '`, the coordinator. You orchestrate, verify, merge, clean up and report; you do not do the work yourself.',
@@ -579,6 +584,15 @@ export function coordSection(l: Ledger, now: number, language = 'Korean', review
     ONE_BROWSER + ' Tell workers the same when a brief needs a browser.',
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): ' + limitsText(l.limits),
+  ].join('\n')
+}
+
+export function coordRoster(l: Ledger, now: number, review?: string): string {
+  // The quiet ones (every session the person runs, often twenty or more) go
+  // on one line, so the table that rides on every turn stays the workers'.
+  const mute = active(l).filter(quiet)
+  const rows = active(l).filter((w) => !quiet(w)).map((w) => '| ' + w.slug + ' | ' + w.relation + (w.auto ? ' (auto)' : '') + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (typedLately(w, now) ? ' (person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) + ')' : '') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
+  return [
     rows.length ? '| worker | relation | model/effort | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
     ...(mute.length ? ['Adopted, the person\'s (not instructed yet; coord_roster has their state): ' + mute.map((w) => w.slug + ' ' + w.cwd).join(', ') + '.'] : []),
     ...(review ? [review] : []),

@@ -629,6 +629,54 @@ test('an out-of-band policy grant is in the very next composed prompt', async ($
   expect(policy).toContain('gh_merge scoped-allow: keyolk/narwhal')
 })
 
+// Live: cc-plugin-sec-default sends prompt.compose past the user tier
+// (`prompt.compose bypassed by cc-plugin-sec-default (tier user)`), so the
+// policy section never reached the model. Here no compose is ever asked,
+// as there: the same text goes as a note row before the prompt.
+test('where prompt.compose never runs, the policy goes as a note row, again only when it changed', async ($, on) => {
+  const box = { json: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }) }
+  baseStubs(on, { policyBox: box })
+  mock.clock(on)
+  const session = mock.session(on)
+  // The conversation in its API form: what a note row reads like to the model.
+  on('session.messages', () => ({ value: session.appended().map((r: any) => ({ role: 'user', content: r.message.content })) }))
+  on('classic.UserPromptSubmit', () => ({}) as any)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const notes = () => session.appended().filter((r: any) => r.door === 'note').map((r: any) => r.message.content.map((b: any) => b.text).join(''))
+
+  await $.prompt.submit({ text: 'look at the PR', origin: { kind: 'composer' }, wait: false } as any)
+  expect(notes().length).toBe(1)
+  expect(notes()[0]).toContain('[cc-mods context: policy #')
+  expect(notes()[0]).toContain('# Session policy (custom)\ngh_merge=block')
+  expect(notes()[0]).toContain('Only the user changes this policy, with /policy.')
+
+  // Nothing changed: no second row. A slash command is no turn: none either.
+  await $.prompt.submit({ text: 'and the tests', origin: { kind: 'composer' }, wait: false } as any)
+  await $.prompt.submit({ text: '/policy show', origin: { kind: 'composer' }, wait: false } as any)
+  expect(notes().length).toBe(1)
+
+  // A grant made out of band: the next prompt carries the new policy.
+  box.json = JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' }, gh_merge_repos: ['keyolk/narwhal'] })
+  await $.classic.UserPromptSubmit({ hook_event_name: 'UserPromptSubmit', session_id: 'sid-1', transcript_path: '', cwd: '/work', prompt: 'done' } as any)
+  await $.prompt.submit({ text: 'merge it', origin: { kind: 'composer' }, wait: false } as any)
+  expect(notes().length).toBe(2)
+  expect(notes()[1]).toContain('This replaces the earlier policy context.')
+  expect(notes()[1]).toContain('gh_merge scoped-allow: keyolk/narwhal')
+})
+
+test('where prompt.compose runs, the policy stays in the system prompt and no note row is sent', async ($, on) => {
+  baseStubs(on, { policyJson: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }) })
+  mock.clock(on)
+  const session = mock.session(on)
+  on('session.messages', () => ({ value: [] }))
+  on('prompt.compose', () => ({ sections: [] }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const composed: any = await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['terminal'], tools: ['Bash'], outputStyle: null, traits: [] })
+  expect(composed.sections.find((s: any) => s.id === 'cc-mods:policy')?.text).toContain('# Session policy (custom)')
+  await $.prompt.submit({ text: 'look at the PR', origin: { kind: 'composer' }, wait: false } as any)
+  expect(session.appended().filter((r: any) => r.door === 'note')).toEqual([])
+})
+
 test('outputs collected from a tool call show in the outputs pane', async ($, on) => {
   baseStubs(on)
   on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg123' } }))
