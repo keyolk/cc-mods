@@ -7,7 +7,7 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordSection, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordSection, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -119,6 +119,8 @@ const dir = () => ctx!.home() + '/.claude/state/office/coord'
 const file = () => dir() + '/' + ctx!.sid() + '.json'
 // Not dir()/*.json: that glob is the ledgers (lib/coordreview.ts).
 const reviewFile = () => dir() + '/review/' + ctx!.sid() + '.json'
+// What the office asks of this coordinator (office/crew.py): taken once.
+const opsFile = () => dir() + '/ops/' + ctx!.sid() + '.json'
 // The queue as last read: coordSection's line. The office writes confirms
 // into the file, so it is read again each tick and before every change.
 let review: ReviewFile | undefined
@@ -188,6 +190,14 @@ export function coordPrompt(now: number): string | undefined {
   return ledger?.on ? coordSection(ledger, now, 'Korean', reviewLine(review)) : undefined
 }
 
+async function readOps($: any) {
+  const raw = await readText($, opsFile())
+  if (raw === undefined) return
+  await sh($, ['rm', '-f', opsFile()])
+  const { ledger: l, done } = applyOps(ledger!, raw, Date.now())
+  if (done.length) await save($, l)
+}
+
 async function readReview($: any): Promise<ReviewFile> {
   review = parseReview(await readText($, reviewFile()), ctx!.sid(), ledger?.name ?? ctx!.sid().slice(0, 8))
   return review
@@ -244,6 +254,7 @@ async function turnOn($: any, fresh: boolean) {
 let ticking = false
 async function tick($: any) {
   if (ledger?.on && !ticking) await readReview($)
+  if (ledger?.on && !ticking) await readOps($)
   if (ticking || !ledger?.on || (!active(ledger).length && !ledger.limits.autoAdopt)) return
   ticking = true
   try {

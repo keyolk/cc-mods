@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, DECISION_BRIEF, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, DECISION_BRIEF, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -478,6 +478,18 @@ test('coord: a slug from the session name, SLUG-shaped and unique among the acti
   // Two sessions with one name, adopted in one pass.
   const { adopted } = autoAdopt(on(), [live('s1aaaaaa'), live('s2bbbbbb')], new Map([['s1aaaaaa', 'cc-mods'], ['s2bbbbbb', 'cc-mods']]), new Set(), NOW)
   expect(adopted.map((w) => w.slug)).toEqual(['cc-mods', 'cc-mods-s2bb'])
+})
+
+test('coord: the office asks a release and this coordinator applies it to its own ledger', () => {
+  const w = worker({ slug: 'ops-k8s', sid: 'ops', relation: 'adopted', auto: true })
+  const l = on({ workers: [w, worker({ slug: 'mine', sid: 'w2' })] })
+  const raw = JSON.stringify({ ops: [{ op: 'release', sid: 'ops', slug: 'ops-k8s', at: 1 }, { op: 'release', sid: 'nobody' }, { op: 'close', sid: 'w2' }, 7] })
+  const { ledger, done } = applyOps(l, raw, NOW)
+  expect(done).toEqual(['ops-k8s'])
+  expect(ledger.released).toEqual(['ops'])
+  expect(ledger.workers.map((x) => [x.slug, x.endedAt])).toEqual([['ops-k8s', NOW], ['mine', undefined]])
+  // A half-written or empty file asks nothing.
+  for (const bad of ['{half', undefined, '{}', '{"ops": 3}']) expect(applyOps(l, bad, NOW)).toEqual({ ledger: l, done: [] })
 })
 
 test('coord: a session handed back is never adopted again, until the person adopts it', () => {

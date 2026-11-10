@@ -2,9 +2,9 @@
 // put up for the person to judge (coord_review; office/review.py reads the
 // queues into /command's `reviews`).
 //
-// The list shows the open items under 🔎 검토, after the sessions waiting on
-// the person: j/k walk the decisions, then those sessions, then these. A
-// picked item opens where a brief does: what changed, what was verified and
+// The list shows the open items as rows of 내 차례 (command.js), mixed with
+// the decisions and the sessions waiting on the person by how long each has
+// waited; j/k walk them all. A picked item opens where a brief does: what changed, what was verified and
 // what was not, what to check, the risk, its links. 확인함 (1, then Enter)
 // takes it off the list and tells its coordinator `[review] confirmed <id>`;
 // 문제 있음 is the box under it (m, or ⌥M where TWeb's normal mode keeps
@@ -28,16 +28,6 @@ const revOf = (s) => (s && s.review ? revList().find((r) => r.coord === s.coord 
 function revPick(r) { cmd.sel = { review: r.id, coord: r.coord, title: r.title }; cmd.armed = null; cmd.q = null; cmd.force = null }
 const revIsSel = (r) => !!cmd.sel && cmd.sel.review === r.id && cmd.sel.coord === r.coord
 const revMs = (ms) => (ms ? new Date(+ms).toISOString() : '')
-
-// The list's 🔎 검토 group.
-function revSection() {
-  const rs = revList()
-  const out = ['<h3>🔎 검토 <span class="m">' + rs.length + '건 · 확인하면 빠짐 · j/k</span></h3>']
-  if (!rs.length) out.push('<div class="m" style="margin-bottom:10px">검토할 완료 항목이 없습니다. coordinator가 merge한 일을 <code>coord_review</code>로 올리면 여기에 나옵니다.</div>')
-  else out.push('<ul class="feed">' + rs.map((r) => '<li data-review="' + cmdEsc(r.id) + '" data-rcoord="' + cmdEsc(r.coord) + '"' + (revIsSel(r) ? ' class="sel"' : '') + ' title="' + cmdEsc(r.id) + '">' + (r.issues && r.issues.length ? '⚠ ' : '🔎 ') + cmdEsc(r.title)
-    + ' <span class="m">' + cmdEsc(['🎖 ' + r.coordName, cmdAgo(revMs(r.updatedAt || r.at))].filter(Boolean).join(' · ')) + '</span></li>').join('') + '</ul>')
-  return out.join('')
-}
 
 // A click in the list on one of these; false when it was not one.
 function revClick(ev) {
@@ -133,12 +123,10 @@ async function revConfirm(s) {
   const j = await cmdPost({ kind: 'review_confirm', coord: s.coord, id: s.review })
   if (!j) return
   toast('✅ ' + (j.sent || '확인함'))
-  const rs = revList(), at = rs.findIndex((r) => r.coord === s.coord && r.id === s.review)
-  const rest = rs.filter((_, i) => i !== at)
-  if (cmd.data) cmd.data.reviews = rest
-  const next = rest[at] || rest[at - 1]
-  if (next) revPick(next); else cmdShut()
-  cmdRender()
+  // On to the next row of 내 차례 (command.js), asked before this one leaves it.
+  const cur = revOf(s), next = cur ? cmdNextAfter({ r: cur }) : null
+  if (cmd.data) cmd.data.reviews = revList().filter((r) => !(r.coord === s.coord && r.id === s.review))
+  if (next && !(next.r && next.r === cur)) cmdGo(next); else { cmdShut(); cmdRender() }
 }
 
 // 문제 있음: the words to the coordinator; the item stays, the words on it.

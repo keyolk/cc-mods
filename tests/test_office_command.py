@@ -423,7 +423,7 @@ class AskingTest(BriefsCase):
         self.ledger([{"slug": "w", "sid": WORKER}])
         people = [{"id": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": {"name": "cc-mods-d9", "slug": "w"}}, {"id": MAKER, "name": "m", "attention": "none"}]
         calls = command.view(people)["calls"]
-        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": None}])
+        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": None, "since": None}])
 
     def test_asking_reads_the_answer_tail_and_the_screen(self):
         me = {"pane": "%9", "wid": "@3", "window": "cc:3", "name": "w", "cwd": "/src/x"}
@@ -488,7 +488,7 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "turn"})
             with urllib.request.urlopen(base + "/review.js") as r:
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function revKey", r.read())
@@ -588,8 +588,8 @@ KEYS_HARNESS = textwrap.dedent(r"""
       localStorage: { getItem: () => null, setItem() {} },
       document: { createElement: el, getElementById: el, head: el(), body: el() } }
     vm.createContext(ctx)
-    // review.js comes first, as office.html loads it.
-    vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, 'review.js'), 'utf8'), ctx)
+    // review.js, crew.js, look.js and briefline.js come first, as office.html loads them.
+    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
@@ -910,7 +910,8 @@ class CommandKeysTest(unittest.TestCase):
             })()
         """)
         self.assertEqual(got[0], [{"kind": "review_issue", "coord": "c1", "id": "cc-mods#85", "value": "다시 봐 줘"}, {"kind": "review_confirm", "coord": "c1", "id": "cc-mods#85"}, {"kind": "review_confirm", "coord": "c1", "id": "tweb-240"}])
-        self.assertEqual(got[1:], [["cc-mods#85", 2, ["다시 봐 줘"]], ["tweb-240", ["tweb-240"]], None, 0])
+        # The last review confirmed, the row above it in 내 차례 opens (the waiting session).
+        self.assertEqual(got[1:], [["cc-mods#85", 2, ["다시 봐 줘"]], ["tweb-240", ["tweb-240"]], {"sid": "s1", "name": "one", "window": "w:1"}, 0])
 
     def test_j_and_k_never_walk_the_sessions_at_work(self):
         got = self.run_js("""
@@ -992,20 +993,83 @@ class CommandKeysTest(unittest.TestCase):
         self.assertEqual(got, [["B1", "B2", "B3", "B4", "B5"], ["/b/1.html", "/b/2.html", "/b/3.html", "/b/4.html", "/b/5.html", "/b/1.html"],
                                "/b/5.html", "/b/1.html", False, "/b/1.html", True, "/b/2.html", False, False, False])
 
-    def test_the_waiting_sessions_show_five_until_more_and_the_picked_one_always(self):
+    def test_my_turn_shows_eight_rows_until_more_and_the_picked_one_always(self):
         got = self.run_js("""
             calls()
-            cmd.data.calls = [...Array(8)].map((_, i) => ({ sid: 's' + i, name: 'n' + i }))
+            cmd.data.pending = []
+            cmd.data.calls = [...Array(11)].map((_, i) => ({ sid: 's' + i, name: 'n' + i }))
             cmd.sel = null
-            const five = cmdCallsShown().map((c) => c.sid)
-            // j walks every one: a picked one past the five still shows.
-            cmd.sel = { sid: 's7', name: 'n7' }; const picked = cmdCallsShown().map((c) => c.sid)
-            cmdClick({ target: { closest: (q) => (q === '[data-fold]' ? { dataset: { fold: 'calls' } } : null) } })
-            const all = cmdCallsShown().length
-            cmdFold('calls'); const back = cmdCallsShown().length
-            return [five, picked, all, back]
+            const eight = cmdTurnShown().map((it) => it.c.sid)
+            // j walks every row: a picked one past the eight still shows.
+            cmd.sel = { sid: 's10', name: 'n10' }; const picked = cmdTurnShown().length
+            cmdClick({ target: { closest: (q) => (q === '[data-fold]' ? { dataset: { fold: 'turn' } } : null) } })
+            const all = cmdTurnShown().length
+            cmdFold('turn'); const back = cmdTurnShown().length
+            return [eight, picked, all, back]
         """)
-        self.assertEqual(got, [["s0", "s1", "s2", "s3", "s4"], ["s0", "s1", "s2", "s3", "s4", "s7"], 8, 6])
+        self.assertEqual(got, [["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"], 9, 11, 9])
+
+    def test_my_turn_is_one_list_in_the_servers_order_and_j_k_walk_it(self):
+        got = self.run_js("""
+            reviews()
+            // The server's order: a review first (oldest), then a worker's decision and its session together.
+            cmd.data.turn = [{ kind: 'review', coord: 'c1', id: 'tweb-240', worker: null }, { kind: 'decision', file: 'a.html', worker: 'fix' }, { kind: 'session', sid: 's1', worker: 'fix' }, { kind: 'review', coord: 'c1', id: 'cc-mods#85', worker: null }, { kind: 'session', sid: 'gone', worker: 'x' }]
+            const keys = cmdItems().map(cmdItemKey)
+            cmd.sel = null
+            const seen = []
+            for (let n = 0; n < 5; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid || cmd.sel.review) }
+            // A row of the same worker as the one above it leaves the name out.
+            const rows = cmdItems().map((it, i, a) => cmdTurnRow(it, a[i - 1]))
+            return [keys, seen, rows[1].includes('<b>fix</b>'), rows[2].includes('class="t cont"') || rows[2].includes(' cont'), rows[2].includes('<b>fix</b>')]
+        """)
+        self.assertEqual(got, [["r:c1|tweb-240", "p:a.html", "c:s1", "r:c1|cc-mods#85"], ["tweb-240", "a.html", "s1", "cc-mods#85", "tweb-240"], True, True, False])
+
+    def test_an_answered_row_goes_on_to_the_next_row_of_my_turn(self):
+        got = self.run_js("""
+            reviews()
+            cmd.data.turn = [{ kind: 'review', coord: 'c1', id: 'cc-mods#85' }, { kind: 'decision', file: 'a.html' }, { kind: 'session', sid: 's1' }, { kind: 'review', coord: 'c1', id: 'tweb-240' }]
+            const afterFirst = cmdItemKey(cmdNextAfter({ r: cmd.data.reviews[0] }))
+            const afterLast = cmdItemKey(cmdNextAfter({ r: cmd.data.reviews[1] }))
+            // 확인함 on the first row opens the decision under it, not the other review.
+            cmdPost = async () => ({ sent: 'confirmed' })
+            cmd.sel = { review: 'cc-mods#85', coord: 'c1', title: 'R1' }
+            return revConfirmReal(cmd.sel).then(() => [afterFirst, afterLast, cmd.sel.file, cmd.data.reviews.map((r) => r.id)])
+        """)
+        self.assertEqual(got, ["p:a.html", "c:s1", "a.html", ["tweb-240"]])
+
+    def test_x_ends_the_picked_session_and_an_adopted_one_only_on_a_second_press(self):
+        got = self.run_js("""
+            crew(); cmdClick(row('w4'))
+            const posts = []
+            cmdPost = async (b) => { posts.push(b); return b.confirm ? { ok: true, sent: 'gavin-jeong-63 끝냄' } : { confirm: '이 세션을 끝냅니다: Twingate 조사, pane %4', dirty: [] } }
+            // The harness's setTimeout never fires: wait on a few microtasks for the post.
+            const flush = async () => { for (let n = 0; n < 5; n++) await Promise.resolve() }
+            return (async () => {
+              const t = press('x'); await flush()
+              const armed = !!crewState.arm
+              press('x'); await flush()
+              // Typed in a box bare x is typing, ⌥X works there; over the floor card or the viewer, never.
+              const typed = press('x', true)
+              card.style.display = 'block'; const cardX = press('x', false, true); card.style.display = 'none'
+              viewer.path = '/x.md'; const viewX = press('x'); viewer.path = ''
+              // A coordinator is never a target; nothing picked, x is the floor's.
+              cmd.sel = { sid: 'c1', name: 'd9' }; const coordX = press('x'); await flush()
+              cmd.sel = null; const none = press('x')
+              return [t, armed, posts, cmd.sel, typed, cardX, viewX, coordX, none]
+            })()
+        """)
+        self.assertEqual(got[:2], [True, True])
+        self.assertEqual(got[2], [{"kind": "session_end", "sid": "w4"}, {"kind": "session_end", "sid": "w4", "confirm": True}, {"kind": "session_end", "sid": "c1"}][:2] + got[2][2:])
+        self.assertEqual(len(got[2]), 2, "a coordinator is never posted")
+        self.assertEqual(got[3:], [None, False, False, False, True, False])
+
+    def test_release_and_end_buttons_follow_the_relation(self):
+        got = self.run_js("""
+            crew()
+            return [crewButtons('w1').includes('rel'), crewButtons('w1').includes('end'), crewButtons('s2').includes('rel'), crewButtons('s2').includes('end'), crewButtons('c1')]
+        """)
+        # A worker can be released; a session no coordinator has can only end; a coordinator, neither.
+        self.assertEqual(got, [True, True, False, True, ""])
 
     def test_a_picked_session_links_its_brief_from_what_it_asks_or_its_row(self):
         got = self.run_js("""
@@ -1044,7 +1108,7 @@ class CommandKeysTest(unittest.TestCase):
             return [folded, open, all, cmd.wOpen, cmd.wQuiet]
         """)
         folded, opened, every, w_open, w_quiet = got
-        self.assertIn("👷 일하는 세션 4", folded)
+        self.assertIn("👷 일하는 중 4", folded)
         self.assertIn("(내 worker 1 · 자동 입양 2)", folded)
         self.assertNotIn("<table>", folded)
         # Unfolded: the quiet one (auto, never instructed) stays hidden; told is shown.

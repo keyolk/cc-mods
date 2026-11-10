@@ -78,6 +78,11 @@ const CMD_CSS = `
 #command button.act:disabled { opacity: .45; cursor: default; }
 #command .bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 2px solid var(--line); font-size: 13px; }
 #command .bar .m { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#command .bar > * { flex: 0 0 auto; white-space: nowrap; }
+#command .bar { gap: 6px; }
+#command .bar button.act { padding: 3px 7px; }
+#command .bar > b { flex: 0 1 auto; min-width: 6em; overflow: hidden; text-overflow: ellipsis; }
+#command .bar > .m { flex: 1 1 0; min-width: 0; }
 #command iframe { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
 #command .feed { font: 12px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 0 0 10px; padding: 0; list-style: none; }
 #command .feed li { padding: 2px 4px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -91,27 +96,10 @@ const CMD_CSS = `
 #command .doc > .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; white-space: pre; }
 #command .doc > .said pre code { background: none; padding: 0; color: inherit; }
 #command .doc > .said .cut { color: #7a7090; font-size: 11px; margin-bottom: 6px; }
-#command .bar .seg { display: inline-flex; border: 2px solid var(--line); border-radius: 10px; overflow: hidden; flex: 0 0 auto; }
-#command .bar .seg button { font: inherit; font-size: 12px; border: 0; background: #fff; padding: 2px 8px; cursor: pointer; }
-#command .bar .seg button + button { border-left: 2px solid var(--line); }
-#command .bar .seg button.on { background: #2a2033; color: #fff; }
-#command .cardv { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 6px 12px 8px; background: #fffaf0; overflow: hidden; }
-#command .cardv > * { flex: 0 0 auto; }
-#command .cardv > .cpane { flex: 1 1 auto; min-height: 0; overflow: auto; }
-#command .cardv > .cpane .said, #command .cardv > .cpane .rel { max-height: none; }
-#command .cardv .chead { border-bottom: 2px dashed rgba(59,42,53,.18); padding-bottom: 4px; margin-bottom: 2px; }
-/* One line, whatever the width: 전체 first, then the chips, scrolling sideways. */
-#command .briefs { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; padding: 5px 12px; border-bottom: 2px solid rgba(59,42,53,.14); background: #fffaf0; overflow-x: auto; scrollbar-width: none; }
-#command .briefs > * { flex: 0 0 auto; }
-#command .briefs .bchip { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 2px solid rgba(59,42,53,.35); border-radius: 999px; background: #fff; padding: 0 8px; cursor: pointer; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#command .briefs .bchip.sel { border-color: #2a2033; background: #fff3c4; }
-#command .briefs .bchip.all { background: #fffaf0; border-style: dashed; }
 #command .feed li.more { color: #7a7090; text-decoration: underline; }
-#command .sbrief { padding: 4px 12px; border-bottom: 1px dashed rgba(59,42,53,.18); background: #fffaf0; }
-#command .sbrief:empty { display: none; }
-#command .briefb { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 2px solid var(--line); border-radius: 999px; background: #fff3c4; padding: 0 8px; margin-top: 3px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#command .cardv .sidebox { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; border: 2px solid #c9b88f; border-radius: 12px; background: #fbf5e8; }
-#command .cardv .sidebox .btw { flex: 1 1 auto; min-height: 0; }
+#command .feed.turn li { white-space: normal; overflow: visible; padding: 3px 6px; border-top: 1px solid rgba(59,42,53,.08); }
+#command .feed.turn li.cont { padding-left: 22px; border-top: 0; }
+#command .feed.turn li .ask { display: block; color: #5a5070; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #command .decide { border-top: 2px solid var(--line); padding: 8px 12px 10px; max-height: 45%; overflow: auto; }
 #command .decide .ask { font-size: 14px; margin-bottom: 6px; }
 #command .qa { padding: 6px 8px; margin: 0 -8px 4px; border-radius: 10px; }
@@ -138,8 +126,8 @@ const CMD_CSS = `
 // ledger log's clock), for the line saying where it went; wOpen / wQuiet:
 // the sessions at work unfolded, and with them the quiet adopted ones.
 // view: how a picked session shows, 'said' (its last answer) or 'card'.
-// callsOpen: every session waiting on the person shown, not the first five.
-const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, wOpen: false, wQuiet: false, view: 'said', callsOpen: false }
+// turnOpen: every row of 내 차례 shown, not the first TURN_SHOWN.
+const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, wOpen: false, wQuiet: false, view: 'said', turnOpen: false }
 try { cmd.wOpen = localStorage.getItem('office.cmd.workers') === 'open' } catch { /* no storage: folded */ }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
@@ -218,10 +206,31 @@ const cmdWorkers = () => (cmd.data?.coordinators || []).flatMap((c) => c.workers
 const cmdQuiet = (w) => w.auto && !w.instructed && w.attention !== 'ask' && w.attention !== 'alert'
 // review.js, unless the server that sent this page has none.
 const cmdRev = () => typeof revList === 'function'
-// What j/k walk: the waiting briefs, then the sessions waiting on the
-// person, then the finished work waiting on their look.
+// The person's turn (내 차례), one list of what waits on their input: a
+// decision ({ p }, a brief's question), a session waiting on them ({ c }) and
+// finished work to look at ({ r }). /command's `turn` (office/turn.py) gives
+// the order: oldest first, a worker's rows together; each row points at the
+// thing in `pending`, `calls` or `reviews`, which an answer takes out. A
+// server from before `turn`: decisions, then sessions, then reviews. j/k walk
+// it, the list draws it, an answer goes on to its next row.
 function cmdItems() {
-  return [...(cmd.data?.pending || []).map((p) => ({ p })), ...(cmd.data?.calls || []).map((c) => ({ c })), ...(cmdRev() ? revList() : []).map((r) => ({ r }))]
+  const d = cmd.data || {}
+  if (!d.turn) return [...(d.pending || []).map((p) => ({ p })), ...(d.calls || []).map((c) => ({ c })), ...(cmdRev() ? revList() : []).map((r) => ({ r }))]
+  const out = []
+  for (const t of d.turn) {
+    const p = t.kind === 'decision' && cmdPending(t.file), c = t.kind === 'session' && cmdCall(t.sid)
+    const r = t.kind === 'review' && cmdRev() && revList().find((x) => x.coord === t.coord && x.id === t.id)
+    if (p) out.push({ p, worker: t.worker }); else if (c) out.push({ c, worker: t.worker }); else if (r) out.push({ r, worker: t.worker })
+  }
+  return out
+}
+const cmdItemKey = (it) => (it.p ? 'p:' + it.p.file : it.r ? 'r:' + it.r.coord + '|' + it.r.id : 'c:' + it.c.sid)
+// The row after this one (else the one before), to open once it is answered;
+// asked before the answer takes it out of the list.
+function cmdNextAfter(it) {
+  const items = cmdItems(), k = cmdItemKey(it), at = items.findIndex((x) => cmdItemKey(x) === k)
+  if (at < 0) return items[0] || null
+  return items[at + 1] || items[at - 1] || null
 }
 const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : it.r ? revIsSel(it.r) : cmd.sel.sid === it.c.sid)
 function cmdGo(it) { if (it.p) cmdPick(it.p); else if (it.r) revPick(it.r); else cmdPickCall(it.c); cmdRender() }
@@ -248,21 +257,12 @@ function cmdRender() {
     cmdEl.querySelector('.briefs').onclick = cmdBriefClick
   }
   const list = cmdEl.querySelector('.list'), keep = list.scrollTop
-  // What needs the person first, in the order j/k walks it.
-  const out = ['<h3>⏳ 결정 대기 <span class="m">' + d.pending.length + '건 · 오래 기다린 순 · j/k</span></h3>']
-  if (!d.pending.length) out.push('<div class="m" style="margin-bottom:10px">기다리는 결정이 없습니다. coordinator가 <code>brief ask</code>로 질문을 달면 여기에 나옵니다.</div>')
-  for (const p of d.pending) {
-    const sel = cmd.sel && cmd.sel.file === p.file
-    const open = cmdOpen(p), more = open.length > 1 ? ' <span class="m">외 ' + (open.length - 1) + '건</span>' : ''
-    out.push('<div class="q' + (sel ? ' sel' : '') + '" data-file="' + cmdEsc(p.file) + '"><div class="t">📄 ' + cmdEsc(p.title) + '</div><div class="ask">' + cmdEsc(p.decision.question) + more + '</div><div class="m">'
-      + cmdEsc([p.coordinatorName ? '🎖 ' + p.coordinatorName : '', p.decision.worker ? '👷 ' + p.decision.worker : '', cmdAgo(p.decision.asked)].filter(Boolean).join(' · ')) + '</div></div>')
-  }
-  const calls = d.calls || []
-  out.push('<h3>🙋 나를 기다리는 세션 <span class="m">' + calls.length + ' · 누르면 옆에 열림 · j/k</span></h3>')
-  const shown = cmdCallsShown(), more = calls.length - shown.length
-  out.push(calls.length ? '<ul class="feed">' + shown.map((c) => '<li data-call="' + cmdEsc(c.sid) + '"' + (cmd.sel && cmd.sel.sid === c.sid ? ' class="sel"' : '') + '>' + (c.attention === 'alert' ? '❗ ' : '❓ ') + cmdEsc(c.name) + (c.summary && c.summary !== c.name ? ' · ' + cmdEsc(c.summary) : '') + ' <span class="m">' + cmdEsc([c.window, c.boss ? '🎖 ' + c.boss : '', Date.now() - (cmd.sent[c.sid] || 0) < 60000 ? '📨 답 보냄' : ''].filter(Boolean).join(' · ')) + '</span></li>').join('')
-    + (more > 0 ? '<li class="more" data-fold="calls">더 보기 · ' + more + '개 더</li>' : cmd.callsOpen && calls.length > CALLS_SHOWN ? '<li class="more" data-fold="calls">접기</li>' : '') + '</ul>' : '<div class="m" style="margin-bottom:10px">없습니다.</div>')
-  if (cmdRev()) out.push(revSection())
+  // What needs the person, one list in the order j/k walks it.
+  const items = cmdItems(), shown = cmdTurnShown(items), more = items.length - shown.length
+  const out = ['<h3>✋ 내 차례 ' + items.length + ' <span class="m">결정·답을 기다리는 세션·검토 · 오래 기다린 순 · j/k</span></h3>']
+  if (!items.length) out.push('<div class="m" style="margin-bottom:10px">기다리는 것이 없습니다. 결정 질문, 답이나 승인을 기다리는 세션, 검토할 일이 생기면 여기에 나옵니다.</div>')
+  else out.push('<ul class="feed turn">' + shown.map((it, i) => cmdTurnRow(it, shown[i - 1])).join('')
+    + (more > 0 ? '<li class="more" data-fold="turn">더 보기 · ' + more + '개 더</li>' : cmd.turnOpen && items.length > TURN_SHOWN ? '<li class="more" data-fold="turn">접기</li>' : '') + '</ul>')
   out.push(cmdWorkersHtml(d))
   const recent = d.recent || []
   out.push('<h3 class="recent">📄 최근 브리프 <span class="m">누르면 옆에 열림</span></h3>')
@@ -274,92 +274,75 @@ function cmdRender() {
   cmdRenderDoc()
 }
 
-// The sessions at work, folded to one line by default: how many, how many
-// the coordinators started, how many they adopted. Unfolded, a table per
+// The sessions at work (👷 일하는 중), folded to one line by default: those
+// not in 내 차례 (waiting on nobody), how many the coordinators started, how
+// many they adopted. Unfolded, a table per
 // coordinator; a row opens that session beside the panel (to look at, and
 // to answer it directly), it never changes where the box's task goes.
 function cmdWorkersHtml(d) {
-  const ws = cmdWorkers(), quiet = ws.filter((x) => cmdQuiet(x.w)).length
-  const out = ['<h3 class="ws" data-fold="workers" title="펼치기/접기">' + (cmd.wOpen ? '▾' : '▸') + ' 👷 일하는 세션 ' + ws.length + ' <span class="m">(내 worker ' + ws.filter((x) => x.w.relation === 'owned').length + ' · 자동 입양 ' + ws.filter((x) => x.w.auto).length + ')</span></h3>']
+  const ws = cmdWorkers().filter((x) => !cmdCall(x.w.sid)), quiet = ws.filter((x) => cmdQuiet(x.w)).length
+  const out = ['<h3 class="ws" data-fold="workers" title="펼치기/접기">' + (cmd.wOpen ? '▾' : '▸') + ' 👷 일하는 중 ' + ws.length + ' <span class="m">(내 worker ' + ws.filter((x) => x.w.relation === 'owned').length + ' · 자동 입양 ' + ws.filter((x) => x.w.auto).length + ')</span></h3>']
   if (!d.coordinators.length) out.push('<div class="m" style="margin-bottom:10px">켜진 coordinator가 없습니다. 세션에서 <code>/coord on</code>.</div>')
   if (!cmd.wOpen) return out.join('')
   if (quiet) out.push('<div class="m fold" data-fold="quiet">' + (cmd.wQuiet ? '지시받지 않은 자동 입양 ' + quiet + '개 숨기기' : '지시받지 않은 자동 입양 ' + quiet + '개 숨김 · 보기') + '</div>')
   for (const c of d.coordinators) {
     const csel = d.coordinators.length > 1 && cmdCoord()?.sid === c.sid
     out.push('<h3 class="c' + (csel ? ' sel' : '') + '" data-coord="' + cmdEsc(c.sid) + '"' + (d.coordinators.length > 1 ? ' title="위 칸의 할 일을 이 coordinator에게"' : '') + '>🎖 ' + cmdEsc(c.name) + ' <span class="m">' + cmdEsc([c.window, c.live ? STATE_KO[c.state] || c.state : '창 없음', ATTN_KO[c.attention] || ''].filter(Boolean).join(' · ')) + '</span></h3>')
-    const rows = c.workers.filter((w) => cmd.wQuiet || !cmdQuiet(w))
+    const rows = c.workers.filter((w) => !cmdCall(w.sid) && (cmd.wQuiet || !cmdQuiet(w)))
     if (!rows.length) { out.push('<div class="m" style="margin-bottom:10px">' + (c.workers.length ? '지시받은 세션이 없습니다.' : 'worker가 없습니다.') + '</div>'); continue }
-    out.push('<table><tr><th>세션</th><th>model/effort</th><th>상태</th><th>브리프</th></tr>')
+    out.push('<table><tr><th>세션</th><th>model/effort</th><th>상태</th><th>브리프</th><th></th></tr>')
     for (const w of rows) {
       const sel = !!cmd.sel && cmd.sel.sid === w.sid
       const st = !w.live ? 'gone' : w.doing === 'asking' || w.doing === 'alert' ? w.doing : w.state
       out.push('<tr class="w' + (sel ? ' sel' : '') + '" data-sid="' + cmdEsc(w.sid) + '" title="옆에 열기 (마지막 답, G로 pane)"><td>' + cmdEsc(w.slug) + (w.relation === 'adopted' ? ' <span class="m">' + (w.auto ? '자동 입양' : '입양') + '</span>' : '') + (w.summary && w.summary !== w.slug ? '<span class="sum">' + cmdEsc(w.summary) + '</span>' : '') + '</td><td>' + cmdEsc((w.model || '-') + '/' + (w.effort || '-')) + '</td>'
         + '<td class="st-' + cmdEsc(st) + '">' + cmdEsc(w.live ? STATE_KO[w.state] || w.state || '?' : '창 없음') + (ATTN_KO[w.attention] ? ' ' + ATTN_KO[w.attention] : '') + '</td>'
-        + '<td>' + (w.brief ? '<a href="#" data-brief="' + cmdEsc(w.brief.path) + '" data-title="' + cmdEsc(w.brief.title) + '">' + (w.brief.pending ? '⏳ ' : '📄 ') + cmdEsc(w.brief.title.slice(0, 24)) + '</a>' : '<span class="m">—</span>') + '</td></tr>')
+        + '<td>' + (w.brief ? '<a href="#" data-brief="' + cmdEsc(w.brief.path) + '" data-title="' + cmdEsc(w.brief.title) + '">' + (w.brief.pending ? '⏳ ' : '📄 ') + cmdEsc(w.brief.title.slice(0, 24)) + '</a>' : '<span class="m">—</span>') + '</td>'
+        + '<td>' + (w.live ? '<button class="end" data-end="' + cmdEsc(w.sid) + '" title="세션 끝내기 (옆에 열고 확인)">⏹</button>' : '') + '</td></tr>')
     }
     out.push('</table>')
   }
   return out.join('')
 }
 
-// The sessions waiting on the person, as the list shows them: the first
-// five, and the one picked wherever it is, until 더 보기.
-const CALLS_SHOWN = 5
-function cmdCallsShown() {
-  const calls = cmd.data?.calls || []
-  return cmd.callsOpen ? calls : calls.filter((c, i) => i < CALLS_SHOWN || (cmd.sel && cmd.sel.sid === c.sid))
+// 내 차례 as the list shows it: the first TURN_SHOWN rows, and the one
+// picked wherever it is, until 더 보기.
+const TURN_SHOWN = 8
+function cmdTurnShown(items = cmdItems()) {
+  return cmd.turnOpen ? items : items.filter((it, i) => i < TURN_SHOWN || cmdIsSel(it))
 }
 
-// The brief line under the box: the newest briefs (/command's recent, newest
-// first), a chip each, and 전체, which scrolls the list to all of them.
-const BRIEF_CHIPS = 5
-const cmdBriefs = () => (cmd.data?.recent || []).slice(0, BRIEF_CHIPS)
-function cmdRenderBriefs() {
-  const el = cmdEl.querySelector('.briefs')
-  if (!el) return
-  const all = cmd.data?.recent || [], bs = cmdBriefs(), left = el.scrollLeft, sel = cmd.sel?.path || ''
-  el.innerHTML = '<span class="m" title="b · TWeb에서는 ⌥B로 차례로 열기">📄 브리프 <span class="key">B</span></span>'
-    + (bs.length ? '<button class="bchip all" data-all="1" title="목록 아래 📄 최근 브리프로">전체 ' + all.length + '</button>'
-      + bs.map((b) => '<button class="bchip' + (sel === b.path ? ' sel' : '') + '" data-brief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.title + ' · ' + b.file) + '">' + (b.pending ? '⏳ ' : '') + cmdEsc(b.title) + '</button>').join('') : '<span class="m">없음</span>')
-  // The 3 s redraw keeps where the line was scrolled; a newly picked chip
-  // comes into view, and anything else picked brings back its start (전체).
-  el.scrollLeft = left
-  const on = el.querySelector('.bchip.sel')
-  if (el.dataset.sel !== sel) el.scrollLeft = on ? Math.max(0, on.offsetLeft - el.clientWidth + on.offsetWidth + 12) : 0
-  el.dataset.sel = sel
-}
-
-function cmdBriefClick(ev) {
-  const b = ev.target.closest('button')
-  if (!b) return
-  if (b.dataset.all) { cmdEl.querySelector('.list h3.recent')?.scrollIntoView({ block: 'start' }); return }
-  cmdPick({ file: b.dataset.brief.split('/').pop(), path: b.dataset.brief, title: b.dataset.title })
-  cmdRender()
-}
-
-// b (⌥B, ⇧ backwards): the next brief of the line opens where a brief does;
-// from anything else, the newest. No brief: the key is the floor's.
-function cmdBriefWalk(e) {
-  const bs = cmdBriefs()
-  if (!bs.length) return false
-  e.preventDefault()
-  const at = bs.findIndex((b) => cmd.sel && cmd.sel.path === b.path), d = e.shiftKey ? -1 : 1
-  const b = bs[at < 0 ? (d > 0 ? 0 : bs.length - 1) : (at + d + bs.length) % bs.length]
-  cmdPick({ file: b.path.split('/').pop(), path: b.path, title: b.title })
-  cmdRender()
-  return true
-}
-
-// The newest brief a picked session is recorded on: what it asks says it
-// (/command?sid=), else its row in the table.
-function cmdSessionBrief(sid) {
-  if (cmd.ask && cmd.ask.sid === sid && cmd.ask.brief) return cmd.ask.brief
-  return cmdWorkers().find((x) => x.w.sid === sid)?.w.brief || null
+// One row: what it is (❓ a decision, 🙋/❗ a session, 🔎/⚠ a review), whose,
+// and what it asks. A row of the same worker as the one above it leaves the
+// name out: the worker's rows read as one.
+function cmdTurnRow(it, prev) {
+  const who = it.worker || (it.c ? it.c.slug || it.c.name : it.p ? it.p.decision.worker : it.r ? it.r.id : '') || ''
+  const same = !!prev && !!who && who === (prev.worker || (prev.c ? prev.c.slug || prev.c.name : prev.p ? prev.p.decision.worker : prev.r ? prev.r.id : ''))
+  let icon, title, ask, meta, key
+  if (it.p) {
+    const p = it.p, open = cmdOpen(p)
+    icon = '❓'; key = 'data-file="' + cmdEsc(p.file) + '"'
+    title = p.title; ask = p.decision.question + (open.length > 1 ? ' (외 ' + (open.length - 1) + '건)' : '')
+    meta = [p.coordinatorName ? '🎖 ' + p.coordinatorName : '', cmdAgo(p.decision.asked)]
+  } else if (it.c) {
+    const c = it.c
+    icon = c.attention === 'alert' ? '❗' : '🙋'; key = 'data-call="' + cmdEsc(c.sid) + '"'
+    title = c.summary && c.summary !== c.name ? c.summary : c.name; ask = ''
+    meta = [c.window, c.boss ? '🎖 ' + c.boss : '', c.since ? cmdAgo(new Date(c.since * 1000).toISOString()) : '', Date.now() - (cmd.sent[c.sid] || 0) < 60000 ? '📨 답 보냄' : '']
+  } else {
+    const r = it.r
+    icon = r.issues && r.issues.length ? '⚠' : '🔎'; key = 'data-review="' + cmdEsc(r.id) + '" data-rcoord="' + cmdEsc(r.coord) + '"'
+    title = r.title; ask = r.check || ''
+    meta = ['🎖 ' + r.coordName, cmdAgo(revMs(r.updatedAt || r.at))]
+  }
+  // A session with no summary is called by its name: said once.
+  const name = who && !same ? '<b>' + cmdEsc(who) + '</b>' + (title && title !== who ? ' · ' : '') : ''
+  return '<li ' + key + ' class="t' + (cmdIsSel(it) ? ' sel' : '') + (same ? ' cont' : '') + '">' + icon + ' ' + name + (title !== who || same ? cmdEsc(title) : '')
+    + (ask ? '<span class="ask">' + cmdEsc(ask) + '</span>' : '') + ' <span class="m">' + cmdEsc(meta.filter(Boolean).join(' · ')) + '</span></li>'
 }
 
 function cmdFold(which) {
   if (which === 'quiet') cmd.wQuiet = !cmd.wQuiet
-  else if (which === 'calls') cmd.callsOpen = !cmd.callsOpen
+  else if (which === 'turn') cmd.turnOpen = !cmd.turnOpen
   else {
     cmd.wOpen = !cmd.wOpen
     try { localStorage.setItem('office.cmd.workers', cmd.wOpen ? 'open' : 'shut') } catch { /* private window: not remembered */ }
@@ -375,13 +358,21 @@ function cmdClick(ev) {
   if (li) { const c = cmdCall(li.dataset.call); if (c) { cmdPickCall(c); cmdRender() } return }
   const a = ev.target.closest('[data-brief]')
   if (a) { ev.preventDefault(); cmdPick({ file: a.dataset.brief.split('/').pop(), path: a.dataset.brief, title: a.dataset.title }); return cmdRender() }
-  const q = ev.target.closest('.q')
+  const q = ev.target.closest('[data-file]')
   if (q) { const p = cmdPending(q.dataset.file); if (p) { cmdPick(p); cmdRender() } return }
   const h = ev.target.closest('h3.c')
   if (h) {
     cmd.coord = h.dataset.coord
     cmdRender()
     cmdEl.querySelector('.say textarea')?.focus()
+    return
+  }
+  // ⏹ on a row: the session opens beside the panel and its end is asked
+  // there, where the warning and the second press are.
+  const end = ev.target.closest('button[data-end]')
+  if (end) {
+    const x = cmdWorkers().find((y) => y.w.sid === end.dataset.end)
+    if (x) { const s = { sid: x.w.sid, name: x.w.slug, window: x.w.window }; cmdPickCall(s); cmdRender(); crewEnd(cmd.sel) }
     return
   }
   const tr = ev.target.closest('tr.w')
@@ -588,17 +579,20 @@ function cmdRenderCall(bar, doc, dec, s) {
     cmd.frame = 'call:' + s.sid
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
     bar.innerHTML = '<b>' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span>'
-      + '<span class="seg" title="마지막 답 ↔ 카드 (T · 입력칸에서는 ⌥T)"><button data-v="said"><span class="key">T</span>마지막 답</button><button data-v="card">🗂 카드</button></span>'
-      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗ 창으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+      + '<span class="seg" title="마지막 답 ↔ 카드 (T · 입력칸에서는 ⌥T)"><button data-v="said" title="마지막 답"><span class="key">T</span>답</button><button data-v="card" title="카드: 지난 대화, 파일, 작업, btw">🗂 카드</button></span>'
+      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗</button>' + (typeof crewButtons === 'function' ? crewButtons(s.sid) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.go').onclick = () => cmdFocus(s)
+    if (typeof crewWire === 'function') crewWire(bar, s)
     bar.querySelector('.seg').onclick = (ev) => { const b = ev.target.closest('button[data-v]'); if (b) cmdView(b.dataset.v) }
     bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
-    doc.innerHTML = '<div class="sbrief"></div><div class="said"><div class="m">불러오는 중…</div></div><div class="cardv"></div>'
+    doc.innerHTML = '<div class="endarm"></div><div class="sbrief"></div><div class="said"><div class="m">불러오는 중…</div></div><div class="cardv"></div>'
     doc.querySelector('.sbrief').onclick = (ev) => { const b = ev.target.closest('button[data-brief]'); if (b) { cmdPick({ file: b.dataset.brief.split('/').pop(), path: b.dataset.brief, title: b.dataset.title }); cmdRender() } }
     dec.dataset.key = ''
     cmdRenderView()
   }
+  // The end waiting for its second press (crew.js), on every redraw.
+  if (typeof crewRenderArm === 'function') crewRenderArm()
   // Its brief, in both looks: one press opens it where a brief opens.
   const sb = doc.querySelector('.sbrief'), br = cmdSessionBrief(s.sid), bkey = br ? br.path + '|' + br.pending : ''
   if (sb.dataset.key !== bkey) {
@@ -641,58 +635,6 @@ function cmdRenderCall(bar, doc, dec, s) {
     note.onkeydown = (e) => cmdCallKey(e, s)
     if (focused) note.focus()
   }
-}
-
-// T (⌥T), or the bar's switch: the picked session's other look. Going to
-// the card loads it afresh; the 3 s poll never redraws it, so a tab, a scroll
-// or what is typed in its btw stays put.
-function cmdView(v = cmd.view === 'card' ? 'said' : 'card') {
-  const cv = cmdEl.querySelector('.doc .cardv')
-  if (v === 'card' && cmd.view !== 'card' && cv) cv.dataset.sid = ''
-  cmd.view = v
-  cmdRenderView()
-}
-
-function cmdRenderView() {
-  const doc = cmdEl.querySelector('.doc'), s = cmd.sel
-  if (!doc || !s || !s.sid) return
-  const said = doc.querySelector('.said'), cv = doc.querySelector('.cardv'), on = cmd.view === 'card'
-  if (!said || !cv) return
-  said.style.display = on ? 'none' : ''
-  cv.style.display = on ? '' : 'none'
-  cmdEl.querySelectorAll('.bar .seg button').forEach((b) => b.classList.toggle('on', b.dataset.v === cmd.view))
-  if (on && cv.dataset.sid !== s.sid) cmdCard(s, cv)
-}
-
-// The session's card in the left pane: a head with what it was doing (its
-// one-line summary; its brief is on the line over both looks), then the floor card's panes with
-// btw as their last tab. The floor card's quick replies and reply box are
-// not drawn again: the box under it (.decide) and the task box speak to it.
-async function cmdCard(s, cv) {
-  cv.dataset.sid = s.sid
-  cv.innerHTML = '<div class="m">카드를 불러오는 중…</div>'
-  if (typeof cardPanes !== 'function') { cv.innerHTML = '<div class="m">이 페이지에는 카드가 없습니다.</div>'; return }
-  const q = encodeURIComponent(s.sid)
-  let d, pn
-  try {
-    ;[d, pn] = await Promise.all([fetch('/detail?sid=' + q, { cache: 'no-store' }).then((r) => r.json()), fetch('/panels?sid=' + q, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({}))])
-  } catch (e) {
-    if (cv.dataset.sid === s.sid) cv.innerHTML = '<div class="m">카드를 못 불러왔습니다: ' + cmdEsc(e.message) + '</div>'
-    return
-  }
-  // Another session, or the other look, since: this card is not wanted.
-  if (cv.dataset.sid !== s.sid || cmd.sel?.sid !== s.sid || !cv.isConnected) return
-  cv.innerHTML = ''
-  cmd.card = null
-  if (d.error) { cv.innerHTML = '<div class="m">' + (d.error === 'no such session' ? '이 세션이 없습니다 (창이 닫혔거나 끝났습니다).' : cmdEsc(d.error)) + '</div>'; return }
-  const w = cmdWorkers().find((x) => x.w.sid === s.sid)?.w
-  const sum = d.summary || (cmd.ask && cmd.ask.sid === s.sid && cmd.ask.summary) || w?.summary || cmdCall(s.sid)?.summary || ''
-  const head = document.createElement('div')
-  head.className = 'chead'
-  head.innerHTML = '<div class="csum" title="' + cmdEsc(sum) + '">📝 ' + cmdEsc(sum || d.name) + '</div><div class="m">' + cmdEsc([d.window + ' ' + d.name, STATE_KO[d.state] || d.state, d.inbox ? '📨 보낸 답이 아직 전달 전' : ''].filter(Boolean).join(' · ')) + '</div>'
-  cv.appendChild(head)
-  cardPanes(cv, d, pn, { sid: s.sid, btw: true, alive: () => cv.isConnected && cv.dataset.sid === s.sid && cmd.view === 'card' })
-  cmd.card = cv
 }
 
 // Bring the picked session's pane in front in tmux, as the card's G does
@@ -813,12 +755,12 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
     cmdEl.querySelector('.decide .note[data-q="' + open[0].id + '"]')?.focus()
     return
   }
-  // On to the next waiting brief.
+  // On to the next row of 내 차례.
+  const next = cmdNextAfter({ p })
   const rest = (cmd.data?.pending || []).filter((x) => x.file !== p.file)
   cmd.data.pending = rest
-  if (rest[0]) cmdPick(rest[0]); else cmd.sel = null
   commandCount(rest.length)
-  cmdRender()
+  if (next) cmdGo(next); else { cmd.sel = null; cmdRender() }
 }
 
 // Keys while the command view is up (office.html's officeKey asks first).
@@ -839,7 +781,8 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // (⌥I from a box too). G (⌥G in its box) goes to a picked session's
 // tmux pane. T (⌥T in its box) turns a picked session's look between its
 // last answer and its card; on the card [ ] and ⌥1…⌥9 pick its tab, as on
-// the floor card. b (⌥B, ⇧ backwards) opens the brief line's next brief. In a box every key is typing; its Enter is cmdNoteKey's
+// the floor card. b (⌥B, ⇧ backwards) opens the brief line's next brief.
+// X (⌥X) ends the picked session; an adopted one on a second press (crew.js). In a box every key is typing; its Enter is cmdNoteKey's
 // (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
   const cardUp = typeof card !== 'undefined' && card.style.display === 'block'
@@ -848,6 +791,8 @@ function commandKey(e, k, typing) {
   if (k === 'g' && e.altKey && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdFocus(cmd.sel); return true }
   // ⌥T (T outside a box): TWeb's normal mode keeps bare t.
   if (k === 't' && (e.altKey || !typing) && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdView(); return true }
+  // X (⌥X from a box; TWeb's normal mode keeps bare x): end the picked session (crew.js).
+  if (k === 'x' && (e.altKey || !typing) && cmd.on && cmd.sel?.sid && typeof crewEnd === 'function' && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); crewEnd(cmd.sel); return true }
   // b (⌥B from anywhere, a box included) through the brief line.
   if (k === 'b' && (e.altKey || !typing) && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdBriefWalk(e)
   if (/^[1-9]$/.test(k) && e.altKey && cmd.on && cmdCardUp() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmd.card.selectTab(+k - 1); return true }
@@ -888,9 +833,6 @@ function commandKey(e, k, typing) {
   // Everything else goes to the floor, which stays in sight beside the panel.
   return false
 }
-
-// The picked session's card, when that is the look it shows and it has loaded.
-const cmdCardUp = () => (cmd.view === 'card' && cmd.card && cmd.card.isConnected !== false && cmd.sel?.sid && cmd.card.dataset.sid === cmd.sel.sid ? cmd.card : null)
 
 // j/k (⌥J/⌥K): to the next or previous thing waiting on the person.
 // Nothing picked, or a session at work picked (never in the walk): j starts
