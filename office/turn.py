@@ -52,9 +52,11 @@ def epoch(v) -> float:
         return 0.0
 
 
-def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None) -> list[dict]:
+def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None, held: dict[str, dict] | None = None) -> list[dict]:
     """The rows. `coords`: /command's coordinators, each with its workers. A
-    waiting time not known counts as now: it has waited the least we can tell."""
+    waiting time not known counts as now: it has waited the least we can tell.
+    `held`: the deferrals and memos of live sessions (office/defer.py), each
+    with `info` ({name, summary, state}) for a session that has no row."""
     now = time.time() if now is None else now
     rows: dict[str, dict] = {}
 
@@ -62,7 +64,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
         r = rows.get(key)
         if r is None:
             r = rows[key] = {"key": key, "sid": None, "name": "", "summary": None, "coord": None, "isCoord": False, "relation": None, "state": None, "live": False,
-                             "decisions": [], "call": False, "reviews": [], "slx": [], "at": None}
+                             "decisions": [], "call": False, "reviews": [], "slx": [], "at": None, "needKeys": []}
         for k, v in info.items():
             if v is not None and not r.get(k):
                 r[k] = v
@@ -83,30 +85,68 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     for c in calls:
         r = row("s:" + c["sid"], sid=c["sid"], name=c.get("slug") or c.get("name"), summary=c.get("summary"), live=True, state="waiting")
         r["call"] = True
+        # A wait is known by when it began: a new wait is a new need.
+        r["needKeys"].append("c:" + str(c.get("since") or ""))
         waited(r, epoch(c.get("since")) or now)
     for p in waiting:
         d = p.get("decision") or {}
         sid = by_slug.get(d.get("worker") or "") or next((s for s in p.get("sessions") or [] if "s:" + s in rows and (rows["s:" + s]["relation"] or s in waiting_sids)), None) or d.get("coordinator")
         r = row("s:" + sid, sid=sid) if sid else row("b:" + p["file"], name=p.get("title") or p["file"])
         r["decisions"].append(p["file"])
+        open_q = [q.get("id") for q in p.get("questions") or [] if isinstance(q, dict) and not q.get("answer")] or [d.get("id") or "q1"]
+        r["needKeys"] += ["d:" + p["file"] + ":" + str(q) for q in open_q]
         waited(r, epoch(d.get("asked")) or now)
     for v in reviews:
         sid = by_slug.get(v["id"]) or v.get("coord")
         r = row("s:" + sid, sid=sid, name=v.get("coordName") if sid == v.get("coord") else None)
         r["reviews"].append([v.get("coord"), v["id"]])
+        r["needKeys"].append("r:" + str(v.get("coord")) + "|" + v["id"])
         waited(r, epoch(v.get("updatedAt") or v.get("at")) or now)
     for x in triggers or []:
         if x.get("merged") and "s:" + str(x.get("sid")) in rows:
             rows["s:" + x["sid"]]["slx"].append(x["id"])
+            rows["s:" + x["sid"]]["needKeys"].append("x:" + x["id"])
         elif not x.get("alive"):
             r = row("x:" + x["id"], name=x.get("from") or x["id"])
             r["slx"].append(x["id"])
             waited(r, epoch(x.get("at")) or now)
+    for sid, h in (held or {}).items():
+        info = h.get("info") or {}
+        if "s:" + sid not in rows:
+            row("s:" + sid, sid=sid, name=info.get("name"), summary=info.get("summary"), state=info.get("state"), live=True)
     out = list(rows.values())
     for r in out:
         own = r["key"].startswith("x:")
         r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own)
         r["name"] = r["name"] or (r["sid"] or "")[:8]
+        defer(r, (held or {}).get(r["sid"] or ""), now)
     # Among triggers' own rows the latest receipt is on top; the other rows keep the longest wait on top.
     out.sort(key=lambda r: (not r["needs"], r["key"].startswith("x:"), -r["at"] if r["key"].startswith("x:") else r["at"] if r["needs"] else 0, "" if r["needs"] else r["name"]))
     return out
+
+
+def defer(r: dict, h: dict | None, now: float) -> None:
+    """A row's deferral and memos (office/defer.py), set on the row:
+    `memos` (the list), `deferred` (until when, while it is set aside),
+    `woke` (its time came and it is not opened yet), `wake` (what
+    command.view should write: "due" or "new")."""
+    r.update(memos=[], deferred=None, woke=False, wake=None)
+    if not h:
+        return
+    r["memos"] = [{"id": m["id"], "text": m["text"], "at": m.get("at")} for m in h.get("memos") or []]
+    until = h.get("until")
+    if until:
+        if now >= until:
+            r["wake"] = "due"
+        elif set(r["needKeys"]) - set(h.get("seen") or []):
+            r["wake"] = "new"
+        else:
+            r["deferred"] = until
+            r["needs"] = False
+            return
+    if r["wake"] == "due" or h.get("woke"):
+        # Its time came: up, with its memos, until the person opens it.
+        r["woke"] = True
+        r["needs"] = True
+        if not r["at"]:
+            r["at"] = until or h.get("woke") or now

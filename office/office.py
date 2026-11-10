@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resources  # noqa: E402 - office/resources.py, beside this file
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import command  # noqa: E402 - office/command.py, briefs waiting on a decision
+import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 import crew  # noqa: E402 - office/crew.py, ending a session or releasing it from the command view
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py")
 
 
 def code_stamp() -> str:
@@ -1359,6 +1360,10 @@ def act(body: dict) -> tuple[int, dict]:
         return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
     if kind in crew.KINDS:
         return crew.act(body, snapshot(), inbox_put)
+    if kind == "memo_send":
+        return memo_send(body)
+    if kind in defer.KINDS:
+        return defer.act(body, {p["id"] for p in snapshot()})
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return 404, {"error": "no such session"}
@@ -1461,6 +1466,22 @@ def act(body: dict) -> tuple[int, dict]:
     if kind in ("send", "merge"):
         return rearrange(kind, me, value)
     return 400, {"error": "unknown action"}
+
+
+def memo_send(body: dict) -> tuple[int, dict]:
+    """A memo (office/defer.py) sent now: the session's reply, and the memo
+    goes only once it went. A session at work or with a reply not taken yet
+    answers busy, as a reply does, and keeps the memo; a second press sends
+    it anyway (force)."""
+    sid, mid = str(body.get("sid") or ""), str(body.get("id") or "")
+    m = defer.memo(sid, mid) if defer.SID.match(sid) and defer.MEMO_ID.match(mid) else None
+    if not m:
+        return 404, {"error": "그런 메모가 없습니다"}
+    code, out = act({"sid": sid, "kind": "reply", "value": m["text"], "force": bool(body.get("force"))})
+    if code == 200:
+        defer.memo_del(sid, mid)
+        out = {**out, "sent": "메모를 보냈습니다"}
+    return code, out
 
 
 # Dragging a pod moves its tmux window: onto another tmux session's block it is
@@ -1730,7 +1751,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/command.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")

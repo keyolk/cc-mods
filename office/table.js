@@ -16,6 +16,8 @@
 // A session is named by what it was doing (its summary; /command falls back
 // to its repository and first prompt), its slug a small grey tag: the person
 // could not tell `ops-k8s-4a` from its slug alone. Loaded before command.js.
+// A row set aside (⏰ 나중에, defer.js) folds into ⏰ 미룸 N until its time
+// or a new need; a row's memos are its tab 📝 메모 N and 📝N in its cells.
 
 const TABLE_CSS = `
 #command .tblwrap { max-height: 50vh; overflow: auto; margin-bottom: 10px; border: 2px solid rgba(59,42,53,.14); border-radius: 10px; background: #fff; }
@@ -42,7 +44,9 @@ document.head.appendChild(Object.assign(document.createElement('style'), { textC
 
 // othersOpen: the rows waiting on nobody unfolded; slxOpen: the triggers'
 // own rows unfolded.
-const tbl = { othersOpen: false, slxOpen: false }
+const tbl = { othersOpen: false, slxOpen: false, dfrOpen: false }
+// defer.js, unless the server that sent this page has none.
+const tblDfr = () => typeof dfrUntil === 'function'
 // Triggers with no session up to this many show as rows; more fold to one
 // line, 📨 slx N: a day of Slack mentions (26 in the live inbox) would
 // otherwise bury the table, the length the person complained about.
@@ -70,7 +74,10 @@ function tblAll() {
     // A trigger rides on its session's row; with none it is the row.
     const xs = tblSlxOn() ? (row.slx || []).map((id) => (slxData().items || []).find((x) => x.id === id)).filter(Boolean) : []
     const own = String(row.key).startsWith('x:')
-    return { row, ds, c, rs, xs, needs: !!(ds.length || c || rs.length || (own && xs.length)) }
+    // Set aside: out of 내 차례 until its time or a need it did not hold
+    // (office/turn.py says which); its time come: up, until it is left.
+    const deferred = row.sid && tblDfr() ? dfrUntil(row) : null, woke = !deferred && row.sid && tblDfr() && dfrWoke(row)
+    return { row, ds, c, rs, xs, deferred, woke, memos: row.memos || [], needs: !deferred && !!(ds.length || c || rs.length || (own && xs.length) || woke) }
   })
 }
 function tblLegacy(d) {
@@ -108,6 +115,7 @@ function tblTabs(R) {
   if (R.c) t.push({ k: 'wait', label: '🙋 대기' })
   if (R.rs.length) t.push({ k: 'rev', label: '🔎 검토 ' + R.rs.length })
   if (R.xs.length) t.push({ k: 'slx', label: R.xs[0].icon + ' slx' + (R.xs.length > 1 ? ' ' + R.xs.length : '') })
+  if (R.row.sid && (R.memos.length || cmd.sel?.memos === R.row.sid)) t.push({ k: 'memo', label: '📝 메모 ' + R.memos.length })
   if (R.row.sid && R.row.live !== false && !R.c) t.push({ k: 'said', label: '마지막 답' })
   if (R.row.sid && R.row.live !== false) t.push({ k: 'card', label: '🗂 카드' })
   return t
@@ -119,6 +127,7 @@ function tblTabNow() {
   if (s.file) return 'dec'
   if (s.revs || s.review) return 'rev'
   if (s.slx) return 'slx'
+  if (s.memos) return 'memo'
   if (s.sid) return cmd.view === 'card' ? 'card' : cmdCall(s.sid) ? 'wait' : 'said'
   return null
 }
@@ -142,6 +151,7 @@ function tblShow(R, k, render = true) {
   if (k === 'dec') cmdPick(R.ds[0])
   else if (k === 'rev') { cmd.sel = { revs: r.key, title: tblName(r) }; cmd.armed = null; cmd.q = null; cmd.force = null }
   else if (k === 'slx') slxPick(R.xs[0])
+  else if (k === 'memo') { cmd.sel = { memos: r.sid, name: r.name, summary: r.summary }; cmd.armed = null; cmd.q = null; cmd.force = null }
   else {
     if (!cmd.sel || cmd.sel.sid !== s.sid) cmdPickCall(s)
     cmd.view = k === 'card' ? 'card' : 'said'
@@ -167,7 +177,7 @@ function tblCur() {
   if (cmd.row) return cmd.row
   const s = cmd.sel
   if (!s) return null
-  const R = tblAll().find((x) => (s.file && (x.row.decisions || []).includes(s.file)) || (s.sid && x.row.sid === s.sid) || (s.review && (x.row.reviews || []).some(([c, id]) => c === s.coord && id === s.review)) || (s.revs && x.row.key === s.revs) || (s.slx && (x.row.slx || []).includes(s.slx)))
+  const R = tblAll().find((x) => (s.file && (x.row.decisions || []).includes(s.file)) || (s.sid && x.row.sid === s.sid) || (s.review && (x.row.reviews || []).some(([c, id]) => c === s.coord && id === s.review)) || (s.revs && x.row.key === s.revs) || (s.slx && (x.row.slx || []).includes(s.slx)) || (s.memos && x.row.sid === s.memos))
   return R ? R.row.key : null
 }
 // Tab / ⇧Tab, [ ]: the next or previous tab of the open row.
@@ -215,17 +225,26 @@ function tblCells(R) {
   if (R.c) st.push(R.c.attention === 'alert' ? '❗' : '🙋')
   if (R.rs.length) st.push('🔎' + R.rs.length)
   if (R.xs.length) st.push(R.xs[0].icon + (R.xs.length > 1 ? R.xs.length : ''))
-  if (!st.length) st.push(R.row.state === 'working' ? '⚙' : R.row.live === false ? '·' : '✓')
+  if (R.woke) st.push('⏰')
+  if (R.memos.length) st.push('📝' + R.memos.length)
+  if (!st.length || (st.length === 1 && R.memos.length)) st.push(R.row.state === 'working' ? '⚙' : R.row.live === false ? '·' : '✓')
   return st.join(' ')
 }
 
 // What a row needs, in words, under its name: the first open question, or
 // what the review asks to check.
 function tblAsk(R) {
+  // Set aside: until when first, then what it holds.
+  if (R.deferred) return ['⏰ ' + cmdHHMM(R.deferred * 1000) + '까지 미룸', tblAskNow({ ...R, deferred: null })].filter(Boolean).join(' · ')
+  return tblAskNow(R)
+}
+function tblAskNow(R) {
   const q = R.ds.length ? cmdOpen(R.ds[0])[0] : null
   if (q) return q.question
   if (R.rs.length) return R.rs[0].title
   if (R.xs.length) return slxLine(R.xs[0].text).slice(0, 80)
+  if (R.woke) return '⏰ 다시 볼 시각' + (R.memos.length ? ' · 📝 ' + R.memos[0].text.slice(0, 60) : '')
+  if (R.memos.length) return '📝 ' + R.memos[0].text.slice(0, 80)
   return ''
 }
 
@@ -244,7 +263,7 @@ function tblRow(R, other) {
 // The table for the list: the rows that need the person, then 👷 그 밖 N.
 // Nothing is drawn for what is empty.
 function tblHtml() {
-  const all = tblAll(), others = all.filter((R) => !R.needs)
+  const all = tblAll(), others = all.filter((R) => !R.needs && !R.deferred), later = all.filter((R) => R.deferred)
   const slxRows = all.filter((R) => R.needs && tblOwnSlx(R)), needs = all.filter((R) => R.needs && !tblOwnSlx(R))
   const folded = tblSlxFolded(all)
   tbl.order = tblOrder()
@@ -261,6 +280,13 @@ function tblHtml() {
   } else {
     if (slxRows.length > TBL_SLX_SHOWN) rows.push('<tr class="more" data-fold="slx"><td colspan="3">▾ 📨 slx ' + slxRows.length + '</td></tr>')
     rows.push(...slxRows.map((R) => tblRow(R, false)))
+  }
+  // Set aside: one line, ⏰ 미룸 N; the open one shows under it folded.
+  if (later.length) {
+    rows.push('<tr class="more" data-fold="dfr"><td colspan="3">' + (tbl.dfrOpen ? '▾' : '▸') + ' ⏰ 미룸 ' + later.length + ' <span class="m">시각이 되거나 새 질문·대기가 오면 다시 올라옵니다</span></td></tr>')
+    const open = later.find((R) => R.row.key === cmd.row)
+    if (tbl.dfrOpen) rows.push(...later.map((R) => tblRow(R, false)))
+    else if (open) rows.push(tblRow(open, false))
   }
   if (others.length) {
     rows.push('<tr class="more" data-fold="others"><td colspan="3">' + (tbl.othersOpen ? '▾' : '▸') + ' 👷 그 밖 ' + others.length + ' <span class="m">일하는 중 ' + others.filter((R) => R.row.state === 'working').length + '</span></td></tr>')
@@ -283,8 +309,10 @@ function tblRenderTabs() {
   el.innerHTML = '<span class="who" title="' + cmdEsc(tblName(R.row)) + '">' + cmdEsc(tblName(R.row)) + '</span>'
     + tabs.map((t) => '<button data-tab="' + t.k + '" class="' + (t.k === now ? 'on' : '') + '">' + cmdEsc(t.label) + '</button>').join('')
     + (tabs.length > 1 ? '<span class="m" style="align-self:center;margin-left:4px">Tab · ⌥[ ]</span>' : '')
+    + (tblDfr() ? dfrTabsHtml(R) : '')
 }
 function tblTabClick(ev) {
+  if (tblDfr() && dfrClick(ev)) return
   const b = ev.target.closest('button[data-tab]')
   const R = b && cmd.row && tblFind(cmd.row)
   if (R) tblShow(R, b.dataset.tab)

@@ -41,6 +41,7 @@ import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import review  # noqa: E402 - office/review.py, finished work the person should judge
 import turn  # noqa: E402 - office/turn.py, the one table of sessions and what each waits on
 import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat incidents)
+import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
@@ -465,7 +466,16 @@ def view(people: list[dict]) -> dict:
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
         recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
     reviews = review.items()
-    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "table": turn.table(waiting, calls, reviews, coords, inbox["items"]), "slx": inbox}
+    # Set aside and memos: only the live sessions' (an ended one keeps its file, out of sight).
+    held = defer.held(set(by_sid))
+    for sid, h in held.items():
+        p = by_sid[sid]
+        h["info"] = {"name": p.get("name"), "summary": label(sid, sums, p.get("cwd"), ledger_w.get(sid)), "state": p.get("state")}
+    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held)
+    for r in rows:
+        if r.get("wake"):
+            defer.wake(r["sid"], r["wake"])
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "table": rows, "slx": inbox}
 
 
 # What a session waiting on the person shows in the view's left pane: the
