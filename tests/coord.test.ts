@@ -183,6 +183,13 @@ test('coord: a worker taken for gone whose session a pane names again is taken b
   // A newer record for the same session is live: the old one stays ended.
   const twice = on({ workers: [worker({ endedAt: NOW - 5_000, goneAt: NOW - 5_000 }), worker({ slug: 'w1-again', relation: 'adopted', auto: true })] })
   expect(observe(twice, seen, NOW).ledger.workers.map((x) => !!x.endedAt)).toEqual([true, false])
+  // Respawned under the same slug meanwhile: the old record stays ended, and
+  // its session is adopted under a slug of its own, not taken back beside it.
+  const respawned = on({ workers: [worker({ endedAt: NOW - 50_000, goneAt: NOW - 50_000 }), worker({ sid: 'w9', at: NOW - 40_000 })] })
+  expect(observe(respawned, seen, NOW).ledger.workers.filter((x) => !x.endedAt).map((x) => x.sid)).toEqual(['w9'])
+  const adopted = autoAdopt(respawned, seen, new Map([['w1', 'tmc-layout']]), new Set(), NOW).adopted
+  expect(adopted.map((x) => [x.sid, x.relation])).toEqual([['w1', 'adopted']])
+  expect(adopted[0]!.slug).not.toBe('tmc-layout')
 })
 
 test('coord: the watch wakes the coordinator for a question, a finished turn and an exit; the person typing is recorded, not told', () => {

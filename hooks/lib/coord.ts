@@ -236,16 +236,16 @@ export function quiet(w: Worker): boolean {
 // came and went.
 export function autoAdopt(l: Ledger, seen: readonly PaneSeen[], names: ReadonlyMap<string, string>, skip: ReadonlySet<string>, now: number): { ledger: Ledger; adopted: Worker[] } {
   if (!l.on || !l.limits.autoAdopt) return { ledger: l, adopted: [] }
-  const shown = new Set(seen.map((s) => s.sid))
   // Taken for gone and seen again: observe takes that record back.
-  const revived = (w: Worker) => !!w.goneAt && shown.has(w.sid)
+  const back = comesBack(l, seen)
+  const revived = (w: Worker) => back.has(w)
   const kept = l.workers.filter((w) => !(quiet(w) && ((w.endedAt && !revived(w)) || skip.has(w.sid))))
   const mine = new Set(kept.filter((w) => !w.endedAt || revived(w)).map((w) => w.sid))
   const taken = new Set(kept.filter((w) => !w.endedAt || revived(w)).map((w) => w.slug))
-  const back = new Set(l.released)
+  const handed = new Set(l.released)
   const adopted: Worker[] = []
   for (const s of seen) {
-    if (s.sid === l.sid || mine.has(s.sid) || back.has(s.sid) || skip.has(s.sid)) continue
+    if (s.sid === l.sid || mine.has(s.sid) || handed.has(s.sid) || skip.has(s.sid)) continue
     mine.add(s.sid)
     const slug = adoptSlug(names.get(s.sid), s.sid, taken)
     taken.add(slug)
@@ -427,6 +427,21 @@ export function unseen(l: Ledger, seen: PaneSeen[], now: number): Worker[] {
   return active(l).filter((w) => !sids.has(w.sid) && now - w.at >= SPAWN_GRACE_MS)
 }
 
+// The records taken for gone whose session a pane names again: the newest
+// such record per session, when no live record holds that session or its
+// slug (the coordinator may have spawned a new worker under the same name;
+// two live workers with one slug would let coord_close pick the old one and
+// remove the new one's worktree). A session left out is adopted anew.
+export function comesBack(l: Ledger, seen: readonly PaneSeen[]): Set<Worker> {
+  const shown = new Set(seen.map((s) => s.sid))
+  const live = active(l)
+  const sids = new Set(live.map((w) => w.sid))
+  const slugs = new Set(live.map((w) => w.slug))
+  const last = new Map<string, Worker>()
+  for (const w of l.workers) if (w.endedAt && w.goneAt && shown.has(w.sid) && !sids.has(w.sid)) last.set(w.sid, w)
+  return new Set([...last.values()].filter((w) => !slugs.has(w.slug)))
+}
+
 // What changed for the ledger's workers since the last look, and the ledger
 // with the new states. `wake`: worth a message to the coordinator now (a
 // worker waiting on input, gone, or taken over by the person); the rest only
@@ -443,14 +458,11 @@ export function unseen(l: Ledger, seen: PaneSeen[], now: number): Worker[] {
 export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
   const bySid = new Map(seen.map((s) => [s.sid, s]))
   const changes: Change[] = []
-  const live = new Set(active(l).map((w) => w.sid))
-  // The newest record taken for gone, per session, when no live record has it.
-  const lastGone = new Map<string, number>()
-  l.workers.forEach((w, i) => w.endedAt && w.goneAt && !live.has(w.sid) && lastGone.set(w.sid, i))
-  const workers = l.workers.map((w0, i) => {
+  const back = comesBack(l, seen)
+  const workers = l.workers.map((w0) => {
     let w = w0
     if (w.endedAt) {
-      if (!w.goneAt || lastGone.get(w.sid) !== i || !bySid.has(w.sid)) return w
+      if (!back.has(w)) return w
       w = { ...w, endedAt: undefined, goneAt: undefined, missed: undefined }
       changes.push({ slug: w.slug, sid: w.sid, kind: 'back', text: who(w.slug, sums.get(w.sid)) + ': ' + BACK, wake: !quiet(w) })
     }
