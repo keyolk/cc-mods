@@ -23,6 +23,10 @@
 // person's words to its coordinator.
 // A session at work, picked in its folded table, opens there too: to look at
 // it, and to answer it directly only when the person means to.
+// A picked session shows there in one of two looks, T (⌥T) between them:
+// 마지막 답, the end of its last answer, and 카드, what the floor card shows
+// (past turns, what it was handed, sent and wrote, its work, btw), drawn by
+// office.html's cardPanes into the same place, so the view is never left.
 //
 // The page knows two modes, 사무실 and 지휘; `C` (or `D`) or the header
 // switch flips them. Everything here reads /command; nothing in office.html depends on it
@@ -42,10 +46,10 @@ const CMD_CSS = `
 #command .list { overflow: auto; padding: 10px 12px; flex: 1; }
 #command h3 { font-weight: 400; font-size: 15px; margin: 4px 0 6px; }
 #command h3 .m, #command .m { color: #7a7090; font-size: 11px; font-family: -apple-system, sans-serif; }
-#command .q { border: 2px solid rgba(59,42,53,.18); border-radius: 10px; padding: 6px 8px; margin-bottom: 6px; cursor: pointer; background: #fff; }
-#command .q.sel { border-color: #2a2033; background: #fff3c4; }
-#command .q .t { font-size: 13px; }
-#command .q .ask { font: 12px/1.4 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 2px 0; }
+#command .list .q { border: 2px solid rgba(59,42,53,.18); border-radius: 10px; padding: 6px 8px; margin-bottom: 6px; cursor: pointer; background: #fff; }
+#command .list .q.sel { border-color: #2a2033; background: #fff3c4; }
+#command .list .q .t { font-size: 13px; }
+#command .list .q .ask { font: 12px/1.4 -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 2px 0; }
 #command table { width: 100%; border-collapse: collapse; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; margin-bottom: 10px; }
 #command th { text-align: left; font-weight: 600; color: #7a7090; border-bottom: 2px solid rgba(59,42,53,.18); padding: 2px 4px; }
 #command td { border-bottom: 1px solid rgba(59,42,53,.1); padding: 3px 4px; vertical-align: top; }
@@ -76,14 +80,26 @@ const CMD_CSS = `
 #command .feed li { padding: 2px 4px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #command .feed li:hover { background: #f3ecdf; }
 #command .feed li.sel { background: #fff3c4; outline: 2px solid #2a2033; }
-#command .said { flex: 1; overflow: auto; padding: 10px 14px; font: 13px/1.55 -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; min-height: 0; }
-#command .said p { margin: 0 0 6px; }
-#command .said h1, #command .said h2, #command .said h3, #command .said h4 { font-size: 14px; margin: 8px 0 4px; }
-#command .said ul, #command .said ol { margin: 0 0 6px; padding-left: 18px; }
-#command .said code { font: 12px ui-monospace, Menlo, monospace; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; }
-#command .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; white-space: pre; }
-#command .said pre code { background: none; padding: 0; color: inherit; }
-#command .said .cut { color: #7a7090; font-size: 11px; margin-bottom: 6px; }
+#command .doc > .said { flex: 1; overflow: auto; padding: 10px 14px; font: 13px/1.55 -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; min-height: 0; }
+#command .doc > .said p { margin: 0 0 6px; }
+#command .doc > .said h1, #command .doc > .said h2, #command .doc > .said h3, #command .doc > .said h4 { font-size: 14px; margin: 8px 0 4px; }
+#command .doc > .said ul, #command .doc > .said ol { margin: 0 0 6px; padding-left: 18px; }
+#command .doc > .said code { font: 12px ui-monospace, Menlo, monospace; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; }
+#command .doc > .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; white-space: pre; }
+#command .doc > .said pre code { background: none; padding: 0; color: inherit; }
+#command .doc > .said .cut { color: #7a7090; font-size: 11px; margin-bottom: 6px; }
+#command .bar .seg { display: inline-flex; border: 2px solid var(--line); border-radius: 10px; overflow: hidden; flex: 0 0 auto; }
+#command .bar .seg button { font: inherit; font-size: 12px; border: 0; background: #fff; padding: 2px 8px; cursor: pointer; }
+#command .bar .seg button + button { border-left: 2px solid var(--line); }
+#command .bar .seg button.on { background: #2a2033; color: #fff; }
+#command .cardv { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 6px 12px 8px; background: #fffaf0; overflow: hidden; }
+#command .cardv > * { flex: 0 0 auto; }
+#command .cardv > .cpane { flex: 1 1 auto; min-height: 0; overflow: auto; }
+#command .cardv > .cpane .said, #command .cardv > .cpane .rel { max-height: none; }
+#command .cardv .chead { border-bottom: 2px dashed rgba(59,42,53,.18); padding-bottom: 4px; margin-bottom: 2px; }
+#command .cardv .chead .briefb { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 2px solid var(--line); border-radius: 999px; background: #fff3c4; padding: 0 8px; margin-top: 3px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#command .cardv .sidebox { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; border: 2px solid #c9b88f; border-radius: 12px; background: #fbf5e8; }
+#command .cardv .sidebox .btw { flex: 1 1 auto; min-height: 0; }
 #command .decide { border-top: 2px solid var(--line); padding: 8px 12px 10px; max-height: 45%; overflow: auto; }
 #command .decide .ask { font-size: 14px; margin-bottom: 6px; }
 #command .qa { padding: 6px 8px; margin: 0 -8px 4px; border-radius: 10px; }
@@ -109,7 +125,8 @@ const CMD_CSS = `
 // said: the last task typed in the box ({ coord, at, text }, at on the
 // ledger log's clock), for the line saying where it went; wOpen / wQuiet:
 // the sessions at work unfolded, and with them the quiet adopted ones.
-const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, wOpen: false, wQuiet: false }
+// view: how a picked session shows, 'said' (its last answer) or 'card'.
+const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, wOpen: false, wQuiet: false, view: 'said' }
 try { cmd.wOpen = localStorage.getItem('office.cmd.workers') === 'open' } catch { /* no storage: folded */ }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
@@ -497,20 +514,23 @@ function cmdRenderCall(bar, doc, dec, s) {
   if (cmd.frame !== 'call:' + s.sid) {
     cmd.frame = 'call:' + s.sid
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
-    bar.innerHTML = '<b>' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span><button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗ 창으로</button><button class="act card" title="이 세션의 카드 (지난 대화, 파일, btw)">🗂 카드</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+    bar.innerHTML = '<b>' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span>'
+      + '<span class="seg" title="마지막 답 ↔ 카드 (T · 입력칸에서는 ⌥T)"><button data-v="said"><span class="key">T</span>마지막 답</button><button data-v="card">🗂 카드</button></span>'
+      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗ 창으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.go').onclick = () => cmdFocus(s)
-    bar.querySelector('.card').onclick = () => { if (typeof openCard === 'function') openCard(s.sid) }
+    bar.querySelector('.seg').onclick = (ev) => { const b = ev.target.closest('button[data-v]'); if (b) cmdView(b.dataset.v) }
     bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
-    doc.innerHTML = '<div class="said"><div class="m">불러오는 중…</div></div>'
+    doc.innerHTML = '<div class="said"><div class="m">불러오는 중…</div></div><div class="cardv"></div>'
     dec.dataset.key = ''
+    cmdRenderView()
   }
   const said = doc.querySelector('.said'), skey = JSON.stringify(a && [a.error, a.text, a.cut])
   if (a && said.dataset.key !== skey) {
     said.dataset.key = skey
     bar.querySelector('.m').textContent = [a.summary, a.window || s.window, a.pane, a.cwd].filter(Boolean).join(' · ')
     if (a.error) said.innerHTML = '<div class="m">' + (a.error === 'no such session' ? '이 세션이 없습니다 (창이 닫혔거나 끝났습니다).' : cmdEsc(a.error)) + '</div>'
-    else said.innerHTML = (a.cut ? '<div class="cut">… 앞부분 생략 · 전체는 🗂 카드</div>' : '') + (a.text ? (typeof md === 'function' ? md(a.text) : '<pre>' + cmdEsc(a.text) + '</pre>') : '<div class="m">마지막 답이 없습니다.</div>')
+    else said.innerHTML = (a.cut ? '<div class="cut">… 앞부분 생략 · 전체는 🗂 카드 (T)</div>' : '') + (a.text ? (typeof md === 'function' ? md(a.text) : '<pre>' + cmdEsc(a.text) + '</pre>') : '<div class="m">마지막 답이 없습니다.</div>')
     said.onclick = (ev) => { const l = ev.target.closest('a[data-open]'); if (l) { ev.preventDefault(); openLink(l.dataset.open) } }
     // The question is at the end of the answer.
     said.scrollTop = said.scrollHeight
@@ -541,6 +561,64 @@ function cmdRenderCall(bar, doc, dec, s) {
     note.onkeydown = (e) => cmdCallKey(e, s)
     if (focused) note.focus()
   }
+}
+
+// T (⌥T), or the bar's switch: the picked session's other look. Going to
+// the card loads it afresh; the 3 s poll never redraws it, so a tab, a scroll
+// or what is typed in its btw stays put.
+function cmdView(v = cmd.view === 'card' ? 'said' : 'card') {
+  const cv = cmdEl.querySelector('.doc .cardv')
+  if (v === 'card' && cmd.view !== 'card' && cv) cv.dataset.sid = ''
+  cmd.view = v
+  cmdRenderView()
+}
+
+function cmdRenderView() {
+  const doc = cmdEl.querySelector('.doc'), s = cmd.sel
+  if (!doc || !s || !s.sid) return
+  const said = doc.querySelector('.said'), cv = doc.querySelector('.cardv'), on = cmd.view === 'card'
+  if (!said || !cv) return
+  said.style.display = on ? 'none' : ''
+  cv.style.display = on ? '' : 'none'
+  cmdEl.querySelectorAll('.bar .seg button').forEach((b) => b.classList.toggle('on', b.dataset.v === cmd.view))
+  if (on && cv.dataset.sid !== s.sid) cmdCard(s, cv)
+}
+
+// The session's card in the left pane: a head with what it was doing (its
+// one-line summary) and its newest brief, then the floor card's panes with
+// btw as their last tab. The floor card's quick replies and reply box are
+// not drawn again: the box under it (.decide) and the task box speak to it.
+async function cmdCard(s, cv) {
+  cv.dataset.sid = s.sid
+  cv.innerHTML = '<div class="m">카드를 불러오는 중…</div>'
+  if (typeof cardPanes !== 'function') { cv.innerHTML = '<div class="m">이 페이지에는 카드가 없습니다.</div>'; return }
+  const q = encodeURIComponent(s.sid)
+  let d, pn
+  try {
+    ;[d, pn] = await Promise.all([fetch('/detail?sid=' + q, { cache: 'no-store' }).then((r) => r.json()), fetch('/panels?sid=' + q, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({}))])
+  } catch (e) {
+    if (cv.dataset.sid === s.sid) cv.innerHTML = '<div class="m">카드를 못 불러왔습니다: ' + cmdEsc(e.message) + '</div>'
+    return
+  }
+  // Another session, or the other look, since: this card is not wanted.
+  if (cv.dataset.sid !== s.sid || cmd.sel?.sid !== s.sid || !cv.isConnected) return
+  cv.innerHTML = ''
+  cmd.card = null
+  if (d.error) { cv.innerHTML = '<div class="m">' + (d.error === 'no such session' ? '이 세션이 없습니다 (창이 닫혔거나 끝났습니다).' : cmdEsc(d.error)) + '</div>'; return }
+  const w = cmdWorkers().find((x) => x.w.sid === s.sid)?.w
+  const sum = d.summary || (cmd.ask && cmd.ask.sid === s.sid && cmd.ask.summary) || w?.summary || cmdCall(s.sid)?.summary || ''
+  const head = document.createElement('div')
+  head.className = 'chead'
+  head.innerHTML = '<div class="csum" title="' + cmdEsc(sum) + '">📝 ' + cmdEsc(sum || d.name) + '</div><div class="m">' + cmdEsc([d.window + ' ' + d.name, STATE_KO[d.state] || d.state, d.inbox ? '📨 보낸 답이 아직 전달 전' : ''].filter(Boolean).join(' · ')) + '</div>'
+  if (d.brief) {
+    const b = document.createElement('button')
+    b.className = 'briefb'; b.textContent = (d.brief.pending ? '⏳ 결정 대기 · ' : '📄 브리프 · ') + d.brief.title; b.title = d.brief.path
+    b.onclick = () => { cmdPick({ file: d.brief.path.split('/').pop(), path: d.brief.path, title: d.brief.title }); cmdRender() }
+    head.appendChild(b)
+  }
+  cv.appendChild(head)
+  cardPanes(cv, d, pn, { sid: s.sid, btw: true, alive: () => cv.isConnected && cv.dataset.sid === s.sid && cmd.view === 'card' })
+  cmd.card = cv
 }
 
 // Bring the picked session's pane in front in tmux, as the card's G does
@@ -625,7 +703,7 @@ function cmdNoteKey(e, p, q) {
 // Close the brief beside the panel; the floor shows again. A waiting
 // decision is not picked again on its own until the list changes.
 function cmdShut() {
-  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.ask = null; cmd.force = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
+  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.ask = null; cmd.force = null; cmd.view = 'said'; cmd.card = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
   cmdRenderDoc()
   cmdRenderSay()
 }
@@ -685,13 +763,18 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // 1 a review item's 확인함) and Enter sends it, so one stray key never
 // decides. ⌥I, ⌥J and ⌥K do what i, j and k do, for TWeb's normal mode
 // (⌥I from a box too). G (⌥G in its box) goes to a picked session's
-// tmux pane. In a box every key is typing; its Enter is cmdNoteKey's
+// tmux pane. T (⌥T in its box) turns a picked session's look between its
+// last answer and its card; on the card [ ] and ⌥1…⌥9 pick its tab, as on
+// the floor card. In a box every key is typing; its Enter is cmdNoteKey's
 // (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
   const cardUp = typeof card !== 'undefined' && card.style.display === 'block'
   if (k === 'c' && (e.altKey || !typing) && !cardUp) { e.preventDefault(); setCommand(!cmd.on); return true }
   // ⌥G to the picked session's pane works in its box too, as on the card.
   if (k === 'g' && e.altKey && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdFocus(cmd.sel); return true }
+  // ⌥T (T outside a box): TWeb's normal mode keeps bare t.
+  if (k === 't' && (e.altKey || !typing) && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdView(); return true }
+  if (/^[1-9]$/.test(k) && e.altKey && cmd.on && cmdCardUp() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmd.card.selectTab(+k - 1); return true }
   // ⌥M to a picked review item's box: TWeb's normal mode keeps bare m (live, 8899).
   if (k === 'm' && e.altKey && !typing && cmd.on && cmd.sel?.review && cmdRev() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); revFocus(); return true }
   // ⌥I to the task box, from anywhere (a box included), and ⌥J/⌥K through
@@ -717,6 +800,7 @@ function commandKey(e, k, typing) {
     if (k === 'Enter' && cmd.armed && cmd.armed.call === s.sid && chs[cmd.armed.i]) return hit(() => cmdReply(s, chs[cmd.armed.i].body, chs[cmd.armed.i].label))
     if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-call]')?.focus())
     if (k === 'g') return hit(() => cmdFocus(s))
+    if ((k === '[' || k === ']') && cmdCardUp()?.shelfTab) return hit(() => cmd.card.shelfTab(k === ']' ? 1 : -1))
   }
   if (cmd.sel?.review && cmdRev() && revKey(k, cmd.sel, hit)) return true
   const p = cmd.sel && cmdPending(cmd.sel.file)
@@ -728,6 +812,9 @@ function commandKey(e, k, typing) {
   // Everything else goes to the floor, which stays in sight beside the panel.
   return false
 }
+
+// The picked session's card, when that is the look it shows and it has loaded.
+const cmdCardUp = () => (cmd.view === 'card' && cmd.card && cmd.card.isConnected !== false && cmd.sel?.sid && cmd.card.dataset.sid === cmd.sel.sid ? cmd.card : null)
 
 // j/k (⌥J/⌥K): to the next or previous thing waiting on the person.
 // Nothing picked, or a session at work picked (never in the walk): j starts
