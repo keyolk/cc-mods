@@ -418,7 +418,7 @@ class AskingTest(BriefsCase):
         me = {"pane": "%9", "wid": "@3", "window": "cc:3", "name": "w", "cwd": "/src/x"}
         with mock.patch.object(office, "pane_of", return_value=me), mock.patch.object(office, "last_text", return_value="설명\n\n진행할까요?"), mock.patch.object(office, "capture", return_value=[]), mock.patch.object(office, "inbox_waiting", return_value=None):
             a = office.asking(WORKER)
-        self.assertEqual((a["sid"], a["pane"], a["cwd"], a["text"], a["cut"], a["dialog"]), (WORKER, "%9", "/src/x", "설명\n\n진행할까요?", False, None))
+        self.assertEqual((a["sid"], a["pane"], a["cwd"], a["text"], a["cut"], a["dialog"], a["brief"]), (WORKER, "%9", "/src/x", "설명\n\n진행할까요?", False, None, None))
         self.assertIn("네, 진행해 주세요", a["suggestions"])
         screen = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"]
         with mock.patch.object(office, "pane_of", return_value=me), mock.patch.object(office, "last_text", return_value="진행할까요?"), mock.patch.object(office, "capture", return_value=screen), mock.patch.object(office, "inbox_waiting", return_value=None):
@@ -676,7 +676,7 @@ class CommandKeysTest(unittest.TestCase):
         self.assertEqual(got, [False, False, False, False, True])
 
     def test_the_floor_keys_pass_through_while_the_view_is_shut_and_open(self):
-        floor = ["j", "k", "i", "n", "p", "v", "f", "0", "Tab", "ArrowUp", "?", ",", "t", "[", "]"]
+        floor = ["j", "k", "i", "n", "p", "v", "f", "0", "Tab", "ArrowUp", "?", ",", "t", "[", "]", "b"]
         got = self.run_js("const keys = " + json.dumps(floor) + "; const shut = keys.filter((k) => press(k)); press('c'); const open = keys.filter((k) => press(k)); return [shut, open]")
         # Open, the view takes i (its box) and j/k only when a decision waits; none does here.
         self.assertEqual(got, [[], ["i"]])
@@ -959,6 +959,53 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [False, True, "card", True, "said", False, "said", True, "card", "👷 fix 에게",
                                [["w1", {"kind": "reply", "value": "카드 보고 하는 말"}, "지시"]], False, False, False, False, "card", None, "said"])
+
+    def test_b_walks_the_brief_line_under_the_box(self):
+        got = self.run_js("""
+            calls()
+            cmd.data.recent = [1, 2, 3, 4, 5, 6, 7].map((n) => ({ path: '/b/' + n + '.html', file: n + '.html', title: 'B' + n }))
+            const chips = cmdBriefs().map((b) => b.title)
+            cmd.sel = null
+            const seen = []
+            for (let n = 0; n < 6; n++) { press('b'); seen.push(cmd.sel.path) }
+            // ⇧B goes back; from a session (not a chip) b starts at the newest.
+            let stopped = false; commandKey({ altKey: false, shiftKey: true, preventDefault: () => { stopped = true } }, 'b', false); const back = cmd.sel.path
+            cmd.sel = { sid: 's1', name: 'one' }; press('b'); const fromCall = cmd.sel.path
+            // Typed in a box bare b is typing; ⌥B works there. The floor card keeps ⌥B (its btw), the viewer keeps b.
+            const typed = press('b', true), sel1 = cmd.sel.path, alt = press('b', true, true), sel2 = cmd.sel.path
+            card.style.display = 'block'; const cardB = press('b', false, true); card.style.display = 'none'
+            viewer.path = '/x.md'; const viewB = press('b'); viewer.path = ''
+            cmd.data.recent = []; const none = press('b')
+            return [chips, seen, back, fromCall, typed, sel1, alt, sel2, cardB, viewB, none]
+        """)
+        self.assertEqual(got, [["B1", "B2", "B3", "B4", "B5"], ["/b/1.html", "/b/2.html", "/b/3.html", "/b/4.html", "/b/5.html", "/b/1.html"],
+                               "/b/5.html", "/b/1.html", False, "/b/1.html", True, "/b/2.html", False, False, False])
+
+    def test_the_waiting_sessions_show_five_until_more_and_the_picked_one_always(self):
+        got = self.run_js("""
+            calls()
+            cmd.data.calls = [...Array(8)].map((_, i) => ({ sid: 's' + i, name: 'n' + i }))
+            cmd.sel = null
+            const five = cmdCallsShown().map((c) => c.sid)
+            // j walks every one: a picked one past the five still shows.
+            cmd.sel = { sid: 's7', name: 'n7' }; const picked = cmdCallsShown().map((c) => c.sid)
+            cmdClick({ target: { closest: (q) => (q === '[data-fold]' ? { dataset: { fold: 'calls' } } : null) } })
+            const all = cmdCallsShown().length
+            cmdFold('calls'); const back = cmdCallsShown().length
+            return [five, picked, all, back]
+        """)
+        self.assertEqual(got, [["s0", "s1", "s2", "s3", "s4"], ["s0", "s1", "s2", "s3", "s4", "s7"], 8, 6])
+
+    def test_a_picked_session_links_its_brief_from_what_it_asks_or_its_row(self):
+        got = self.run_js("""
+            crew()
+            cmd.data.coordinators[0].workers[0].brief = { path: '/b/row.html', title: 'Row', pending: false }
+            const fromRow = cmdSessionBrief('w1').path
+            cmd.ask = { sid: 'w1', brief: { path: '/b/ask.html', title: 'Ask', pending: true } }
+            const fromAsk = cmdSessionBrief('w1').path
+            return [fromRow, fromAsk, cmdSessionBrief('w4'), cmdSessionBrief('s2')]
+        """)
+        self.assertEqual(got, ["/b/row.html", "/b/ask.html", None, None])
 
     def test_the_cards_tabs_take_brackets_and_alt_digits_only_while_it_shows(self):
         got = self.run_js("""
