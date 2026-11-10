@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, closeArgv, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, DECISION_BRIEF, HOLD_MS, PANES_FMT, WORKER_CAPS, closeArgv, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -51,6 +51,14 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   expect(ask).toContain('QUESTION <one line> — <brief path>')
   expect(ask).toContain('in ~/briefs')
   expect(ask).toContain('Only a yes/no on one small step that is easy to undo goes as a plain QUESTION')
+})
+
+test('coord: a decision brief has a cost cap, the same for the coordinator and its workers', () => {
+  // The person asked that a question for them never burns many tokens.
+  for (const cap of ['not the full doc:visual-brief workflow', 'background in at most 5 lines', 'at most 4 options', 'at most one small inline SVG', 'No tabs, no second figure, no re-telling of the research', 'under 8 KB', 'under 100 characters'])
+    expect(DECISION_BRIEF).toContain(cap)
+  expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid')).toContain(DECISION_BRIEF)
+  expect(coordSection(emptyLedger('sid', 'n', NOW), NOW)).toContain(DECISION_BRIEF)
 })
 
 test('coord: a worker is split off the coordinator\'s pane, the longer side, a third of it; too small either way, a window', () => {
