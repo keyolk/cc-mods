@@ -20,8 +20,11 @@ export type NoteBlock = { key: string; text: string }
 
 export const NOTE_PREFIX = '[cc-mods context: '
 
-// `[cc-mods context: policy #1a2b3c4d]`: the block's key and its text's digest.
-const HEAD = /\[cc-mods context: ([a-z-]+) #([0-9a-f]{8})\]/g
+// `[cc-mods context: policy #1a2b3c4d]`: the block's key and its text's
+// digest, at the start of a line. A row of ours starts with one (each part
+// after it starts its own line); a marker quoted mid-line (a summary, another
+// session's prompt) carries no body and counts for nothing.
+const HEAD = /^\[cc-mods context: ([a-z-]+) #([0-9a-f]{8})\]/gm
 
 // FNV-1a, 32 bits: a change detector, not a security boundary.
 export function digest(s: string): string {
@@ -33,10 +36,11 @@ export function digest(s: string): string {
   return h.toString(16).padStart(8, '0')
 }
 
-// The newest digest of each key in these texts (oldest first).
+// The newest digest of each key in these texts (oldest first): only a text
+// that is a row of ours, one starting with a marker.
 export function sentDigests(texts: readonly string[]): Map<string, string> {
   const m = new Map<string, string>()
-  for (const t of texts) for (const x of t.matchAll(HEAD)) m.set(x[1]!, x[2]!)
+  for (const t of texts) if (t.startsWith(NOTE_PREFIX)) for (const x of t.matchAll(HEAD)) m.set(x[1]!, x[2]!)
   return m
 }
 

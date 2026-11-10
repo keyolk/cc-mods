@@ -1032,8 +1032,9 @@ async function contextBlocks($: any): Promise<NoteBlock[]> {
 // prompt.compose never reached this plugin (lib/notes.ts says why). Only the
 // blocks whose text changed since the row the conversation last holds; the
 // conversation is read each time, so a compaction or /clear that dropped
-// the row has it sent again. The row joins main's conversation alone: a
-// subagent never had the system prompt section either.
+// the row has it sent again. The row joins main's conversation alone, so a
+// subagent does not read it (whether a subagent's own prompt carried the
+// section was never checked).
 async function contextNotes($: any) {
   if (composeRan) return
   const blocks = await contextBlocks($)

@@ -459,3 +459,37 @@ test('coord: coord_review adds and updates the queue file; an office confirm rea
   expect(after).not.toContain('Review queue (coord_review)')
   expect((await call({ action: 'list' })).result).toContain('Review queue empty.\n1 confirmed in the last 7 days')
 })
+
+// Live: cc-plugin-sec-default sends prompt.compose past the user tier, so
+// "# Coordinator mode" never reached the coordinator. No compose here, as
+// there: the rules and the roster go as note rows, each again only when it
+// changed, on a [coord] wake (a plugin's prompt) as on the person's.
+test('coord: where prompt.compose never runs, the coordinator rules and roster go as note rows, the roster again when a worker leaves', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: ledgerJson(), '/home/u/.claude/state/session_policy/sid-1.json': JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }) }
+  stubs(on, { files, submitted: [], panes: () => PANE })
+  mock.clock(on)
+  const session = mock.session(on)
+  on('session.messages', () => ({ value: session.appended().map((r: any) => ({ role: 'user', content: r.message.content })) }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const notes = () => session.appended().filter((r: any) => r.door === 'note').map((r: any) => r.message.content.map((b: any) => b.text).join(''))
+
+  await $.prompt.submit({ text: 'what is brief-decision-4 doing?', origin: { kind: 'composer' }, wait: false } as any)
+  expect(notes().length).toBe(1)
+  expect(notes()[0]).toContain('[cc-mods context: coordinator #')
+  expect(notes()[0]).toContain('# Coordinator mode (cc-mods)\nYou are `cc-mods-d9`, the coordinator.')
+  expect(notes()[0]).toContain('| brief-decision-4 | owned |')
+  expect(notes()[0]).toContain('# Session policy (custom)')
+
+  // A [coord] wake is a plugin's prompt: nothing changed, no row.
+  await $.prompt.submit({ text: '[coord] brief-decision-4: finished its turn', origin: { kind: 'plugin', name: 'cc-mods' }, wait: false } as any)
+  expect(notes().length).toBe(1)
+
+  // The worker closes: only the roster goes again; the rules stay as sent.
+  await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'brief-decision-4' } as any)
+  await $.prompt.submit({ text: '[coord] the review queue changed', origin: { kind: 'plugin', name: 'cc-mods' }, wait: false } as any)
+  expect(notes().length).toBe(2)
+  expect(notes()[1]).toContain('[cc-mods context: workers #')
+  expect(notes()[1]).toContain('This replaces the earlier workers context.\nNo workers yet.')
+  expect(notes()[1]).not.toContain('# Coordinator mode')
+  expect(notes()[1]).not.toContain('# Session policy')
+})

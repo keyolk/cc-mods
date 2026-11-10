@@ -48,3 +48,9 @@ test('notes: userTexts reads text blocks of user messages only', () => {
     { role: 'user', content: [{ type: 'tool_result', content: 'x' }, { type: 'text', text: 'note' }] },
   ])).toEqual(['plain', 'note'])
 })
+
+test('notes: a marker quoted inside other text (a summary, another prompt) does not count as sent', () => {
+  const ours = noteText(B, new Map())!
+  expect(noteText(B, sentDigests(['Summary: the session was told ' + ours]))).toBe(ours)
+  expect(noteText(B, sentDigests(['- 20:31 [x] (active) ' + ours.split('\n')[0]]))).toBe(ours)
+})
