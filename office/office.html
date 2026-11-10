@@ -1014,7 +1014,7 @@ function cardLetter(k) {
 }
 function officeKey(e) {
   if (e.metaKey || e.ctrlKey || e.isComposing) return
-  const typing = e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')
+  const typing = !!e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || !!e.target.isContentEditable)
   const open = card.style.display === 'block'
   const k = keyName(e)
   const hit = (fn) => { e.preventDefault(); fn() }

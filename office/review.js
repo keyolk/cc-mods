@@ -141,7 +141,7 @@ function revRenderBox(dec, s, r) {
   const note = dec.querySelector('.note')
   dec.querySelector('.bad').onclick = () => { if (note.value.trim()) revIssue(s, note.value.trim()); else note.focus() }
   note.value = typed
-  note.onkeydown = (e) => revBoxKey(e, s)
+  cmdBoxKeys(note, (e) => revBoxKey(e, s))
   if (focused) note.focus()
 }
 

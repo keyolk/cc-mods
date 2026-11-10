@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -725,6 +726,7 @@ KEYS_HARNESS = textwrap.dedent(r"""
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
+      var cmdRenderDocReal = cmdRenderDoc
       cmdRender = () => { renders++ }; cmdRenderDoc = () => {}; cmdLoad = () => {}
       var cmdAnswerReal = cmdAnswer
       toast = (m) => { toasts.push(m) }; cmdAnswer = (p, q, a) => { answers.push([p.file, q.id, a]) }
@@ -997,6 +999,75 @@ class CommandKeysTest(unittest.TestCase):
             return [old.removed, fresh.replacedWith === old, !!old.focused, typeof old.onkeydown]
         """)
         self.assertEqual(got, [1, True, True, "function"])
+
+    def test_letters_and_hangul_typed_by_hand_in_the_reply_box_are_never_cancelled(self):
+        # The browser cancels a key whose handler property returns false. The
+        # box's key function returns false for each key it leaves alone, so
+        # handed straight to onkeydown it ate every letter typed by hand
+        # (`tweb type` inserts without a keydown, and so typed). Here the
+        # handler the box really carries gets the keys, under that rule.
+        got = self.run_js("""
+            const note = { tagName: 'INPUT', dataset: { call: 'sid1' }, style: {}, value: '', focus() {}, remove() {}, blur() {} }
+            const dec = { dataset: {}, style: {}, contains: () => false, appendChild() {}, querySelector: (q) => (q.startsWith('.note') ? (dec.rebuilt ? note : null) : q === '.opts' ? { appendChild() {} } : null) }
+            Object.defineProperty(dec, 'innerHTML', { set() { dec.rebuilt = true }, get: () => '' })
+            cmd.ask = { sid: 'sid1', text: 't', suggestions: ['a'], dialog: null, inbox: null }
+            cmdAsk = () => {}
+            cmdRenderCall({ innerHTML: '', querySelector: () => ({ onclick: null, textContent: '' }) }, { querySelector: () => ({ dataset: { key: 'k' }, innerHTML: '' }), className: '', style: {}, innerHTML: '' }, dec, { sid: 'sid1', name: 'n' })
+            // A letter, the view's own keys, a digit, and Hangul from the IME
+            // (TWeb's keydown under the Korean layout has no key; a composing one is 229).
+            const keys = [['a', {}], ['j', {}], ['k', {}], ['x', {}], ['t', {}], ['g', {}], ['b', {}], ['m', {}], ['1', {}], ['[', {}], ['', {}], ['ㅎ', { isComposing: true, keyCode: 229 }], ['Process', { keyCode: 229 }]]
+            const cancelled = keys.filter(([k, m]) => {
+              let stopped = false
+              const e = { key: k, shiftKey: false, altKey: false, isComposing: false, keyCode: 0, ...m, target: note, preventDefault: () => { stopped = true } }
+              return note.onkeydown(e) === false || stopped
+            }).map(([k]) => k)
+            // Enter and Escape are still the box's.
+            let sent = false, left = false
+            note.value = '네'
+            note.onkeydown({ key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, target: note, preventDefault: () => { sent = true } })
+            note.onkeydown({ key: 'Escape', target: { blur: () => { left = true } }, preventDefault() {} })
+            return [cancelled, sent, left, replies]
+        """)
+        self.assertEqual(got, [[], True, True, [["sid1", {"kind": "reply", "value": "네"}, "답장"]]])
+
+    def test_a_pick_answered_before_the_view_is_built_draws_its_box_once_it_is(self):
+        # /command?sid= can answer before the view's first /command builds the
+        # panes. Drawing then threw after cmd.frame was set, and every redraw
+        # after found no .sbrief: the box never came.
+        got = self.run_js("""
+            const mk = () => { const e = { dataset: {}, style: {}, className: '', kids: {}, appendChild() {}, focus() {}, remove() {}, replaceWith() {} }
+              e.querySelector = (q) => e.kids[q] || null
+              Object.defineProperty(e, 'innerHTML', { set(v) { e.html = v; e.kids = {}; for (const c of ['endarm', 'sbrief', 'said', 'cardv']) if (v.includes('class="' + c + '"')) e.kids['.' + c] = mk()
+                if (v.includes('class="note"')) { e.kids['.note[data-call]'] = e.kids['.note'] = mk(); e.kids['.note'].dataset.call = 'sid1' }
+                if (v.includes('class="opts"')) e.kids['.opts'] = mk()
+                for (const c of ['go', 'shut', 'seg', 'm']) if (v.includes('class="act ' + c) || v.includes('class="' + c)) e.kids['.' + c] = mk() }, get: () => e.html || '' })
+              e.contains = () => false; return e }
+            const parts = {}
+            cmdEl.querySelector = (q) => parts[q] || null
+            cmdEl.classList = { toggle() {} }
+            cmd.sel = { sid: 'sid1', name: 'n' }; cmd.frame = null
+            cmd.ask = { sid: 'sid1', text: 't', suggestions: ['a'], dialog: null, inbox: null }
+            cmdAsk = () => {}; cmdRenderView = () => {}
+            let early = 'ok'
+            try { cmdRenderDocReal() } catch (e) { early = e.message }
+            parts['.bar'] = mk(); parts['.doc'] = mk(); parts['.decide'] = mk(); parts['.rtabs'] = mk()
+            let late = 'ok'
+            try { cmdRenderDocReal() } catch (e) { late = e.message }
+            // A look lost under a frame already set is made again.
+            parts['.doc'].innerHTML = ''; parts['.decide'].dataset.key = ''
+            let again = 'ok'
+            try { cmdRenderDocReal() } catch (e) { again = e.message }
+            return [early, late, again, !!parts['.doc'].kids['.sbrief'], !!parts['.decide'].kids['.note[data-call]']]
+        """)
+        self.assertEqual(got, ["ok", "ok", "ok", True, True])
+
+    def test_no_box_hands_its_key_function_straight_to_onkeydown(self):
+        # Every box's keys go in through cmdBoxKeys: an arrow with no braces
+        # returns what the key function returns, and false cancels the key.
+        office = pathlib.Path(__file__).parents[1] / "office"
+        bare = re.compile(r"\.onkeydown\s*=\s*(?:async\s*)?\(?\w*\)?\s*=>(?!\s*\{)")
+        found = [f"{f.name}:{i}" for f in sorted([*office.glob("*.js"), office / "office.html"]) for i, line in enumerate(f.read_text().splitlines(), 1) if bare.search(line) and not line.lstrip().startswith('//')]
+        self.assertEqual(found, [])
 
     def test_the_brief_bar_posts_a_brief_open_and_never_the_session_path(self):
         got = self.run_js("""

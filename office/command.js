@@ -423,6 +423,10 @@ function cmdFrameMsg(ev) {
 
 function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
+  // Not built yet (cmdRender builds the panes): a pick's /command?sid= can
+  // answer before the view's first /command does. Drawing then failed after
+  // cmd.frame was set, and every redraw after it found no .sbrief.
+  if (!bar || !doc || !dec) return
   cmdEl.classList.toggle('doc-on', !!s)
   tblRenderTabs()
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
@@ -478,7 +482,7 @@ function cmdRenderDoc() {
     })
     const note = box.querySelector('.note')
     note.value = typed[q.id] || ''
-    note.onkeydown = (e) => cmdNoteKey(e, p, q)
+    cmdBoxKeys(note, (e) => cmdNoteKey(e, p, q))
     // Typing in a question's box, or a click on it, makes it the one the digits arm.
     note.onfocus = () => { if (multi && cmd.q !== q.id) { cmd.q = q.id; cmdRenderDoc() } }
     box.onclick = (e) => { if (multi && cmd.q !== q.id && !e.target.closest('button')) { cmd.q = q.id; cmdRenderDoc() } }
@@ -500,7 +504,8 @@ function cmdChoices(a) {
 // only when what it asks changes, so the 3 s poll keeps what is typed.
 function cmdRenderCall(bar, doc, dec, s) {
   const a = cmd.ask && cmd.ask.sid === s.sid ? cmd.ask : null, c = cmdCall(s.sid)
-  if (cmd.frame !== 'call:' + s.sid) {
+  // Its look is made again when it is not there, whatever cmd.frame says.
+  if (cmd.frame !== 'call:' + s.sid || !doc.querySelector('.sbrief') || !doc.querySelector('.said')) {
     cmd.frame = 'call:' + s.sid
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
     bar.innerHTML = '<b title="' + cmdEsc(cmdWho(s)) + '">' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.summary || s.name) + '</b>' + (s.summary && s.summary !== s.name ? '<span class="slug">' + cmdEsc(s.name) + '</span>' : '') + '<span class="m">' + cmdEsc(s.window || '') + '</span>'
@@ -561,14 +566,14 @@ function cmdRenderCall(bar, doc, dec, s) {
   const fresh = dec.querySelector('.note[data-call]')
   if (keep && fresh) {
     fresh.replaceWith(keep)
-    keep.onkeydown = (e) => cmdCallKey(e, s)
+    cmdBoxKeys(keep, (e) => cmdCallKey(e, s))
     if (focused) keep.focus({ preventScroll: true })
     return
   }
   const note = dec.querySelector('.note')
   if (note) {
     note.value = typed
-    note.onkeydown = (e) => cmdCallKey(e, s)
+    cmdBoxKeys(note, (e) => cmdCallKey(e, s))
     if (focused) note.focus()
   }
 }
@@ -583,6 +588,13 @@ function cmdFocus(s) {
   focusPane(pane)
   toast('↗ ' + (s.summary || s.name) + ' (' + pane + ')')
 }
+
+// A box's own keys go in through this, never as `el.onkeydown = (e) => key(e)`:
+// a handler property that returns false cancels the event, and the box key
+// functions return false for every key they leave alone, so each letter and
+// each Hangul jamo typed by hand was cancelled before it reached the box.
+// (`tweb type` inserts text without a keydown, which is why it still typed.)
+function cmdBoxKeys(el, key) { el.onkeydown = (e) => { key(e) } }
 
 // Keys in a session's box: Enter sends the words typed, or with none the
 // quick reply armed (a brief's box sends the armed option with the words as
