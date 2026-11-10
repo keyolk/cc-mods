@@ -34,7 +34,7 @@ import { PALETTE_CLOSED, filterPalette, paletteItems, type PaletteItem, type Pal
 import { cacheGate, decide, resolveModel, routeLabel, type RouteLast, routeSettings, type RouteAnswer, type RouteDecision, type RouteSettings } from './lib/route'
 import { parseCcoQuota, parseJev, parseQuota, parseUsage, type JevUsage, type Quota, type Usage } from './lib/usage'
 import { USAGE_WINDOWS, renderUsage, type UsageWindow } from './views/usage'
-import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, parseMcpList, sha1Hex, ssoProfile, ccoItems, ccproxyItems, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
+import { argocdItems, awsItem, clearedByCache, awsLoginReused, awsReusedItem, officeFixItem, parseMcpList, sha1Hex, ssoProfile, ccoItems, ccproxyItems, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, worst, type AuthItem, type Radar } from './lib/auth'
 import { EMPTY, parseProfiles, suggest, type Sources } from './lib/complete'
 import { BLOCK_TTL_MS, blockOf, grantLabel, nowAllowed, resumePrompt, type Blocked } from './lib/unblock'
 import { alreadyIn, authUrl, connectorUrl, isCallbackUrl, isClaudeAi, loginError, loginSplitArgv, markLoggedIn, needsTerminalLogin, serverOf, textOf, type McpLogin } from './lib/mcpauth'
@@ -1723,6 +1723,41 @@ async function officeMcp($: any) {
     officeMcpBusy = false
   }
 }
+// The office's 🔑 panel: a press on a row that needs a login lands here as
+// <sid>.run.json naming the row (office.py auth_handoff), and runs as the
+// cockpit's press does (runFix), so the toasts land in this session. The
+// office never runs a fix: it only picks a session that takes one, which says
+// so with <sid>.on, written when this module starts (an older module never
+// writes it, and the office copies the fix instead). One fix at a time:
+// ArgoCD's logins share a callback port, and a second press while the first
+// runs is the same login twice.
+const OFFICE_FIX_DIR = '/.claude/state/office/fix/'
+let officeFixBusy = false
+async function officeFixOn($: any) {
+  if (!home || !sid) return
+  await $.process.run(['mkdir', '-p', home + OFFICE_FIX_DIR], { timeoutMs: 3000 }).catch(() => {})
+  await $.fs.write(home + OFFICE_FIX_DIR + sid + '.on', JSON.stringify({ at: Date.now() / 1000 })).catch(() => {})
+}
+async function officeFix($: any) {
+  if (officeFixBusy || !home || !sid) return
+  const file = home + OFFICE_FIX_DIR + sid + '.run.json'
+  if (!(await $.fs.exists(file).catch(() => false))) return
+  officeFixBusy = true
+  try {
+    const raw = await readText($, file)
+    await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
+    const got = officeFixItem(raw, (await read($, authA)) as AuthItem[], Date.now() / 1000)
+    if ('why' in got) {
+      $.ui.log('office fix: ' + got.why, { to: 'debug' })
+      if (!got.why.startsWith('stale')) $.ui.toast('office: ' + got.why)
+      return
+    }
+    $.ui.toast('office: ' + got.item.label + ' login from the office')
+    await runFix($, got.item)
+  } finally {
+    officeFixBusy = false
+  }
+}
 let ownResume = false // the next main turn is our keep-going
 let ownResumeAt = 0
 let resumeTick = 0 // when the probe last ran, to notice the machine slept
@@ -1974,6 +2009,7 @@ async function officeInbox($: any) {
   if (officeBusy || !home) return
   void officeSide($)
   void officeMcp($)
+  void officeFix($)
   const file = home + '/.claude/state/office/inbox/' + sid + '.json'
   const sending = file + '.sending'
   officeBusy = true
@@ -3557,6 +3593,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         if (!(await quiet($))) void refreshNeighbors($)
       })
       $.clock.every(2_000, () => void officeInbox($))
+      void officeFixOn($)
       $.clock.every(60_000, () => void mcpCheck($))
       $.clock.after(15_000, () => void mcpCheck($))
       // Elapsed times on running work only move if something redraws; do it
@@ -3652,6 +3689,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     idleTimer?.cancel()
     await stopWeb($)
     await exportOutputs($)
+    if (home && sid) await $.process.run(['rm', '-f', home + OFFICE_FIX_DIR + sid + '.on'], { timeoutMs: 3000 }).catch(() => {})
     if (e.reason !== 'clear' && e.reason !== 'resume') {
       // The pane may outlive the session (a shell after `claude` exits): leave
       // it opening links the way the window does, not the way this session did.

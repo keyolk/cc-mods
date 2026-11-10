@@ -1400,26 +1400,38 @@ function policyHtml(p) {
 const authp = document.createElement('div'); authp.id = 'authp'; document.body.appendChild(authp)
 const authchip = document.getElementById('authchip')
 let authNow = null
+// The session a press hands a fix to (office.py auth_target), or null: copy.
+let authTo = null
 function renderAuthChip() {
   const bad = authNow ? authNow.items.filter((i) => !i.connector && (i.state === 'expired' || i.state === 'unknown')).length : 0
   const soon = authNow ? authNow.items.filter((i) => !i.connector && i.state === 'soon').length : 0
   authchip.style.display = authNow ? '' : 'none'
   authchip.className = 'chip' + (bad ? ' bad' : soon ? ' soon' : '')
   authchip.textContent = '🔑 ' + (bad ? '로그인 필요 ' + bad : soon ? '곧 만료 ' + soon : '인증 정상')
-  if (authp.style.display === 'block') authPaint(authp, authHtml(authNow, authSaid))
+  if (authp.style.display === 'block') authPaint(authp, authHtml(authNow, authSaid, authTo))
 }
 // The line a press left at the panel's top, until the panel closes.
 let authSaid = ''
 function toggleAuth(on = authp.style.display !== 'block') {
-  if (on && authNow) { authPaint(authp, authHtml(authNow, authSaid)); authp.style.display = 'block' } else { authp.style.display = 'none'; authSaid = '' }
+  if (on && authNow) { authPaint(authp, authHtml(authNow, authSaid, authTo)); authp.style.display = 'block' } else { authp.style.display = 'none'; authSaid = '' }
 }
 authchip.onclick = () => toggleAuth()
 authp.addEventListener('toggle', (e) => { if (e.target.tagName === 'DETAILS') authFold.open = e.target.open }, true)
+// A row's id to the session the office picked; the session that took it, or
+// null when none did (the press then copies the fix).
+async function authSend(id) {
+  try {
+    const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify({ kind: 'fix', value: id }) })
+    if (r.status === 403) { staleToken(); return null }
+    const j = await r.json().catch(() => ({}))
+    return r.ok && j.to ? j.to : null
+  } catch { return null }
+}
 authp.addEventListener('click', async (e) => {
-  const said = await authPress(e)
+  const said = await authPress(e, authSend)
   if (said === null) return
   authSaid = said
-  if (authNow) authPaint(authp, authHtml(authNow, authSaid))
+  if (authNow) authPaint(authp, authHtml(authNow, authSaid, authTo))
 })
 authp.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && e.target.dataset.act) { e.preventDefault(); e.target.click() } })
 // Sessions whose MCP connections dropped: one press asks each to reconnect.
@@ -3674,7 +3686,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

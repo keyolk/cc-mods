@@ -8,7 +8,7 @@ import { cockpitColumns } from '../hooks/lib/layout'
 // Pure library tests: no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldLogins, parseMcpList, sha1Hex, ssoProfile, ccoItems, ccproxyItems, coderItem, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
+import { argocdItems, awsItem, awsLoginReused, awsReusedItem, clearedByCache, foldLogins, officeFixItem, OFFICE_FIX_MAX_S, parseMcpList, sha1Hex, ssoProfile, ccoItems, ccproxyItems, coderItem, coderLocalItems, coderSession, credentialFor, daemonItem, ghItems, mcpItems, stateFor, worst } from '../hooks/lib/auth'
 import { suggest, stackOf, parseProfiles, EMPTY } from '../hooks/lib/complete'
 import { browserArgv, parseBrowser, resolveBrowser } from '../hooks/lib/browser'
 import { activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseNetwork, parseTwebPanes, pickSidePane, sideArgv, splitArgv, twebMcpStep, twebSteps } from '../hooks/lib/webside'
@@ -1736,6 +1736,25 @@ test('foldLogins turns several due ArgoCD or Coder logins into one row that logs
   expect(both.map((i) => i.id)).toEqual(['argocd:*', 'coder:*'])
   expect(both[1]).toMatchObject({ label: 'Coder ×2', detail: 'apne2, usw2' })
   expect(both[1]!.batch!.map((f) => f[2])).toEqual(['https://coder-apne2.example.com', 'https://coder-usw2.example.com'])
+})
+
+test('officeFixItem finds the office\'s row in this session\'s radar, folded as the panel folds it; it never takes a command', () => {
+  const argo = (n: string, state: 'expired' | 'soon' | 'ok') => ({ id: 'argocd:' + n, label: 'ArgoCD ' + n, state, fix: ['argocd', 'login', n, '--sso', '--grpc-web'] })
+  const aws = { id: 'aws-sso', label: 'AWS SSO', state: 'soon' as const, fix: ['sh', '-c', 'aws sso logout --profile "$0"; aws sso login --profile "$0"', 'p'] }
+  const radar = [aws, argo('a', 'expired'), argo('b', 'soon'), argo('c', 'ok'), { id: 'coder:x', label: 'Coder x', state: 'expired' as const }]
+  const ask = (id: unknown, at = 1000, extra: Record<string, unknown> = {}) => JSON.stringify({ id, at, ...extra })
+  expect(officeFixItem(ask('aws-sso'), radar, 1010)).toEqual({ item: aws })
+  // A folded row comes back with its batch, in the order the cockpit runs it.
+  const f = officeFixItem(ask('argocd:*'), radar, 1010) as { item: { batch: string[][] } }
+  expect(f.item.batch.map((x) => x[2])).toEqual(['a', 'b'])
+  // A command in the request is ignored: only the session's own row runs.
+  expect(officeFixItem(ask('aws-sso', 1000, { fix: ['rm', '-rf', '/'] }), radar, 1010)).toEqual({ item: aws })
+  expect(officeFixItem(ask('argocd:c'), radar, 1010)).toEqual({ why: 'ArgoCD c is already fine' })
+  expect(officeFixItem(ask('coder:x'), radar, 1010)).toEqual({ why: 'Coder x has no fix' })
+  expect(officeFixItem(ask('nope'), radar, 1010)).toEqual({ why: 'no such row here: nope' })
+  expect(officeFixItem(ask('aws-sso'), radar, 1000 + OFFICE_FIX_MAX_S + 1)).toEqual({ why: 'stale request' })
+  expect(officeFixItem(ask(''), radar, 1010)).toEqual({ why: 'no row named' })
+  expect(officeFixItem('{', radar, 1010)).toEqual({ why: 'unreadable request' })
 })
 
 test('clearedByCache trusts a needs-auth cache written after the list', () => {

@@ -493,6 +493,60 @@ test('office: a message left aside by a reload while its submit waited goes back
   expect(files[INBOX + '.sending']).toBeUndefined()
 })
 
+const FIX_ON = '.claude/state/office/fix/sid-1.on'
+const FIX_RUN = '.claude/state/office/fix/sid-1.run.json'
+
+// What the office hands over, and what the session's own radar holds (the store, as runRadar shares it).
+function fixSession(on: any) {
+  const files: Record<string, string> = {}
+  const toasts: string[] = []
+  const argo = (n: string, state: string) => ({ id: 'argocd:' + n, label: 'ArgoCD ' + n, state, fix: ['argocd', 'login', n, '--sso', '--grpc-web'] })
+  const radar = { at: Date.now(), items: [argo('a', 'expired'), argo('b', 'soon'), { id: 'daemon', label: 'Claude daemon', state: 'expired', fix: ['claude', 'auth', 'login'] }, { id: 'gh:keyolk', label: 'gh keyolk', state: 'ok', fix: ['gh', 'auth', 'login'] }] }
+  const runs = baseStubs(on, { pane: '%42', files, toasts, writeBack: true, run: fsRun(files), store: { radar } })
+  on('store.keys', () => ({ value: [] }))
+  const logins = () => runs.filter((a) => a[0] === 'argocd' || (a[0] === 'claude' && a[1] === 'auth') || (a[0] === 'gh' && a[1] === 'auth' && a[2] === 'login'))
+  return { files, toasts, runs, logins }
+}
+
+test('office: a 🔑 press handed to this session runs the row from its own radar, as the cockpit press does: a folded row its logins in turn', async ($, on) => {
+  const { files, toasts, runs, logins } = fixSession(on)
+  const clock = mock.clock(on)
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(100)
+  // It says it takes one, so the office may pick it (office.py auth_target).
+  expect(files[FIX_ON]).toBeDefined()
+  // Only the id counts: a command in the request is never run.
+  files[FIX_RUN] = JSON.stringify({ id: 'argocd:*', at: Date.now() / 1000, fix: ['rm', '-rf', '/'] })
+  await clock.advance(2_100)
+  expect(files[FIX_RUN]).toBeUndefined()
+  expect(logins().map((a) => a.slice(0, 3).join(' '))).toEqual(['argocd login a', 'argocd login b'])
+  expect(runs.some((a) => a[0] === 'rm' && a[1] === '-rf' && a[2] === '/')).toBe(false)
+  expect(toasts.some((t) => t.startsWith('office: ArgoCD ×2'))).toBe(true)
+  expect(toasts).toContain('ArgoCD: logged in to all 2')
+  // Gone with the session: the office stops picking it.
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+  expect(runs.some((a) => a[0] === 'rm' && String(a.at(-1)).endsWith('/.claude/state/office/fix/sid-1.on'))).toBe(true)
+})
+
+test('office: a 🔑 press for a row that is fine, one this session does not have, or one from minutes ago runs nothing; a plain row runs its own argv', async ($, on) => {
+  const { files, toasts, logins } = fixSession(on)
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  for (const ask of [{ id: 'gh:keyolk', at: Date.now() / 1000 }, { id: 'nope', at: Date.now() / 1000 }, { id: 'daemon', at: Date.now() / 1000 - 600 }]) {
+    files[FIX_RUN] = JSON.stringify(ask)
+    await clock.advance(2_100)
+    expect(files[FIX_RUN]).toBeUndefined()
+  }
+  expect(logins()).toHaveLength(0)
+  expect(toasts).toContain('office: gh keyolk is already fine')
+  expect(toasts).toContain('office: no such row here: nope')
+  files[FIX_RUN] = JSON.stringify({ id: 'daemon', at: Date.now() / 1000 })
+  await clock.advance(2_100)
+  expect(logins()).toEqual([['claude', 'auth', 'login']])
+  expect(toasts).toContain('office: Claude daemon login from the office')
+})
+
 test('the policy pane draws a row per capability and applies a mode', async ($, on) => {
   const runs = baseStubs(on, { policyJson: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }) })
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
