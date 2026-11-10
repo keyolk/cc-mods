@@ -224,7 +224,7 @@ class ActTest(FakeSlx):
             self.assertEqual(command.act({"kind": "coord_say", "coord": COORD, "value": "x", "re": {"slx": bad}}, self.put)[0], 400, bad)
 
 SLX_JS = textwrap.dedent(r"""
-    var did = []
+    var did = [], slxDoReal = slxDo
     slxDo = (s, act, extra) => { did.push([s.slx, act, extra || {}]); cmd.armed = null }
     function inbox() {
       cmd.data = { pending: [], coordinators: [], calls: [{ sid: 's1', name: 'one', window: 'w:1', pane: '%1', slx: { id: 'm', icon: '🚨', from: '#1', text: 'x' } }],
@@ -251,8 +251,27 @@ class SlxKeysTest(unittest.TestCase):
 
     def test_j_walks_on_from_the_review_items_to_the_waiting_triggers_only(self):
         # b's session is up (it is under ⚙ 진행 중), m rides on s1's row.
-        got = self.run_js("inbox(); const seen = []; for (let i = 0; i < 4; i++) { press('j'); seen.push(cmd.sel.sid || cmd.sel.review || cmd.sel.slx) } return seen")
-        self.assertEqual(got, ["s1", "r1", "a", "s1"])
+        # A review item's row opens as that row's list (review.js { revs }).
+        got = self.run_js("inbox(); const seen = []; for (let i = 0; i < 4; i++) { press('j'); seen.push(cmd.sel.sid || cmd.sel.revs || cmd.sel.slx) } return [seen, tblFind('s:s1').xs.map((x) => x.id), tblHtml().includes('🙋 🚨')]")
+        self.assertEqual(got, [["s1", "r:c1|r1", "a", "s1"], ["m"], True])
+
+    def test_a_triggers_own_row_has_its_mark_and_tab_and_an_answer_goes_on_to_the_next_row(self):
+        got = self.run_js("""
+            return (async () => {
+              inbox()
+              slxDo = slxDoReal; cmdPost = async () => ({ sent: 'x' })
+              const html = tblHtml()
+              cmdClick({ target: { closest: (q) => (q === 'tr[data-row]' ? { dataset: { row: 'x:a' } } : null) } })
+              const opened = [cmd.row, tblTabNow(), cmd.sel.slx, tblTabs(tblFind(cmd.row)).map((t) => t.k)]
+              await slxDo(cmd.sel, 'done')
+              return [html.includes('data-slxmk="a"'), html.includes('📨'), opened, cmd.row, cmd.data.slx.items.map((x) => x.id)]
+            })()
+        """)
+        html_mark, icon, opened, row_, left = got
+        self.assertTrue(html_mark and icon)
+        self.assertEqual(opened, ["x:a", "slx", "a", ["slx"]])
+        # 무시: the trigger's row is gone; on to the first row that still needs the person.
+        self.assertEqual((row_, left), ("s:s1", ["m", "b"]))
 
     def test_a_number_then_enter_and_nothing_else(self):
         got = self.run_js("""
@@ -322,7 +341,7 @@ class SlxKeysTest(unittest.TestCase):
 
 
 class TurnTest(unittest.TestCase):
-    def test_a_trigger_waits_in_the_turn_unless_its_session_is_up_or_rides_a_row(self):
+    def test_a_trigger_has_a_row_unless_its_session_is_up_or_it_rides_a_row(self):
         import turn
         xs = [
             {"id": "new", "at": "2026-11-10T08:00:00Z"},
@@ -331,10 +350,12 @@ class TurnTest(unittest.TestCase):
             {"id": "merged", "at": "2026-11-10T01:00:00Z", "alive": True, "merged": True},
         ]
         calls = [{"sid": WORKER, "since": NOW.timestamp() - 2 * 3600}]
-        rows = turn.rows([], calls, [], {}, xs, now=NOW.timestamp())
-        # A session that waited less still comes before the triggers.
-        self.assertEqual([(r["kind"], r.get("id") or r.get("sid")) for r in rows], [("session", WORKER), ("slx", "ended"), ("slx", "new")])
-        self.assertEqual(turn.rows([], calls, [], {}, now=NOW.timestamp())[0]["kind"], "session")
+        xs[3]["sid"] = WORKER
+        rows = turn.table([], calls, [], [], xs, now=NOW.timestamp())
+        # A session that waited less still comes before the triggers' own
+        # rows; a merged one rides on its session's row; a running one has none.
+        self.assertEqual([(r["key"], r["slx"], r["needs"]) for r in rows], [("s:" + WORKER, ["merged"], True), ("x:ended", ["ended"], True), ("x:new", ["new"], True)])
+        self.assertEqual(turn.table([], calls, [], [], now=NOW.timestamp())[0]["key"], "s:" + WORKER)
 
     def test_several_items_on_one_session_are_counted(self):
         v = {"items": [{"sid": "s", "id": "a", "icon": "🚨", "from": "#1", "text": "x"}, {"sid": "s", "id": "b", "icon": "🚨", "from": "#2", "text": "y"}, {"sid": None, "id": "c"}]}

@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import review  # noqa: E402 - office/review.py, finished work the person should judge
-import turn  # noqa: E402 - office/turn.py, the one list of what waits on the person
+import turn  # noqa: E402 - office/turn.py, the one table of sessions and what each waits on
 import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat incidents)
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
@@ -260,6 +260,91 @@ def _coord_name(sid: str | None) -> str | None:
     return next((d.get("name") or d["sid"][:8] for d in coord.ledgers() if d["sid"] == sid), None)
 
 
+# A session's name for the person when no one-line summary is cached yet
+# (the coordinator's cc-mods writes those, at most once a minute, and only
+# for sessions it sees): its repository and the start of its first prompt.
+# The person could not tell `ops-k8s-4a` from its slug alone.
+FIRST_CHARS = 30
+FIRST_RETRY = 60  # a transcript not found (or with no prompt yet) is looked for again after this
+_first: dict[str, tuple[str, float]] = {}
+_repo: dict[str, str] = {}
+
+
+def first_prompt(sid: str) -> str:
+    """The first prompt the person (or a coordinator's spawn) gave the
+    session, whitespace folded; '' while none is found. Read once per session:
+    the head of a transcript never changes."""
+    hit = _first.get(sid)
+    if hit and (hit[0] or time.time() - hit[1] < FIRST_RETRY):
+        return hit[0]
+    text = ""
+    for f in glob.glob(os.path.expanduser("~/.claude/projects/*/" + sid + ".jsonl")) if SID.match(sid) else []:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                for n, line in enumerate(fh):
+                    if n > 400:
+                        break
+                    if '"user"' not in line:
+                        continue
+                    try:
+                        d = json.loads(line)
+                    except ValueError:
+                        continue
+                    if d.get("type") != "user" or d.get("isMeta"):
+                        continue
+                    c = (d.get("message") or {}).get("content")
+                    t = c if isinstance(c, str) else " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text") if isinstance(c, list) else ""
+                    t = re.sub(r"\s+", " ", t).strip()
+                    # Commands, hook output and reminders are not what it was asked.
+                    if t and not t.startswith("<"):
+                        text = t
+                        break
+        except OSError:
+            continue
+        if text:
+            break
+    _first[sid] = (text, time.time())
+    return text
+
+
+def repo_name(cwd: str | None, w: dict | None = None) -> str:
+    """The repository a session works in: the ledger's (owner/name or the
+    checkout a worktree came from), else the git common dir of its cwd (a
+    worktree's own folder is named after the slug, which is the complaint),
+    else the folder's name."""
+    w = w or {}
+    if w.get("repo"):
+        return str(w["repo"]).split("/")[-1]
+    if w.get("repoDir"):
+        return os.path.basename(str(w["repoDir"]).rstrip("/"))
+    if not cwd:
+        return ""
+    if cwd not in _repo:
+        name = ""
+        try:
+            r = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True, timeout=2)
+            d = r.stdout.strip().rstrip("/") if r.returncode == 0 else ""
+            if d:
+                name = os.path.basename(os.path.dirname(d)) if os.path.basename(d) == ".git" else os.path.basename(d).removesuffix(".git")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        _repo[cwd] = name or os.path.basename(cwd.rstrip("/"))
+    return _repo[cwd]
+
+
+def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict | None = None) -> str | None:
+    """What the view calls a session: its cached summary, else its
+    repository and the start of its first prompt; None when neither is known."""
+    if not sid:
+        return None
+    if sums.get(sid):
+        return sums[sid]
+    first = first_prompt(sid)
+    first = first if len(first) <= FIRST_CHARS else first[: FIRST_CHARS - 1] + "…"
+    out = " · ".join(x for x in (repo_name(cwd, w), first) if x)
+    return out or None
+
+
 def view(people: list[dict]) -> dict:
     """What the command view draws: the waiting decisions, each coordinator
     with its live workers (their state from the office's own snapshot and the
@@ -267,6 +352,13 @@ def view(people: list[dict]) -> dict:
     by_sid = {p["id"]: p for p in people}
     latest = latest_by_session()
     sums = coord.summaries()
+
+    def cwd(sid: str | None, w: dict | None = None) -> str | None:
+        return (by_sid.get(sid or "") or {}).get("cwd") or (w or {}).get("cwd")
+
+    # A worker's ledger row knows its repository; the same session waiting on
+    # the person is named the same way.
+    ledger_w = {w["sid"]: w for c in coord.view() for w in c["workers"] if w.get("sid")}
 
     def live(sid: str | None) -> dict:
         p = by_sid.get(sid or "") or {}
@@ -278,6 +370,7 @@ def view(people: list[dict]) -> dict:
             {
                 "sid": c["sid"],
                 "name": c.get("name") or c["sid"][:8],
+                "summary": label(c["sid"], sums, cwd(c["sid"])),
                 **{k: v for k, v in live(c["sid"]).items() if k != "name"},
                 "workers": [
                     {
@@ -292,7 +385,7 @@ def view(people: list[dict]) -> dict:
                         "effort": w.get("effort"),
                         **live(w.get("sid")),
                         "pane": (by_sid.get(w.get("sid") or "") or {}).get("pane"),
-                        "summary": sums.get(w.get("sid") or ""),
+                        "summary": label(w.get("sid"), sums, cwd(w.get("sid"), w), w),
                         "brief": latest.get(w.get("sid") or ""),
                     }
                     for w in c["workers"]
@@ -309,7 +402,7 @@ def view(people: list[dict]) -> dict:
     # With nothing to decide the panel still says something: who waits on
     # the person across the floor, and the briefs written lately.
     calls = [
-        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug"), "summary": sums.get(p["id"]), "since": p.get("since")}
+        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug"), "summary": label(p["id"], sums, p.get("cwd"), ledger_w.get(p["id"])), "since": p.get("since")}
         for p in people
         if p.get("attention") in ("ask", "alert")
     ]
@@ -324,8 +417,7 @@ def view(people: list[dict]) -> dict:
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
         recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
     reviews = review.items()
-    slugs = {w["sid"]: w["slug"] for c in coords for w in c["workers"] if w.get("sid") and w.get("slug")}
-    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "turn": turn.rows(waiting, calls, reviews, slugs, inbox["items"]), "slx": inbox}
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "table": turn.table(waiting, calls, reviews, coords, inbox["items"]), "slx": inbox}
 
 
 # What a session waiting on the person shows in the view's left pane: the

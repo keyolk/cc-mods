@@ -28,20 +28,49 @@ class TurnTest(unittest.TestCase):
         self.assertEqual(turn.epoch("2026-11-08T01:00Z"), turn.epoch("2026-11-08T01:00:00+00:00"))
         self.assertEqual([turn.epoch(x) for x in (None, "", "soon", True)], [0.0] * 4)
 
-    def test_one_list_oldest_first_and_a_workers_rows_together(self):
+    def test_one_table_a_row_a_session_holding_its_decisions_call_and_reviews(self):
+        coords = [{"sid": COORD, "name": "d9", "summary": "지휘", "state": "working", "live": True, "workers": [
+            {"slug": "fix", "sid": OWNED, "summary": "office 지휘 정리", "state": "working", "live": True},
+            {"slug": "tw", "sid": ADOPTED, "relation": "adopted", "summary": "Twingate 조사", "state": "done", "live": True},
+            {"slug": "gone", "sid": None}]}]
         waiting = [{"file": "a.html", "decision": {"asked": "2026-11-10T08:00Z", "worker": "fix"}, "sessions": []},
-                   {"file": "b.html", "decision": {"asked": "2026-11-10T09:30Z"}, "sessions": [OWNED]}]
-        calls = [{"sid": OWNED, "since": turn.epoch("2026-11-10T07:00Z"), "slug": None}, {"sid": STRAY, "since": None, "name": "s"}]
-        reviews = [{"coord": COORD, "id": "fix", "updatedAt": turn.epoch("2026-11-10T09:00Z") * 1000}, {"coord": COORD, "id": "cc-mods#85", "at": turn.epoch("2026-11-10T07:30Z") * 1000}]
+                   # Recorded on the worker's session only: still its row.
+                   {"file": "b.html", "decision": {"asked": "2026-11-10T09:30Z"}, "sessions": [OWNED]},
+                   # The coordinator asked, names no worker, and the session it is
+                   # recorded on is none of the table's: the coordinator's row.
+                   {"file": "c.html", "decision": {"asked": "2026-11-10T06:00Z", "coordinator": COORD}, "sessions": ["44444444-4444-4444-4444-444444444444"]},
+                   # Recorded on a session waiting on the person: that one's row.
+                   {"file": "e.html", "decision": {"asked": "2026-11-10T09:50Z", "coordinator": COORD}, "sessions": [STRAY]},
+                   # Nobody to hang it on: a row of its own, under its title.
+                   {"file": "d.html", "title": "D 브리프", "decision": {"asked": "2026-11-10T05:00Z"}, "sessions": []}]
+        calls = [{"sid": OWNED, "since": turn.epoch("2026-11-10T07:00Z"), "slug": "fix"}, {"sid": STRAY, "since": None, "name": "s", "summary": "남의 세션"}]
+        reviews = [{"coord": COORD, "id": "fix", "updatedAt": turn.epoch("2026-11-10T09:00Z") * 1000},
+                   {"coord": COORD, "coordName": "d9", "id": "cc-mods#85", "at": turn.epoch("2026-11-10T07:30Z") * 1000}]
         now = turn.epoch("2026-11-10T10:00Z")
-        rows = turn.rows(waiting, calls, reviews, {OWNED: "fix"}, now=now)
-        got = [(r["kind"], r.get("file") or r.get("sid") or r.get("id"), r["worker"]) for r in rows]
-        # fix's question (07:00) pulls its decisions and its review up beside it,
-        # each in its own time; a time not known sorts as now, last.
-        self.assertEqual(got, [("session", OWNED, "fix"), ("decision", "a.html", "fix"), ("review", "fix", "fix"), ("decision", "b.html", "fix"),
-                               ("review", "cc-mods#85", None), ("session", STRAY, None)])
-        self.assertEqual(rows[-1]["at"], now)
-        self.assertEqual(turn.rows([], [], [], {}), [])
+        rows = turn.table(waiting, calls, reviews, coords, now=now)
+        got = [(r["key"], r["decisions"], r["call"], [i for _, i in r["reviews"]], r["needs"]) for r in rows]
+        # Longest waiting first (a row waits as long as its oldest thing); a
+        # time not known counts as now; the rows waiting on nobody last.
+        self.assertEqual(got, [
+            ("b:d.html", ["d.html"], False, [], True),
+            ("s:" + COORD, ["c.html"], False, ["cc-mods#85"], True),
+            ("s:" + OWNED, ["a.html", "b.html"], True, ["fix"], True),
+            ("s:" + STRAY, ["e.html"], True, [], True),
+            ("s:" + ADOPTED, [], False, [], False),
+        ])
+        by = {r["key"]: r for r in rows}
+        self.assertEqual([by["s:" + OWNED]["at"], by["s:" + STRAY]["at"]], [turn.epoch("2026-11-10T07:00Z"), turn.epoch("2026-11-10T09:50Z")])
+        # A row carries what names it: the summary, the slug (a small tag in the view), whose and how it is.
+        o = by["s:" + OWNED]
+        self.assertEqual((o["name"], o["summary"], o["coord"], o["relation"], o["state"]), ("fix", "office 지휘 정리", COORD, "owned", "working"))
+        self.assertEqual((by["s:" + COORD]["isCoord"], by["s:" + COORD]["summary"]), (True, "지휘"))
+        self.assertEqual((by["s:" + STRAY]["summary"], by["b:d.html"]["name"]), ("남의 세션", "D 브리프"))
+        self.assertEqual(by["s:" + ADOPTED]["relation"], "adopted")
+        self.assertEqual(turn.table([], [], [], []), [])
+
+    def test_the_rows_waiting_on_nobody_go_by_name(self):
+        coords = [{"sid": COORD, "name": "d9", "workers": [{"slug": "zz", "sid": OWNED}, {"slug": "aa", "sid": ADOPTED, "relation": "adopted"}]}]
+        self.assertEqual([r["name"] for r in turn.table([], [], [], coords)], ["aa", "d9", "zz"])
 
 
 class CrewCase(unittest.TestCase):

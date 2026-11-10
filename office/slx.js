@@ -4,13 +4,12 @@
 // candidate for a session: the person makes one, or puts it away.
 //
 // Where a trigger shows:
-// - its session has a row in the view (it waits on the person, or a
-//   coordinator works it): as 📨 / 🚨 on that row (slxBadge), with a count
-//   when several ride on it;
-// - no session, or an ended one: a row of its own in 내 차례 (slxTurnRow),
-//   in the order /command's `turn` gives (office/turn.py);
-// - its session at work with no row in the view: under ⚙ 진행 중 in the slx
-//   line below 내 차례 (slxFoot), folded.
+// - its session has a row in the table (table.js): as 📨 / 🚨 in that row's
+//   cells, with a count when several ride on it, and a 📨 slx tab;
+// - no session, or an ended one: a row of its own in the table, after the
+//   rows that need the person (office/turn.py);
+// - its session at work with no row in the table: under ⚙ 진행 중 in the slx
+//   line below the table (slxFoot), folded.
 //
 // A picked trigger opens where a brief does: its message (an incident's
 // title and alert summary), its links, and one key per choice, each sent with
@@ -18,7 +17,7 @@
 // (slx done: back only on a new mention), 3 이런 것 숨기기 (slx mute: the
 // same channel, sender or text; an incident's service, alert or text), 4
 // 나중에 (slx snooze: 1 h, 3 h, tomorrow 9:00, next Monday 9:00). 3 and 4
-// show their own choices, picked by number. x marks a trigger row; with rows
+// show their own choices, picked by number. ☐ on a trigger's row marks it; with rows
 // marked the slx line offers 무시, 나중에 and 같은 곳 숨기기 on all of them,
 // and 모두 무시 takes every trigger row at a second press. The slx line also
 // counts what is hidden and opens the mute rules, each with 해제.
@@ -54,7 +53,7 @@ const slxList = () => (slxData().items || []).filter((x) => !x.merged)
 const slxTurn = () => slxList().filter((x) => !x.alive)
 const slxRunning = () => slxList().filter((x) => x.alive)
 const slxOf = (s) => (s && s.slx ? (slxData().items || []).find((x) => x.id === s.slx) : undefined)
-function slxPick(x) { cmd.sel = { slx: x.id, title: x.from }; cmd.armed = null; cmd.q = null; cmd.force = null }
+function slxPick(x) { cmd.sel = { slx: x.id, title: x.from }; cmd.armed = null; cmd.q = null; cmd.force = null; cmd.row = null }
 const slxIsSel = (x) => !!cmd.sel && cmd.sel.slx === x.id
 const slxLine = (t) => String(t || '').replace(/\s+/g, ' ').trim()
 const slxMarked = () => slxTurn().filter((x) => slxUi.marks[x.id])
@@ -71,7 +70,10 @@ function slxState(x) {
   return ''
 }
 
-// A trigger's row in 내 차례.
+// A trigger row's mark (☐/☑), for the bulk choices of the slx line.
+const slxMk = (x) => '<span class="slxmk" data-slxmk="' + cmdEsc(x.id) + '" title="고르기">' + (slxUi.marks[x.id] ? '☑' : '☐') + '</span>'
+
+// A trigger whose session runs with no row, under ⚙ 진행 중.
 function slxTurnRow(x) {
   const mk = '<span class="slxmk" data-slxmk="' + cmdEsc(x.id) + '" title="고르기 (x)">' + (slxUi.marks[x.id] ? '☑' : '☐') + '</span>'
   return '<li data-slx="' + cmdEsc(x.id) + '" class="t' + (slxIsSel(x) ? ' sel' : '') + '">' + mk + x.icon + ' <b>' + cmdEsc(x.from) + '</b> · ' + cmdEsc(slxLine(x.text).slice(0, 80))
@@ -292,18 +294,18 @@ function slxKey(k, s, hit) {
 }
 
 // 세션 만들기 keeps the item up (its session shows once slx opened it); the
-// rest take it off and open the next row of 내 차례 (or close when none is left).
+// rest take it off and go on as any answer does: the row's next need, else
+// the next row (table.js tblAfter), or close when none is left.
 async function slxDo(s, act, extra = {}, label = '') {
   const kind = { open: 'slx_open', done: 'slx_done', mute: 'slx_mute', snooze: 'slx_snooze' }[act]
-  const next = typeof cmdNextAfter === 'function' ? cmdNextAfter({ x: { id: s.slx } }) : null
   const j = await cmdPost({ kind, id: s.slx, ...extra })
   cmd.armed = null
   if (!j) { cmdRenderDoc(); return }
   toast({ open: '▶ ', done: '✓ ', mute: '🙈 ', snooze: '⏰ ' }[act] + (j.sent || '보냈습니다') + (label ? ' (' + label + ')' : ''))
   if (act === 'open') { cmdRenderDoc(); cmdLoad(); return }
   delete slxUi.marks[s.slx]
+  if (typeof tblMark === 'function') tblMark((R) => (R.row.slx || []).includes(s.slx))
   if (cmd.data?.slx) cmd.data.slx.items = (cmd.data.slx.items || []).filter((x) => x.id !== s.slx)
-  if (next && !(next.x && next.x.id === s.slx)) cmdGo(next); else cmdShut()
-  cmdRender()
+  if (typeof tblAfter === 'function' && cmd.row) tblAfter(); else { cmdShut(); cmdRender() }
   if (act === 'mute') cmdLoad()
 }

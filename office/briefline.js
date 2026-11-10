@@ -1,6 +1,7 @@
 // The briefs in the command view (지휘), always in reach: one line under the
-// task box (the newest five as chips and 전체 to the whole list; b, ⌥B,
-// walks them), and a picked session's newest brief over both its looks.
+// task box (the newest five as chips, 전체 to the line with every recent
+// one; b, ⌥B, walks them), and a picked session's newest brief over both its
+// looks. The list of recent briefs under the table is gone: the line is it.
 // Loaded before command.js, which calls these.
 
 const BRIEF_CSS = `
@@ -17,15 +18,17 @@ const BRIEF_CSS = `
 document.head.appendChild(Object.assign(document.createElement('style'), { textContent: BRIEF_CSS }))
 
 // The brief line under the box: the newest briefs (/command's recent, newest
-// first), a chip each, and 전체, which scrolls the list to all of them.
+// first), a chip each, and 전체, which puts every recent one on the line
+// (and takes them off again).
 const BRIEF_CHIPS = 5
-const cmdBriefs = () => (cmd.data?.recent || []).slice(0, BRIEF_CHIPS)
+const briefLine = { all: false }
+const cmdBriefs = () => (cmd.data?.recent || []).slice(0, briefLine.all ? undefined : BRIEF_CHIPS)
 function cmdRenderBriefs() {
   const el = cmdEl.querySelector('.briefs')
   if (!el) return
   const all = cmd.data?.recent || [], bs = cmdBriefs(), left = el.scrollLeft, sel = cmd.sel?.path || ''
   el.innerHTML = '<span class="m" title="b · TWeb에서는 ⌥B로 차례로 열기">📄 브리프 <span class="key">B</span></span>'
-    + (bs.length ? '<button class="bchip all" data-all="1" title="목록 아래 📄 최근 브리프로">전체 ' + all.length + '</button>'
+    + (bs.length ? (all.length > BRIEF_CHIPS ? '<button class="bchip all" data-all="1" title="' + (briefLine.all ? '최근 ' + BRIEF_CHIPS + '개만' : '최근 브리프 모두 이 줄에') + '">' + (briefLine.all ? '접기' : '전체 ' + all.length) + '</button>' : '')
       + bs.map((b) => '<button class="bchip' + (sel === b.path ? ' sel' : '') + '" data-brief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.title + ' · ' + b.file) + '">' + (b.pending ? '⏳ ' : '') + cmdEsc(b.title) + '</button>').join('') : '<span class="m">없음</span>')
   // The 3 s redraw keeps where the line was scrolled; a newly picked chip
   // comes into view, and anything else picked brings back its start (전체).
@@ -38,7 +41,7 @@ function cmdRenderBriefs() {
 function cmdBriefClick(ev) {
   const b = ev.target.closest('button')
   if (!b) return
-  if (b.dataset.all) { cmdEl.querySelector('.list h3.recent')?.scrollIntoView({ block: 'start' }); return }
+  if (b.dataset.all) { briefLine.all = !briefLine.all; cmdRenderBriefs(); return }
   cmdPick({ file: b.dataset.brief.split('/').pop(), path: b.dataset.brief, title: b.dataset.title })
   cmdRender()
 }

@@ -55,6 +55,9 @@ class BriefsCase(unittest.TestCase):
         coord._sums.update(at=0.0, sums={})
         command._side.clear()
         command._title.clear()
+        # A first prompt and a repository name are cached per session and folder.
+        command._first.clear()
+        command._repo.clear()
         command._pending.update(at=0.0, items=[])
         command._no_pending["until"] = 0.0
         self.sent: list[tuple[str, str]] = []
@@ -366,6 +369,34 @@ class SayAndViewTest(BriefsCase):
         coord._sums.update(at=0.0, sums={})
         self.assertEqual(coord.summaries(), {})
 
+    def test_a_session_with_no_summary_is_its_repo_and_the_start_of_its_first_prompt(self):
+        # The person could not tell ops-k8s-4a from its slug: with no cached
+        # summary the view says the repository and what it was first asked.
+        projects = self.tmp / "home" / ".claude" / "projects" / "-x"
+        projects.mkdir(parents=True)
+        lines = [{"type": "user", "isMeta": True, "message": {"content": "<command-name>/clear</command-name>"}},
+                 {"type": "user", "message": {"content": "<local-command-stdout>x</local-command-stdout>"}},
+                 {"type": "user", "message": {"content": [{"type": "text", "text": "Weight 0으로   낮춘 PR이 모두 머지됐는지 확인하고 남은 ALB를 정리"}]}}]
+        (projects / f"{WORKER}.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines))
+        self.ledger([{"slug": "ops-k8s-4a", "sid": WORKER, "repo": "sendbird/ops-k8s", "cwd": "/w/ops-k8s-4a"}, {"slug": "m", "sid": MAKER, "repoDir": "/src/keyolk/cc-mods"}])
+        with mock.patch.dict(os.environ, {"HOME": str(self.tmp / "home")}):
+            v = command.view([{"id": WORKER, "name": "ops-k8s-4a", "attention": "ask", "cwd": "/w/ops-k8s-4a"}])
+        w, m = v["coordinators"][0]["workers"]
+        self.assertEqual(w["summary"], "ops-k8s · Weight 0으로 낮춘 PR이 모두 머지됐는지 확인…")
+        self.assertEqual(v["calls"][0]["summary"], w["summary"])
+        # No transcript: the repository alone (the checkout a worktree came from).
+        self.assertEqual(m["summary"], "cc-mods")
+        # A cached summary wins; a worktree with nothing known is its git repository's name.
+        self.sums.write_text(json.dumps({WORKER: {"text": "ALB 정리", "src": "model", "key": "k", "at": 1}}))
+        coord._sums.update(at=0.0, sums={})
+        self.assertEqual(command.view([])["coordinators"][0]["workers"][0]["summary"], "ALB 정리")
+        repo = self.tmp / "main"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "x"], check=True, env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", str(self.tmp / "slug-wt")], check=True)
+        self.assertEqual(command.repo_name(str(self.tmp / "slug-wt")), "main")
+        self.assertIsNone(command.label(None, {}))
+
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
         with mock.patch.object(office, "inbox_put", side_effect=self.put):
@@ -429,7 +460,7 @@ class AskingTest(BriefsCase):
         self.ledger([{"slug": "w", "sid": WORKER}])
         people = [{"id": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": {"name": "cc-mods-d9", "slug": "w"}}, {"id": MAKER, "name": "m", "attention": "none"}]
         calls = command.view(people)["calls"]
-        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": None, "since": None, "slx": None}])
+        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": "x", "since": None, "slx": None}])
 
     def test_asking_reads_the_answer_tail_and_the_screen(self):
         me = {"pane": "%9", "wid": "@3", "window": "cc:3", "name": "w", "cwd": "/src/x"}
@@ -494,7 +525,7 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "turn", "slx"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "table", "slx"})
             with urllib.request.urlopen(base + "/review.js") as r:
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function revKey", r.read())
@@ -599,12 +630,13 @@ KEYS_HARNESS = textwrap.dedent(r"""
       localStorage: { getItem: () => null, setItem() {} },
       document: { createElement: el, getElementById: el, head: el(), body: el() } }
     vm.createContext(ctx)
-    // review.js, crew.js, look.js, briefline.js and slx.js come first, as office.html loads them.
-    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
+    // review.js, crew.js, look.js, briefline.js, slx.js and table.js come first, as office.html loads them.
+    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js', 'table.js']) vm.runInContext(fs.readFileSync(process.argv[2].replace(/command\.js$/, f), 'utf8'), ctx)
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
       cmdRender = () => { renders++ }; cmdRenderDoc = () => {}; cmdLoad = () => {}
+      var cmdAnswerReal = cmdAnswer
       toast = (m) => { toasts.push(m) }; cmdAnswer = (p, q, a) => { answers.push([p.file, q.id, a]) }
       // A brief asking two questions, picked.
       function two() {
@@ -658,7 +690,27 @@ KEYS_HARNESS = textwrap.dedent(r"""
           { slug: 'told', sid: 'w3', relation: 'adopted', auto: true, instructed: 1, live: true, state: 'done' },
           { slug: 'gavin-jeong-63', sid: 'w4', relation: 'adopted', auto: true, live: true, state: 'done', summary: 'Twingate 조사' }] }]
       }
-      const row = (sid) => ({ target: { closest: (q) => (q === 'tr.w' ? { dataset: { sid } } : null) } })
+      // A click on a row of the table, by its key ('s:<sid>', 'b:<file>').
+      const row = (key) => ({ target: { closest: (q) => (q === 'tr[data-row]' ? { dataset: { row: key.includes(':') ? key : 's:' + key } } : null) } })
+      // /command's table (office/turn.py): fix holds a decision, its call and
+      // a review; one waits on the person alone; d9 put a review up for
+      // itself; the rest wait on nobody.
+      function table() {
+        crew()
+        cmd.data.pending[0].decision.worker = 'fix'
+        cmd.data.pending[0].questions = [{ id: 'q1', ...cmd.data.pending[0].decision, answer: null }]
+        cmd.data.calls = [{ sid: 'w1', name: 'w1n', slug: 'fix', window: 'w:3', pane: '%3', summary: 'office 지휘 정리' }, { sid: 's1', name: 'one', window: 'w:1', pane: '%1' }]
+        cmd.data.reviews = [{ coord: 'c1', coordName: 'd9', id: 'fix', title: 'R fix', links: [] }, { coord: 'c1', coordName: 'd9', id: 'cc-mods#85', title: 'R c', links: [] }]
+        cmd.data.table = [
+          { key: 's:w1', sid: 'w1', name: 'fix', summary: 'office 지휘 정리', coord: 'c1', relation: 'owned', state: 'working', live: true, decisions: ['a.html'], call: true, reviews: [['c1', 'fix']], at: 100 },
+          { key: 's:s1', sid: 's1', name: 'one', summary: null, live: true, state: 'waiting', decisions: [], call: true, reviews: [], at: 200 },
+          { key: 's:c1', sid: 'c1', name: 'd9', summary: '지휘', isCoord: true, live: true, state: 'working', decisions: [], call: false, reviews: [['c1', 'cc-mods#85']], at: 300 },
+          { key: 's:w4', sid: 'w4', name: 'gavin-jeong-63', summary: 'Twingate 조사', coord: 'c1', relation: 'adopted', live: true, state: 'done', decisions: [], call: false, reviews: [] },
+          { key: 's:w2', sid: 'w2', name: 'held', coord: 'c1', relation: 'adopted', live: true, state: 'working', decisions: [], call: false, reviews: [] },
+        ]
+        cmd.sel = null; cmd.row = null; cmd.ask = null
+      }
+      const tabs = () => tblTabs(tblFind(cmd.row)).map((t) => t.k)
       function inCallBox(key, value = '', more = {}) {
         let stopped = false, blurred = false
         const e = { key, shiftKey: false, isComposing: false, keyCode: 0, ...more, target: { value, blur: () => { blurred = true } }, preventDefault: () => { stopped = true } }
@@ -765,16 +817,6 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [{"q": "q2", "i": 1}, {"q": "q1", "i": 0}, [["b.html", "q1", {"label": "Y"}]]])
 
-    def test_j_and_k_walk_the_briefs_then_the_waiting_sessions(self):
-        got = self.run_js("""
-            calls(); cmd.sel = null
-            const seen = []
-            for (let n = 0; n < 4; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid) }
-            press('k'); seen.push(cmd.sel.file || cmd.sel.sid)
-            return seen
-        """)
-        self.assertEqual(got, ["a.html", "s1", "s2", "a.html", "s2"])
-
     def test_a_picked_session_arms_a_choice_with_a_digit_and_sends_it_with_enter(self):
         got = self.run_js("""
             calls()
@@ -844,16 +886,6 @@ class CommandKeysTest(unittest.TestCase):
         self.assertEqual(got, [[["s1", "네", False], ["s1", "네", True]], ["s1", True], "s2", ["s1"]])
 
 
-    def test_j_and_k_walk_briefs_sessions_then_review_items(self):
-        got = self.run_js("""
-            reviews(); cmd.sel = null
-            const seen = []
-            for (let n = 0; n < 5; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid || cmd.sel.review) }
-            press('k'); seen.push(cmd.sel.file || cmd.sel.sid || cmd.sel.review)
-            return seen
-        """)
-        self.assertEqual(got, ["a.html", "s1", "cc-mods#85", "tweb-240", "a.html", "tweb-240"])
-
     def test_a_review_item_is_confirmed_by_1_then_enter_and_nothing_else(self):
         got = self.run_js("""
             reviews()
@@ -906,33 +938,6 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [True, False, False, False, False, 1])
 
-    def test_a_confirm_goes_on_to_the_next_item_and_an_issue_stays(self):
-        got = self.run_js("""
-            return (async () => {
-              reviews()
-              const posts = []
-              cmdPost = async (body) => { posts.push(body); return { ok: true, sent: 'x' } }
-              await revIssueReal(cmd.sel, '다시 봐 줘')
-              const afterIssue = [cmd.sel.review, cmd.data.reviews.length, cmd.data.reviews[0].issues.map((i) => i.text)]
-              await revConfirmReal(cmd.sel)
-              const afterOne = [cmd.sel.review, cmd.data.reviews.map((r) => r.id)]
-              await revConfirmReal(cmd.sel)
-              return [posts, afterIssue, afterOne, cmd.sel, cmd.data.reviews.length]
-            })()
-        """)
-        self.assertEqual(got[0], [{"kind": "review_issue", "coord": "c1", "id": "cc-mods#85", "value": "다시 봐 줘"}, {"kind": "review_confirm", "coord": "c1", "id": "cc-mods#85"}, {"kind": "review_confirm", "coord": "c1", "id": "tweb-240"}])
-        # The last review confirmed, the row above it in 내 차례 opens (the waiting session).
-        self.assertEqual(got[1:], [["cc-mods#85", 2, ["다시 봐 줘"]], ["tweb-240", ["tweb-240"]], {"sid": "s1", "name": "one", "window": "w:1"}, 0])
-
-    def test_j_and_k_never_walk_the_sessions_at_work(self):
-        got = self.run_js("""
-            crew(); cmd.sel = null
-            const seen = []
-            for (let n = 0; n < 4; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid) }
-            return seen
-        """)
-        self.assertEqual(got, ["a.html", "s1", "s2", "a.html"])
-
     def test_alt_i_j_k_do_what_i_j_k_do_for_tweb_and_leave_a_box_and_the_card_alone(self):
         # TWeb's normal mode keeps bare i, j and k; ⌥ reaches the page.
         got = self.run_js("""
@@ -947,18 +952,6 @@ class CommandKeysTest(unittest.TestCase):
             return [seen, typedJ, boxI, floorI, cardJ, cardI, none]
         """)
         self.assertEqual(got, [["a.html", "s1", "a.html"], False, True, True, False, False, False])
-
-    def test_a_row_of_the_table_opens_that_session_and_leaves_the_box_to_the_coordinator(self):
-        got = self.run_js("""
-            crew(); cmd.sel = null
-            cmdClick(row('w1'))
-            const opened = [cmd.sel.sid, cmd.sel.name, cmd.coord, cmdCoord().sid]
-            // Its view's keys are a waiting session's: G to its pane, i still the box on top.
-            const g = press('g'), i = press('i')
-            cmdClick(row('nope'))
-            return [opened, g, i, cmd.sel.sid, 'worker' in cmd]
-        """)
-        self.assertEqual(got, [["w1", "fix", None, "c1"], True, True, "w1", False])
 
     def test_t_turns_a_picked_session_between_its_last_answer_and_its_card(self):
         got = self.run_js("""
@@ -980,7 +973,7 @@ class CommandKeysTest(unittest.TestCase):
             press('Escape')
             return [none, t1, v1, t2, v2, typed, v3, alt, v4, about, replies, cardT, viewT, briefT, revT, v5, cmd.sel, cmd.view]
         """)
-        self.assertEqual(got, [False, True, "card", True, "said", False, "said", True, "card", "👷 fix 에게",
+        self.assertEqual(got, [False, True, "card", True, "said", False, "said", True, "card", "👷 office 지휘 정리 에게",
                                [["w1", {"kind": "reply", "value": "카드 보고 하는 말"}, "지시"]], False, False, False, False, "card", None, "said"])
 
     def test_b_walks_the_brief_line_under_the_box(self):
@@ -1003,50 +996,6 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [["B1", "B2", "B3", "B4", "B5"], ["/b/1.html", "/b/2.html", "/b/3.html", "/b/4.html", "/b/5.html", "/b/1.html"],
                                "/b/5.html", "/b/1.html", False, "/b/1.html", True, "/b/2.html", False, False, False])
-
-    def test_my_turn_shows_eight_rows_until_more_and_the_picked_one_always(self):
-        got = self.run_js("""
-            calls()
-            cmd.data.pending = []
-            cmd.data.calls = [...Array(11)].map((_, i) => ({ sid: 's' + i, name: 'n' + i }))
-            cmd.sel = null
-            const eight = cmdTurnShown().map((it) => it.c.sid)
-            // j walks every row: a picked one past the eight still shows.
-            cmd.sel = { sid: 's10', name: 'n10' }; const picked = cmdTurnShown().length
-            cmdClick({ target: { closest: (q) => (q === '[data-fold]' ? { dataset: { fold: 'turn' } } : null) } })
-            const all = cmdTurnShown().length
-            cmdFold('turn'); const back = cmdTurnShown().length
-            return [eight, picked, all, back]
-        """)
-        self.assertEqual(got, [["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"], 9, 11, 9])
-
-    def test_my_turn_is_one_list_in_the_servers_order_and_j_k_walk_it(self):
-        got = self.run_js("""
-            reviews()
-            // The server's order: a review first (oldest), then a worker's decision and its session together.
-            cmd.data.turn = [{ kind: 'review', coord: 'c1', id: 'tweb-240', worker: null }, { kind: 'decision', file: 'a.html', worker: 'fix' }, { kind: 'session', sid: 's1', worker: 'fix' }, { kind: 'review', coord: 'c1', id: 'cc-mods#85', worker: null }, { kind: 'session', sid: 'gone', worker: 'x' }]
-            const keys = cmdItems().map(cmdItemKey)
-            cmd.sel = null
-            const seen = []
-            for (let n = 0; n < 5; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid || cmd.sel.review) }
-            // A row of the same worker as the one above it leaves the name out.
-            const rows = cmdItems().map((it, i, a) => cmdTurnRow(it, a[i - 1]))
-            return [keys, seen, rows[1].includes('<b>fix</b>'), rows[2].includes('class="t cont"') || rows[2].includes(' cont'), rows[2].includes('<b>fix</b>')]
-        """)
-        self.assertEqual(got, [["r:c1|tweb-240", "p:a.html", "c:s1", "r:c1|cc-mods#85"], ["tweb-240", "a.html", "s1", "cc-mods#85", "tweb-240"], True, True, False])
-
-    def test_an_answered_row_goes_on_to_the_next_row_of_my_turn(self):
-        got = self.run_js("""
-            reviews()
-            cmd.data.turn = [{ kind: 'review', coord: 'c1', id: 'cc-mods#85' }, { kind: 'decision', file: 'a.html' }, { kind: 'session', sid: 's1' }, { kind: 'review', coord: 'c1', id: 'tweb-240' }]
-            const afterFirst = cmdItemKey(cmdNextAfter({ r: cmd.data.reviews[0] }))
-            const afterLast = cmdItemKey(cmdNextAfter({ r: cmd.data.reviews[1] }))
-            // 확인함 on the first row opens the decision under it, not the other review.
-            cmdPost = async () => ({ sent: 'confirmed' })
-            cmd.sel = { review: 'cc-mods#85', coord: 'c1', title: 'R1' }
-            return revConfirmReal(cmd.sel).then(() => [afterFirst, afterLast, cmd.sel.file, cmd.data.reviews.map((r) => r.id)])
-        """)
-        self.assertEqual(got, ["p:a.html", "c:s1", "a.html", ["tweb-240"]])
 
     def test_x_ends_the_picked_session_and_an_adopted_one_only_on_a_second_press(self):
         got = self.run_js("""
@@ -1093,9 +1042,9 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, ["/b/row.html", "/b/ask.html", None, None])
 
-    def test_the_cards_tabs_take_brackets_and_alt_digits_only_while_it_shows(self):
+    def test_the_cards_tabs_take_alt_digits_and_its_shelf_brackets_only_with_no_row_open(self):
         got = self.run_js("""
-            crew(); cmdClick(row('w1'))
+            crew(); cmdPickCall({ sid: 'w1', name: 'fix', window: 'w:3' })
             const tabs = []
             cmd.card = { dataset: { sid: 'w1' }, selectTab: (i) => tabs.push(i), shelfTab: (d) => tabs.push('s' + d) }
             // The last answer showing: [ ] and ⌥2 are not the view's.
@@ -1106,37 +1055,20 @@ class CommandKeysTest(unittest.TestCase):
             const bare = press('2')
             // A card still on screen from another session is not this one's.
             cmd.card.dataset.sid = 'w4'; const stale = [press(']'), press('3', false, true)]
-            return [onSaid, onCard, bare, stale, tabs]
+            // Opened from the table, [ ] are the row's tabs (마지막 답 · 카드), not the shelf.
+            cmd.card.dataset.sid = 'w1'; cmdClick(row('w1')); const look = cmd.view
+            const step = [press(']'), cmd.view, press('['), cmd.view]
+            return [onSaid, onCard, bare, stale, tabs, look, step]
         """)
-        self.assertEqual(got, [[False, False], [True, True, True, True], False, [False, False], ["s1", "s-1", 1, 8]])
-
-    def test_the_table_is_folded_to_one_line_and_hides_the_quiet_adopted_ones_until_asked(self):
-        got = self.run_js("""
-            crew(); cmd.wOpen = false
-            const folded = cmdWorkersHtml(cmd.data)
-            cmdFold('workers'); const open = cmdWorkersHtml(cmd.data)
-            cmdFold('quiet'); const all = cmdWorkersHtml(cmd.data)
-            return [folded, open, all, cmd.wOpen, cmd.wQuiet]
-        """)
-        folded, opened, every, w_open, w_quiet = got
-        self.assertIn("👷 일하는 중 4", folded)
-        self.assertIn("(내 worker 1 · 자동 입양 2)", folded)
-        self.assertNotIn("<table>", folded)
-        # Unfolded: the quiet one (auto, never instructed) stays hidden; told is shown.
-        self.assertIn('data-sid="w3"', opened)
-        self.assertNotIn('data-sid="w4"', opened)
-        self.assertIn("지시받지 않은 자동 입양 1개 숨김 · 보기", opened)
-        self.assertIn("office 지휘 정리", opened)
-        self.assertIn('data-sid="w4"', every)
-        self.assertIn("Twingate 조사", every)
-        self.assertEqual((w_open, w_quiet), (True, True))
+        self.assertEqual(got, [[False, False], [True, True, True, True], False, [False, False], ["s1", "s-1", 1, 8], "card", [True, "said", True, "card"]])
 
     def test_where_the_task_went_is_the_first_send_or_spawn_after_it_was_sent(self):
         got = self.run_js("""
             const c = { log: [{ at: 100, kind: 'send', text: 'old: x' }, { at: 5000, kind: 'event', text: 'fix: finished' }, { at: 6000, kind: 'send', text: 'fix: 테스트 먼저' }, { at: 7000, kind: 'spawn', text: 'new opus/high in /w' }] }
             return [cmdWhere(c, 5000), cmdWhere({ log: [{ at: 9000, kind: 'spawn', text: 'new-one opus/high in /w' }] }, 8000), cmdWhere(c, 8000), cmdWhere(undefined, 1)]
         """)
-        self.assertEqual(got, ["👷 <b>fix</b>에 맡김", "🆕 새 worker <b>new-one</b>", "", ""])
+        self.assertEqual(got[1:], ["🆕 새 worker <b>new-one</b>", "", ""])
+        self.assertEqual(got[0], "👷 <b>fix</b>에 맡김")
 
     def test_an_answer_to_a_session_at_work_stays_on_it_and_one_waiting_goes_on(self):
         got = self.run_js("""
@@ -1175,7 +1107,8 @@ class CommandKeysTest(unittest.TestCase):
             })()
         """)
         out, posts = got
-        self.assertEqual(out, [None, "📄 A 에 대해", "🔎 cc-mods#85 에 대해", "👷 fix 에게", "fix", None, True])
+        # A session is named by what it was doing, not its slug.
+        self.assertEqual(out, [None, "📄 A 에 대해", "🔎 cc-mods#85 에 대해", "👷 office 지휘 정리 에게", "office 지휘 정리", None, True])
         self.assertEqual(posts, [
             {"kind": "coord_say", "coord": "c1", "slug": "", "value": "할 일"},
             {"kind": "coord_say", "coord": "c1", "slug": "", "value": "표를 접어 줘", "re": {"brief": "a.html", "worker": "fix"}},
@@ -1185,6 +1118,177 @@ class CommandKeysTest(unittest.TestCase):
             {"kind": "coord_say", "coord": "c1", "slug": "", "value": "아무 데나"},
         ])
 
+
+    def test_the_table_is_a_row_a_session_with_the_ones_that_need_the_person_first_and_the_rest_folded(self):
+        got = self.run_js("""
+            table()
+            const html = tblHtml()
+            cmdFold('others'); const open = tblHtml(); cmdFold('others')
+            // A row picked from under 그 밖 still shows folded.
+            cmd.row = 's:w4'; const picked = tblHtml(); cmd.row = null
+            const needs = tblAll().filter((R) => R.needs).length
+            cmd.data.table = cmd.data.table.slice(3); const none = tblHtml()
+            return [html, open, picked, none, needs]
+        """)
+        html, opened, picked, none, needs = got
+        self.assertIn("✋ 내 차례 3", html)
+        # A row overlays what it holds: ❓ its decision, 🙋 its call, 🔎 its review.
+        self.assertRegex(html, r'data-row="s:w1".*❓1 🙋 🔎1')
+        # Named by its summary; the slug a small tag.
+        self.assertIn('<b title="office 지휘 정리">office 지휘 정리</b>', html)
+        self.assertIn('<span class="slug">fix</span>', html)
+        self.assertIn("Z?", html)
+        # No summary: the name alone, no tag.
+        self.assertIn('<b title="one">one</b>', html)
+        self.assertLess(html.index('data-row="s:w1"'), html.index('data-row="s:s1"'))
+        self.assertLess(html.index('data-row="s:s1"'), html.index('data-row="s:c1"'))
+        # The rest fold to one line, and how many of them are at work.
+        self.assertIn("👷 그 밖 2", html)
+        self.assertIn("일하는 중 1", html)
+        self.assertNotIn('data-row="s:w4"', html)
+        self.assertIn('data-row="s:w4"', opened)
+        self.assertIn('data-end="w4"', opened)
+        self.assertIn('data-row="s:w4"', picked)
+        self.assertNotIn('data-row="s:w2"', picked)
+        # Nothing needs the person: no heading, no notice, only the fold.
+        self.assertNotIn("내 차례", none)
+        self.assertIn("👷 그 밖 2", none)
+        self.assertIn("<colgroup>", none)
+        self.assertEqual(needs, 3)
+
+    def test_j_and_k_walk_the_rows_that_need_the_person_and_never_the_folded_ones(self):
+        got = self.run_js("""
+            table()
+            const seen = []
+            for (let n = 0; n < 4; n++) { press('j'); seen.push([cmd.row, tblTabNow()]) }
+            press('k'); seen.push([cmd.row, tblTabNow()])
+            // From a row under 그 밖, j starts at the first again.
+            cmdClick(row('w4')); const folded = [cmd.row, cmd.sel.sid]
+            press('j'); seen.push([cmd.row, tblTabNow()])
+            // A brief opened from its chip: j goes on from its row.
+            cmdPick({ file: 'a.html', path: '/b/a.html', title: 'A' }); press('j'); seen.push([cmd.row, tblTabNow()])
+            // Nothing needs the person: j/k are the floor's.
+            cmd.data.table = cmd.data.table.slice(3); cmd.row = null
+            return [seen, folded, press('j'), press('k')]
+        """)
+        self.assertEqual(got, [[["s:w1", "dec"], ["s:s1", "wait"], ["s:c1", "rev"], ["s:w1", "dec"], ["s:c1", "rev"], ["s:w1", "dec"], ["s:s1", "wait"]], ["s:w4", "w4"], False, False])
+
+    def test_a_rows_tabs_are_what_it_holds_most_urgent_first_and_tab_moves_between_them(self):
+        got = self.run_js("""
+            table()
+            cmdClick(row('w1'))
+            const first = [tabs(), tblTabNow(), cmd.sel.file]
+            const walk = []
+            for (let n = 0; n < 4; n++) { press('Tab'); walk.push(tblTabNow()) }
+            let stopped = false; commandKey({ altKey: false, shiftKey: true, preventDefault: () => { stopped = true } }, 'Tab', false); walk.push(tblTabNow())
+            press(']'); walk.push(tblTabNow()); press('['); walk.push(tblTabNow())
+            // ⌥[ ⌥] for TWeb's normal mode, which keeps the bare keys.
+            press(']', false, true); walk.push(tblTabNow())
+            const revSel = cmd.sel
+            // A session waiting on nobody: its last answer and its card.
+            cmdClick(row('w4')); const quiet = tabs()
+            // The coordinator's row: its review and its look.
+            cmdClick(row('c1')); const boss = [tabs(), cmd.sel.revs, cmd.coord]
+            return [first, walk, revSel, quiet, boss]
+        """)
+        first, walk, rev_sel, quiet, boss = got
+        self.assertEqual(first, [["dec", "wait", "rev", "card"], "dec", "a.html"])
+        self.assertEqual(walk, ["wait", "rev", "card", "dec", "card", "dec", "card", "dec"])
+        self.assertEqual(quiet, ["said", "card"])
+        # Opening the coordinator's row makes it the one the box speaks to.
+        self.assertEqual(boss, [["rev", "said", "card"], "s:c1", "c1"])
+
+    def test_tab_and_brackets_are_the_floors_unless_a_row_with_two_tabs_is_open_and_never_in_a_box(self):
+        got = self.run_js("""
+            table()
+            const shut = ['Tab', '[', ']'].map((k) => press(k))
+            // A brief from a chip has no row: the floor's.
+            cmdPick({ file: 'a.html', path: '/b/a.html', title: 'A' }); cmd.row = null
+            const chip = ['Tab', '[', ']'].map((k) => press(k))
+            // A row with one tab (a brief nobody else holds) leaves them too.
+            cmd.data.table.push({ key: 'b:z.html', name: 'Z', decisions: ['z.html'], reviews: [] })
+            cmd.data.pending.push({ file: 'z.html', path: '/b/z.html', title: 'Z', decision: { question: '?', options: [{ label: 'Y' }] } })
+            cmdClick(row('b:z.html')); const one = [tabs(), ...['Tab', ']'].map((k) => press(k))]
+            cmdClick(row('w1'))
+            const typed = ['Tab', '[', ']'].map((k) => press(k, true)).concat([press(']', true, true)])
+            const still = tblTabNow()
+            return [shut, chip, one, typed, still]
+        """)
+        self.assertEqual(got, [[False, False, False], [False, False, False], [["dec"], False, False], [False, False, False, False], "dec"])
+
+    def test_an_answer_goes_on_to_the_rows_next_need_then_the_next_row(self):
+        got = self.run_js("""
+            return (async () => {
+              table()
+              cmdPost = async (b) => ({ ok: true, sent: 'x' })
+              cmdAsk = () => {}
+              cmdClick(row('w1'))
+              const p = cmd.data.pending[0], q = cmdOpen(p)[0]
+              const at = []
+              // The decision answered: the same row, its call next (the server has not caught up).
+              await cmdAnswerReal(p, q, { label: 'Y' }); at.push([cmd.row, tblTabNow()])
+              // Its call answered: its review.
+              cmdReply = cmdReplyReal
+              await cmdReply(cmd.sel, { kind: 'reply', value: '네' }, '네'); at.push([cmd.row, tblTabNow()])
+              // Its review confirmed: the row needs nothing; on to the next row.
+              if (!revCur(cmd.sel)) return at
+              await revConfirmReal({ review: revCur(cmd.sel).id, coord: 'c1' }); at.push([cmd.row, tblTabNow()])
+              // The last row's need done: back to the first that still needs the person.
+              cmdClick(row('c1')); await revConfirmReal({ review: 'cc-mods#85', coord: 'c1' }); at.push([cmd.row, tblTabNow()])
+              // Nothing left: closed.
+              cmdClick(row('s1')); await cmdReply(cmd.sel, { kind: 'reply', value: 'x' }, 'x'); at.push([cmd.row, cmd.sel])
+              return at
+            })()
+        """)
+        self.assertEqual(got, [["s:w1", "wait"], ["s:w1", "rev"], ["s:s1", "wait"], ["s:s1", "wait"], [None, None]])
+
+    def test_a_rows_review_tab_lists_its_items_confirms_one_or_all_and_an_issue_stays(self):
+        got = self.run_js("""
+            return (async () => {
+              table()
+              cmd.data.table[0].reviews.push(['c1', 'tweb-240'])
+              cmd.data.reviews.push({ coord: 'c1', coordName: 'd9', id: 'tweb-240', title: 'R t', links: [] })
+              const posts = []
+              cmdPost = async (body) => { posts.push(body); return { ok: true, sent: 'x' } }
+              cmdClick(row('w1')); tblShow(tblFind('s:w1'), 'rev')
+              const list = [cmd.sel.revs, revRow(cmd.sel).map((r) => r.id), revCur(cmd.sel).id, cmdAbout().label]
+              // Another item unfolded: the keys and the box work on it.
+              cmd.sel.open = 'c1|tweb-240'
+              const cur = revCur(cmd.sel).id
+              press('1'); const armed = cmd.armed
+              await revIssueReal({ review: 'tweb-240', coord: 'c1' }, '다시 봐 줘')
+              const issue = [cmd.sel.revs, cmd.data.reviews.find((r) => r.id === 'tweb-240').issues.map((i) => i.text)]
+              await revConfirmAll(cmd.sel)
+              return [list, cur, armed, issue, posts, cmd.data.reviews.map((r) => r.id), cmd.row, tblTabNow()]
+            })()
+        """)
+        list_, cur, armed, issue, posts, left, row_, tab = got
+        self.assertEqual(list_, ["s:w1", ["fix", "tweb-240"], "fix", "🔎 R fix 에 대해"])
+        self.assertEqual((cur, armed), ("tweb-240", {"review": "tweb-240"}))
+        self.assertEqual(issue, ["s:w1", ["다시 봐 줘"]])
+        self.assertEqual(posts, [{"kind": "review_issue", "coord": "c1", "id": "tweb-240", "value": "다시 봐 줘"}, {"kind": "review_confirm", "coord": "c1", "id": "fix"}, {"kind": "review_confirm", "coord": "c1", "id": "tweb-240"}])
+        # Both confirmed: the row's other needs come next (its decision).
+        self.assertEqual((left, row_, tab), (["cc-mods#85"], "s:w1", "dec"))
+
+    def test_end_on_a_folded_row_opens_it_and_asks_there(self):
+        got = self.run_js("""
+            table()
+            const asked = []
+            crewEnd = (s) => { asked.push(s.sid) }
+            cmdClick({ target: { closest: (q) => (q === 'button[data-end]' ? { dataset: { end: 'w4' } } : null) } })
+            return [asked, cmd.sel.sid, cmd.sel.summary, cmd.row]
+        """)
+        self.assertEqual(got, [["w4"], "w4", "Twingate 조사", "s:w4"])
+
+    def test_an_older_server_without_a_table_still_gets_a_row_each(self):
+        got = self.run_js("""
+            crew(); cmd.data.calls = [{ sid: 's1', name: 'one' }, { sid: 's2', name: 'two' }]
+            cmd.data.reviews = [{ coord: 'c1', coordName: 'd9', id: 'cc-mods#85', title: 'R1', links: [] }]
+            delete cmd.data.table
+            return tblAll().map((R) => [R.row.key, R.needs])
+        """)
+        self.assertEqual(got[:4], [["b:a.html", True], ["s:s1", True], ["s:s2", True], ["r:c1|cc-mods#85", True]])
+        self.assertIn(["s:w4", False], got)
 
 if __name__ == "__main__":
     unittest.main()
