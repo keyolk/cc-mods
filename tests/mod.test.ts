@@ -197,7 +197,11 @@ test('an asked tool call that runs (auto mode allowed it) puts the pane back to 
   // the turn ended. Its coordinator read that as the turn being over.
   const runs = baseStubs(on, { pane: '%42' })
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
-  on('tool.check', () => ({ decision: 'ask' }))
+  // Asks at the check only: the kit's $.tool.call runs the hooked tool.check
+  // again (2.1.322), and an ask there raises a dialog of its own. A call
+  // that runs here is one the mode already allowed.
+  let asking = true
+  on('tool.check', () => ({ decision: asking ? 'ask' : 'allow' }))
   on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
@@ -207,6 +211,7 @@ test('an asked tool call that runs (auto mode allowed it) puts the pane back to 
   const attention = () => runs.filter((a) => a[0] === 'tmux' && a.includes('@cc_pane_attention')).map((a) => a[a.length - 1])
   expect(attention()).toEqual(['none', 'action'])
   // Another call ending does not settle this one.
+  asking = false
   await $.tool.call({ tool: 'Read', file_path: '/work/a', tool_use_id: 'tu-0' } as any)
   expect(attention()).toEqual(['none', 'action'])
   await $.tool.call({ tool: 'Bash', command: 'sed -n 1,9p README.md && ls', tool_use_id: 'tu-1' } as any)
@@ -222,7 +227,11 @@ test('a dialog for one of two parallel asked calls keeps the pane asking, named,
   // the window, so its coordinator heard "finished its turn".
   const runs = baseStubs(on, { pane: '%42' })
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
-  on('tool.check', () => ({ decision: 'ask' }))
+  // Asks at the check only: the kit's $.tool.call runs the hooked tool.check
+  // again (2.1.322), and an ask there raises a dialog of its own. A call
+  // that runs here is one the mode already allowed.
+  let asking = true
+  on('tool.check', () => ({ decision: asking ? 'ask' : 'allow' }))
   on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
   on('classic.PermissionRequest', () => ({}) as any)
   on('classic.Notification', () => ({}) as any)
@@ -240,6 +249,7 @@ test('a dialog for one of two parallel asked calls keeps the pane asking, named,
   expect(opt('@cc_pane_asks')).toEqual(['', 'Read ~/worktrees/briefs/b/bin/brief.py'])
   // A call that ran writes the other's action again (cc-ask-dialog may have
   // written over it): still action, not working/none.
+  asking = false
   await $.tool.call({ tool: 'Read', file_path: '/home/u/worktrees/briefs/b/README.md', tool_use_id: 'tu-2' } as any)
   expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'action'])
   // The dialog is drawn: only the person in the pane can answer it.
@@ -261,7 +271,11 @@ test('a dialog marked outside this process (cc-ask-dialog) does not leave anothe
   // classifier: the pane must say action for it, not keep the dialog's ask.
   const runs = baseStubs(on, { pane: '%42' })
   on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
-  on('tool.check', () => ({ decision: 'ask' }))
+  // Asks at the check only: the kit's $.tool.call runs the hooked tool.check
+  // again (2.1.322), and an ask there raises a dialog of its own. A call
+  // that runs here is one the mode already allowed.
+  let asking = true
+  on('tool.check', () => ({ decision: asking ? 'ask' : 'allow' }))
   on('tool.call', () => ({ result: { stdout: 'ran', stderr: '', interrupted: false } }))
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
@@ -271,6 +285,7 @@ test('a dialog marked outside this process (cc-ask-dialog) does not leave anothe
   await $.tool.check({ tool: 'Read', input: { file_path: '/x/b.py' }, tool_use_id: 'tu-2' } as any)
   const opt = (k: string) => runs.filter((a) => a[0] === 'tmux' && a.includes(k)).map((a) => (a.includes('-u') ? '' : a[a.length - 1]))
   // (tmux now says ask for /x/a.py: the command hook wrote it.)
+  asking = false
   await $.tool.call({ tool: 'Read', file_path: '/x/a.py', tool_use_id: 'tu-1' } as any)
   expect(opt('@cc_pane_attention')).toEqual(['none', 'action', 'action'])
   expect(opt('@cc_pane_asks').at(-1)).toBe('Read /x/b.py')

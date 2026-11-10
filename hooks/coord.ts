@@ -165,22 +165,40 @@ async function names($: any): Promise<Map<string, string>> {
 }
 
 async function panes($: any): Promise<PaneSeen[]> {
+  return (await panesRead($)) ?? []
+}
+
+// The panes, or undefined when tmux did not answer: a module reload kills
+// the reads it was running, and a timeout or a killed read is not every
+// session gone (live, 2026-11-10 20:16: 22 workers called gone in one tick,
+// all alive). A list where no pane names a session is no answer either: this
+// coordinator's own pane names its session while it runs.
+async function panesRead($: any): Promise<PaneSeen[] | undefined> {
   const r = await sh($, ['tmux', 'list-panes', '-a', '-F', PANES_FMT], { timeoutMs: 3000 })
-  return r.ok ? parsePanes(r.out) : []
+  const seen = r.ok ? parsePanes(r.out) : []
+  return seen.length ? seen : undefined
 }
 
 // Of these session ids, the ones still alive: a claude process the session
-// registry names (checked to be claude, so a reused pid is not it), or a
-// transcript written in the last 3 minutes.
+// registry names (checked to be claude, so a reused pid is not it; a worker
+// started through ccproxy is still a claude child, its pane's command
+// ccproxy), or a transcript written in the last 3 minutes. The last line
+// says the loop ran to its end.
+export const ALIVE_DONE = '--alive-done--'
 const ALIVE_SH =
   'h=$0; for s in "$@"; do p=$(jq -r --arg s "$s" \'select(.sessionId == $s) | .pid\' "$h"/.claude/sessions/*.json 2>/dev/null | head -1); ' +
   'if [ -n "$p" ] && ps -o comm= -p "$p" 2>/dev/null | grep -q claude; then echo "$s"; continue; fi; ' +
-  'f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] && [ -n "$(find "$f" -mmin -3 2>/dev/null)" ] && echo "$s"; done'
+  'f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] && [ -n "$(find "$f" -mmin -3 2>/dev/null)" ] && echo "$s"; done; echo ' +
+  ALIVE_DONE
 
+// A read that did not finish (timed out, killed by a reload) found nobody
+// dead: every session asked about counts alive.
 async function alive($: any, sids: string[]): Promise<Set<string>> {
   if (!sids.length) return new Set()
   const r = await sh($, ['sh', '-c', ALIVE_SH, ctx!.home(), ...sids], { timeoutMs: 5000 })
-  return new Set(r.out.split('\n').filter((x) => sids.includes(x)))
+  const lines = r.out.split('\n')
+  if (!lines.includes(ALIVE_DONE)) return new Set(sids)
+  return new Set(lines.filter((x) => sids.includes(x)))
 }
 
 export function coordLedger(): Ledger | undefined {
@@ -264,7 +282,9 @@ async function tick($: any) {
   try {
     // Panes first: a coord tool (close, spawn) may save the ledger while
     // tmux answers, and observing the ledger from before that would undo it.
-    const seen = await panes($)
+    const seen = await panesRead($)
+    // tmux did not answer: nothing is known about any worker this tick.
+    if (!seen) return
     // A session that appeared since the last tick becomes an adopted worker.
     await adoptLive($, seen, false)
     // A worker no pane names is gone only when its session is: another
@@ -275,7 +295,7 @@ async function tick($: any) {
     let out = l
     // A quiet worker's asks are the person's own work: kept in its
     // row, not in the log the office shows.
-    for (const c of changes) if (c.wake || c.kind === 'gone') out = logged(out, 'event', c.text, Date.now())
+    for (const c of changes) if (c.wake || c.kind === 'gone' || c.kind === 'back') out = logged(out, 'event', c.text, Date.now())
     if (changes.length || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
     // A worker coord_close is closing: its pane went first, its endedAt
     // comes when the close saves. Not news to the coordinator that closed it.

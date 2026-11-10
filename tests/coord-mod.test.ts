@@ -296,7 +296,8 @@ test('coord: a claude -p child naming the worker\'s pane does not make the worke
     files,
     submitted,
     panes: () => '%1\t@1\tsid-1\tdone\tnone\t/work\t\t\n%386\t@1\tchild-8edc\tworking\tnone\t/r/cr\t\t',
-    run: (a) => (a[0] === 'sh' && String(a[2]).includes('ps -o comm=') ? (asked.push(a.slice(3)), live) : undefined),
+    // The alive read ends with its done line; a read without it did not finish.
+    run: (a) => (a[0] === 'sh' && String(a[2]).includes('ps -o comm=') ? (asked.push(a.slice(3)), live + '\n--alive-done--') : undefined),
   })
   const clock = mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
@@ -305,11 +306,80 @@ test('coord: a claude -p child naming the worker\'s pane does not make the worke
   expect(asked.at(-1)).toEqual(['/home/u', 'w96'])
   expect(submitted.filter((t) => t.includes('gone'))).toEqual([])
   expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeUndefined()
-  // The worker's own session ends: then it is gone.
+  // The worker's own session ends: then it is gone, on the second tick.
   live = ''
+  await clock.advance(10_000)
+  expect(submitted.filter((t) => t.includes('gone'))).toEqual([])
   await clock.advance(10_000)
   expect(submitted.filter((t) => t.includes('coord-route: its session is gone'))).toHaveLength(1)
   expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeGreaterThan(0)
+})
+
+test('coord: a tick whose tmux or alive read fails calls no worker gone; the owned worker stays owned', async ($, on) => {
+  // Live (2026-11-10 20:16): after a reload one tick found no pane and no
+  // live claude for all 22 workers, all alive. "its session is gone" woke the
+  // coordinator, the owned ones came back as adopted (auto), and coord_close
+  // then handed them back instead of closing their panes and worktrees.
+  const files: Record<string, string> = { [LEDGER]: paneLedger() }
+  const submitted: string[] = []
+  let panes = ''
+  let alive = ''
+  stubs(on, {
+    files,
+    submitted,
+    panes: () => panes,
+    run: (a) => (a[0] === 'sh' && String(a[2]).includes('ps -o comm=') ? alive : undefined),
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const worker = () => JSON.parse(files[LEDGER]!).workers.find((w: any) => w.sid === 'w96')
+  // tmux answers with no pane at all (a reload killed the read): no news.
+  await clock.advance(10_000)
+  await clock.advance(10_000)
+  await clock.advance(10_000)
+  expect(worker().endedAt).toBeUndefined()
+  // tmux answers, the worker's pane is not listed, and the alive read is cut
+  // short (no done line): counted alive, tick after tick.
+  panes = '%1\t@1\tsid-1\tdone\tnone\t/work\t\t'
+  await clock.advance(10_000)
+  await clock.advance(10_000)
+  await clock.advance(10_000)
+  expect(submitted.filter((t) => t.includes('gone'))).toEqual([])
+  expect(worker().endedAt).toBeUndefined()
+  expect(JSON.parse(files[LEDGER]!).workers.filter((w: any) => w.sid === 'w96')).toHaveLength(1)
+  // Its pane is back: owned, as it was, nothing adopted.
+  panes += '\n%386\t@1\tw96\tworking\tnone\t/r/cr\t\t'
+  await clock.advance(10_000)
+  const ws = JSON.parse(files[LEDGER]!).workers.filter((w: any) => w.sid === 'w96')
+  expect(ws.map((w: any) => [w.relation, w.auto, w.endedAt, w.made?.pane])).toEqual([['owned', undefined, undefined, '%386']])
+})
+
+test('coord: a worker taken for gone whose pane names it again is taken back owned, and coord_close then closes its pane', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: paneLedger() }
+  const submitted: string[] = []
+  const runs: string[][] = []
+  let panes = '%1\t@1\tsid-1\tdone\tnone\t/work\t\t'
+  stubs(on, {
+    files,
+    submitted,
+    runs,
+    panes: () => panes,
+    run: (a) => (a[0] === 'sh' && String(a[2]).includes('ps -o comm=') ? '--alive-done--' : undefined),
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await clock.advance(10_000)
+  await clock.advance(10_000)
+  expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeGreaterThan(0)
+  panes += '\n%386\t@1\tw96\tworking\tnone\t/r/cr\t\t'
+  await clock.advance(10_000)
+  const ws = JSON.parse(files[LEDGER]!).workers
+  expect(ws.map((w: any) => [w.slug, w.relation, w.auto, w.endedAt])).toEqual([['coord-route', 'owned', undefined, undefined]])
+  expect(submitted.join('\n')).toContain('coord-route: its session is back')
+  runs.length = 0
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'coord-route' } as any)
+  expect(r.result).toContain('Closed coord-route')
+  expect(runs).toContainEqual(['tmux', 'kill-pane', '-t', '%386'])
 })
 
 test('coord: coord_send goes as a peer message, which reaches a worker mid-turn; no inbox file is written', async ($, on) => {
