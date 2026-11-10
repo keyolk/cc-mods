@@ -260,17 +260,23 @@ brief names: it goes through the coordinator's office inbox. The ledger is `~/.c
 office reads it (`/coord` on the office server) to show who works for whom.
 
 **Deciding from the office (🎖 지휘).** When the person must choose, the
-coordinator puts the question on a brief (`~/briefs/*.html`): `brief ask`
-writes a `decision` (question, options, the recommended one, the coordinator's
-session) into its sidecar `<brief>.brief.json`. The office's 지휘 view
-(`D`, or the header's `🏢 사무실 | 🎖 지휘` switch; `office/command.py`,
-`office/command.js`) lists the decisions nobody has answered, longest waiting
-first, beside each coordinator's workers (model/effort, state, attention, the
-brief each is on). The picked brief shows in the same sandboxed frame as the
-card's viewer; under it, the options (★ recommended in green, `1-9` arms one,
-Enter sends) and a note. A pick runs `brief answer <brief> <label> --by
-office` (an older `brief` without it: the office writes the same `answer` into
-the sidecar) and puts `[brief answer] <file>: <label> — <note>` in the inbox
+coordinator puts the questions on a brief (`~/briefs/*.html`): `brief ask`
+writes `decisions` (each a question, its options, the recommended one, the
+coordinator's session) into its sidecar `<brief>.brief.json`. The office's 지휘
+view (`D`, or the header's `🏢 사무실 | 🎖 지휘` switch; `office/command.py`,
+`office/command.js`) lists the briefs with a question nobody has answered,
+longest waiting first, beside each coordinator's workers (model/effort, state,
+attention, the brief each is on). The picked brief shows in the same sandboxed
+frame as the card's viewer; under it, each of its questions with its options
+(★ recommended in green, `1-9` arms one of the active question, Enter sends)
+and a box. Enter in the box sends the armed option with the box as its note,
+or with none armed, the box itself as the answer in the person's own words
+(`직접 답`). An answer runs `brief answer <brief> <q-id> <label> --by office`
+or `brief answer <brief> <q-id> --text <words> --by office` (an older `brief`
+without them: the office writes the same `answer` into the sidecar). When the
+brief's last question is answered, the office puts `[brief answer] <file>:
+<label> — <note>` (one question; a free answer is `직접 답 — <words>`), or for
+several a line of q-ids and choices with each question under it, in the inbox
 of the coordinator that asked (else the worker, else the session that made the
 brief). Picking a worker row gives a box for an instruction to it, which goes
 to its coordinator as `[office→coord] <slug>: <text>` for `coord_send` to

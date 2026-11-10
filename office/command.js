@@ -5,8 +5,11 @@
 // nobody has answered), each coordinator's workers, who on the floor waits on
 // the person, the briefs lately written, and a box to instruct a coordinator.
 // A picked brief opens beside the panel in the same sandboxed frame the
-// card's viewer uses, with the options to pick and a note under it. A pick goes to the office server, which
-// records it on the brief and hands it to whoever asked (office/command.py).
+// card's viewer uses; under it each of its questions, with the options to
+// pick and a box for a note or an answer in the person's own words. An answer
+// goes to the office server, which records it on the brief and, once the
+// brief's last question is answered, hands them all to whoever asked
+// (office/command.py).
 // An instruction for a worker goes to its coordinator, never to the worker:
 // typing to a worker yourself is what the office floor's card is for.
 //
@@ -54,6 +57,9 @@ const CMD_CSS = `
 #command .feed li:hover { background: #f3ecdf; }
 #command .decide { border-top: 2px solid var(--line); padding: 8px 12px 10px; max-height: 45%; overflow: auto; }
 #command .decide .ask { font-size: 14px; margin-bottom: 6px; }
+#command .qa { padding: 6px 8px; margin: 0 -8px 4px; border-radius: 10px; }
+#command .qa.on { background: #fff3c4; }
+#command .qa.done { opacity: .7; }
 #command .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 #command .opt { text-align: left; max-width: 100%; }
 #command .opt.rec { background: #a8e6b0; }
@@ -64,7 +70,9 @@ const CMD_CSS = `
 @media (max-width: 760px) { #command { --cmd-w: calc(100vw - 20px); } #command .pane.right { right: 10px; bottom: 50%; } #command.doc-on .pane.left { top: 50%; } }
 `
 
-const cmd = { on: false, data: null, sel: null, worker: null, coord: null, armed: null, timer: null, frame: null, pendingN: 0 }
+// armed: { q, i } (option i of question q, waiting for Enter); q: the question
+// digits and m go to, when the person picked one by hand.
+const cmd = { on: false, data: null, sel: null, worker: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0 }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
 document.body.appendChild(cmdEl)
@@ -96,7 +104,7 @@ function cmdSwitch() {
 function setCommand(on) {
   // Leaving the view is a close as much as ✕ is: the decisions waiting now
   // do not open their brief again on their own when it is opened next.
-  if (cmd.on && !on) { cmd.sel = null; cmd.armed = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|') }
+  if (cmd.on && !on) { cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|') }
   cmd.on = on
   cmdEl.classList.toggle('on', on)
   try { localStorage.setItem('office.mode', on ? 'command' : 'office') } catch { /* private window: the mode is only not remembered */ }
@@ -123,11 +131,20 @@ async function cmdLoad() {
 }
 
 function cmdPending(file) { return (cmd.data?.pending || []).find((p) => p.file === file) }
+// A brief's questions; a server from before questions[] sent its one decision.
+const cmdQs = (p) => p.questions || [{ id: 'q1', ...p.decision }]
+const cmdOpen = (p) => cmdQs(p).filter((q) => !q.answer)
+// The question the keys work on: the one picked by hand while it is open, else the first open one.
+function cmdActive(p) {
+  const open = cmdOpen(p)
+  return open.find((q) => q.id === cmd.q) || open[0]
+}
+function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmd.q = null }
 
 function cmdRender() {
   const d = cmd.data || { pending: [], coordinators: [] }
   // Nothing picked yet: the decision that has waited longest.
-  if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) cmd.sel = { file: d.pending[0].file, path: d.pending[0].path, title: d.pending[0].title }
+  if (!cmd.sel && d.pending.length && cmd.shut !== d.pending.map((p) => p.file).join('|')) cmdPick(d.pending[0])
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="list"></div><div class="say"></div></div><div class="pane right"><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
@@ -137,7 +154,8 @@ function cmdRender() {
   if (!d.pending.length) out.push('<div class="m" style="margin-bottom:10px">기다리는 결정이 없습니다. coordinator가 <code>brief ask</code>로 질문을 달면 여기에 나옵니다.</div>')
   for (const p of d.pending) {
     const sel = cmd.sel && cmd.sel.file === p.file
-    out.push('<div class="q' + (sel ? ' sel' : '') + '" data-file="' + cmdEsc(p.file) + '"><div class="t">📄 ' + cmdEsc(p.title) + '</div><div class="ask">' + cmdEsc(p.decision.question) + '</div><div class="m">'
+    const open = cmdOpen(p), more = open.length > 1 ? ' <span class="m">외 ' + (open.length - 1) + '건</span>' : ''
+    out.push('<div class="q' + (sel ? ' sel' : '') + '" data-file="' + cmdEsc(p.file) + '"><div class="t">📄 ' + cmdEsc(p.title) + '</div><div class="ask">' + cmdEsc(p.decision.question) + more + '</div><div class="m">'
       + cmdEsc([p.coordinatorName ? '🎖 ' + p.coordinatorName : '', p.decision.worker ? '👷 ' + p.decision.worker : '', cmdAgo(p.decision.asked)].filter(Boolean).join(' · ')) + '</div></div>')
   }
   for (const c of d.coordinators) {
@@ -171,9 +189,9 @@ function cmdClick(ev) {
   const li = ev.target.closest('li[data-card]')
   if (li) { if (typeof openCard === 'function') openCard(li.dataset.card); return }
   const a = ev.target.closest('[data-brief]')
-  if (a) { ev.preventDefault(); cmd.sel = { file: a.dataset.brief.split('/').pop(), path: a.dataset.brief, title: a.dataset.title }; cmd.armed = null; return cmdRender() }
+  if (a) { ev.preventDefault(); cmdPick({ file: a.dataset.brief.split('/').pop(), path: a.dataset.brief, title: a.dataset.title }); return cmdRender() }
   const q = ev.target.closest('.q')
-  if (q) { const p = cmdPending(q.dataset.file); if (p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmdRender() } return }
+  if (q) { const p = cmdPending(q.dataset.file); if (p) { cmdPick(p); cmdRender() } return }
   const h = ev.target.closest('h3.c')
   if (h) {
     cmd.worker = null; cmd.coord = h.dataset.coord
@@ -242,30 +260,73 @@ function cmdRenderDoc() {
     doc.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="/file?sid=command&path=' + encodeURIComponent(s.path) + '"></iframe>'
   }
   const p = cmdPending(s.file)
-  const key = p ? JSON.stringify(p.decision) + '|' + cmd.armed : 'none'
+  const act = p && cmdActive(p)
+  const key = p ? JSON.stringify(cmdQs(p)) + '|' + JSON.stringify(cmd.armed) + '|' + (act && act.id) : 'none'
   if (dec.dataset.key === key) return
+  // A redraw (an option armed, the 3 s poll) keeps what is typed in the boxes and where the caret is.
+  const typed = {}
+  dec.querySelectorAll('.note').forEach((n) => { typed[n.dataset.q] = n.value })
+  const focused = document.activeElement && dec.contains(document.activeElement) ? document.activeElement.dataset.q : null
   dec.dataset.key = key
   if (!p) { dec.style.display = 'block'; dec.innerHTML = '<div class="m">이 브리프는 기다리는 결정이 없습니다 (읽기만).</div>'; return }
-  const dd = p.decision
+  const qs = cmdQs(p), dd = p.decision, multi = qs.length > 1
   dec.style.display = 'block'
-  dec.innerHTML = '<div class="ask">❓ ' + cmdEsc(dd.question) + ' <span class="m">' + cmdEsc(['→ ' + (p.coordinatorName || (dd.coordinator ? 'coordinator ' + dd.coordinator.slice(0, 8) : dd.worker ? 'worker ' + dd.worker : '만든 세션')), cmdAgo(dd.asked)].filter(Boolean).join(' · ')) + '</span></div><div class="opts"></div>'
-    + '<div class="row"><input type="text" class="note" placeholder="메모 (선택) — 답과 함께 전달됩니다"></div>'
-  const opts = dec.querySelector('.opts')
-  dd.options.forEach((o, i) => {
-    const b = document.createElement('button')
-    b.className = 'act opt' + (i === dd.recommended ? ' rec' : '') + (cmd.armed === i ? ' armed' : '')
-    b.innerHTML = '<span class="key">' + (i + 1) + '</span>' + (i === dd.recommended ? '★ ' : '') + cmdEsc(o.label) + (o.detail ? '<small>' + cmdEsc(o.detail) + '</small>' : '')
-    b.title = i === dd.recommended ? '추천' : ''
-    b.onclick = () => cmdAnswer(p, o.label)
-    opts.appendChild(b)
-  })
-  dec.querySelector('.note').onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.target.blur() } }
+  dec.innerHTML = '<div class="m" style="margin-bottom:4px">' + cmdEsc(['→ ' + (p.coordinatorName || (dd.coordinator ? 'coordinator ' + dd.coordinator.slice(0, 8) : dd.worker ? 'worker ' + dd.worker : '만든 세션')), cmdAgo(dd.asked), multi ? '질문 ' + qs.length + '개 · 다 답하면 한 번에 전달' : ''].filter(Boolean).join(' · ')) + '</div>'
+  for (const q of qs) {
+    const box = document.createElement('div')
+    box.className = 'qa' + (q.answer ? ' done' : q === act && multi ? ' on' : '')
+    box.dataset.q = q.id
+    const head = (multi ? q.id + ' · ' : '') + q.question
+    if (q.answer) {
+      box.innerHTML = '<div class="ask">✅ ' + cmdEsc(head) + '</div><div class="m">' + cmdEsc(q.answer.choice + (q.answer.note ? ' — ' + q.answer.note : '')) + '</div>'
+      dec.appendChild(box)
+      continue
+    }
+    box.innerHTML = '<div class="ask">❓ ' + cmdEsc(head) + '</div><div class="opts"></div>'
+      + '<div class="row"><input type="text" class="note" data-q="' + cmdEsc(q.id) + '" placeholder="직접 쓴 답 (Enter) · 선택지를 골랐으면 그 메모" title="Enter: 고른 선택지가 있으면 그 선택지와 이 메모를, 없으면 이 칸을 직접 답으로 보냅니다"></div>'
+    const opts = box.querySelector('.opts')
+    q.options.forEach((o, i) => {
+      const b = document.createElement('button')
+      const armed = cmd.armed && cmd.armed.q === q.id && cmd.armed.i === i
+      b.className = 'act opt' + (i === q.recommended ? ' rec' : '') + (armed ? ' armed' : '')
+      // Digits work on the active question only: its options carry the key.
+      b.innerHTML = (q === act ? '<span class="key">' + (i + 1) + '</span>' : '') + (i === q.recommended ? '★ ' : '') + cmdEsc(o.label) + (o.detail ? '<small>' + cmdEsc(o.detail) + '</small>' : '')
+      b.title = i === q.recommended ? '추천' : ''
+      b.onclick = () => cmdAnswer(p, q, { label: o.label })
+      opts.appendChild(b)
+    })
+    const note = box.querySelector('.note')
+    note.value = typed[q.id] || ''
+    note.onkeydown = (e) => cmdNoteKey(e, p, q)
+    // Typing in a question's box, or a click on it, makes it the one the digits arm.
+    note.onfocus = () => { if (multi && cmd.q !== q.id) { cmd.q = q.id; cmdRenderDoc() } }
+    box.onclick = (e) => { if (multi && cmd.q !== q.id && !e.target.closest('button')) { cmd.q = q.id; cmdRenderDoc() } }
+    dec.appendChild(box)
+  }
+  if (focused) dec.querySelector('.note[data-q="' + focused + '"]')?.focus()
+}
+
+// Keys in a question's box. Enter sends: the option armed for this question
+// with the box as its note; with none armed, the box itself as the answer
+// (직접 답); with neither, a toast says what to do. Esc leaves the box. The
+// rest is typing: j/k, digits and the floor's keys never see the box's keys
+// (office.html's officeKey stops at a text field), so the box owns Enter.
+function cmdNoteKey(e, p, q) {
+  if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return true }
+  // keyCode 229: WebKit's Enter that ends a Hangul composition.
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return false
+  e.preventDefault()
+  const text = e.target.value.trim()
+  if (cmd.armed && cmd.armed.q === q.id) cmdAnswer(p, q, { label: q.options[cmd.armed.i].label })
+  else if (text) cmdAnswer(p, q, { text })
+  else toast('선택지를 고르거나(숫자 뒤 Enter, 또는 클릭) 직접 답을 쓰고 Enter')
+  return true
 }
 
 // Close the brief beside the panel; the floor shows again. A waiting
 // decision is not picked again on its own until the list changes.
 function cmdShut() {
-  cmd.sel = null; cmd.armed = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
+  cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|')
   cmdRenderDoc()
 }
 
@@ -279,20 +340,31 @@ async function cmdPost(body) {
   } catch (e) { toast('✕ 못 보냈습니다: ' + e.message); return null }
 }
 
-async function cmdAnswer(p, label) {
-  const note = cmdEl.querySelector('.decide .note')?.value || ''
-  cmdEl.querySelectorAll('.decide button').forEach((b) => { b.disabled = true })
-  const j = await cmdPost({ kind: 'brief_answer', file: p.file, label, note })
-  if (j) {
-    toast('✅ ' + (j.sent || label))
-    // On to the next waiting one.
-    const rest = (cmd.data?.pending || []).filter((x) => x.file !== p.file)
-    cmd.data.pending = rest
-    cmd.sel = rest[0] ? { file: rest[0].file, path: rest[0].path, title: rest[0].title } : null
-    cmd.armed = null
-    commandCount(rest.length)
-    cmdRender()
-  } else cmdEl.querySelectorAll('.decide button').forEach((b) => { b.disabled = false })
+// One question's answer: an option (`label`, the box as its note) or the
+// person's own words (`text`). The server tells whoever asked once the
+// brief's last question is answered; until then the brief stays up.
+async function cmdAnswer(p, q, { label = '', text = '' }) {
+  const box = cmdEl.querySelector('.decide .qa[data-q="' + q.id + '"]')
+  const note = text ? '' : box?.querySelector('.note')?.value || ''
+  box?.querySelectorAll('button, input').forEach((b) => { b.disabled = true })
+  const j = await cmdPost({ kind: 'brief_answer', file: p.file, qid: q.id, label, note, text })
+  if (!j) { box?.querySelectorAll('button, input').forEach((b) => { b.disabled = false }); return }
+  toast('✅ ' + (j.sent || label || '직접 답'))
+  q.answer = text ? { choice: '직접 답', note: text } : { choice: label, note }
+  cmd.armed = null; cmd.q = null
+  const open = cmdOpen(p)
+  if (open.length) {
+    p.decision = open[0]
+    cmdRenderDoc()
+    cmdEl.querySelector('.decide .note[data-q="' + open[0].id + '"]')?.focus()
+    return
+  }
+  // On to the next waiting brief.
+  const rest = (cmd.data?.pending || []).filter((x) => x.file !== p.file)
+  cmd.data.pending = rest
+  if (rest[0]) cmdPick(rest[0]); else cmd.sel = null
+  commandCount(rest.length)
+  cmdRender()
 }
 
 // Keys while the command view is up (office.html's officeKey asks first).
@@ -303,9 +375,10 @@ async function cmdAnswer(p, label) {
 // C in a box is typing. D still toggles for a browser without TWeb. An open
 // card keeps C and ⌥C for its MCP reconnect. Esc goes back to the office
 // (first closing an open brief); in the instruction box or the note, Esc
-// only leaves the box and the next Esc closes. i to the instruction box;
-// j/k through the waiting decisions; a digit arms an option and Enter
-// sends it, so one stray key never decides.
+// only leaves the box and the next Esc closes. i to the instruction box, m
+// to the active question's box; j/k through the waiting briefs; a digit arms
+// an option of the active question and Enter sends it, so one stray key
+// never decides. In a box every key is typing; its Enter is cmdNoteKey's.
 function commandKey(e, k, typing) {
   const cardUp = typeof card !== 'undefined' && card.style.display === 'block'
   if (k === 'c' && (e.altKey || !typing) && !cardUp) { e.preventDefault(); setCommand(!cmd.on); return true }
@@ -326,13 +399,14 @@ function commandKey(e, k, typing) {
     const at = list.findIndex((p) => cmd.sel && p.file === cmd.sel.file)
     const i = at < 0 ? (k === 'j' ? -1 : 0) : at
     const n = list[(i + (k === 'j' ? 1 : -1) + list.length) % list.length]
-    return hit(() => { cmd.sel = { file: n.file, path: n.path, title: n.title }; cmd.armed = null; cmdRender() })
+    return hit(() => { cmdPick(n); cmdRender() })
   }
   const p = cmd.sel && cmdPending(cmd.sel.file)
-  if (p && /^[1-9]$/.test(k) && +k <= p.decision.options.length) return hit(() => { cmd.armed = +k - 1; cmdRenderDoc(); toast('Enter로 「' + p.decision.options[cmd.armed].label + '」 보내기') })
-  if (p && k === 'Enter' && cmd.armed != null) return hit(() => cmdAnswer(p, p.decision.options[cmd.armed].label))
+  const q = p && cmdActive(p)
+  if (q && /^[1-9]$/.test(k) && +k <= q.options.length) return hit(() => { cmd.armed = { q: q.id, i: +k - 1 }; cmdRenderDoc(); toast('Enter로 「' + q.options[+k - 1].label + '」 보내기') })
+  if (q && k === 'Enter' && cmd.armed && cmd.armed.q === q.id) return hit(() => cmdAnswer(p, q, { label: q.options[cmd.armed.i].label }))
   if (k === 'i') return hit(() => cmdEl.querySelector('.say textarea')?.focus())
-  if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note')?.focus())
+  if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-q="' + (q ? q.id : '') + '"]')?.focus())
   // Everything else goes to the floor, which stays in sight beside the panel.
   return false
 }

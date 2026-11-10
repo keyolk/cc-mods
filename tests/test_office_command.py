@@ -115,7 +115,7 @@ class PendingTest(BriefsCase):
     def test_the_cli_list_wins_when_it_answers(self):
         self.brief("2026-11-08-a", {})
         self.brief("2026-11-08-b", {})
-        with mock.patch.object(command, "_cli_pending", return_value=["2026-11-08-b.html"]):
+        with mock.patch.object(command, "_cli_pending", return_value={"2026-11-08-b.html": None}):
             self.assertEqual([i["file"] for i in command.pending()], ["2026-11-08-b.html"])
 
     def test_an_older_cli_is_not_asked_on_every_poll(self):
@@ -139,29 +139,29 @@ class PendingTest(BriefsCase):
 class AnswerTest(BriefsCase):
     def test_recorded_in_the_sidecar_and_sent_to_the_coordinator(self):
         f = self.brief("2026-11-08-a", {"coordinator": COORD, "worker": "w"})
-        code, out = command.answer(f, "B", " 이걸로 ", self.put)
+        code, out = command.answer(f, "", "B", " 이걸로 ", self.put)
         self.assertEqual(code, 200, out)
         self.assertEqual(out["via"], "sidecar")
         ans = self.side(f)["decision"]["answer"]
         self.assertEqual((ans["choice"], ans["note"], ans["by"]), ("B", "이걸로", "office"))
         self.assertEqual(self.sent, [(COORD, f"[brief answer] {f}: B — 이걸로")])
-        self.assertEqual(command.answer(f, "A", "", self.put)[0], 409)
+        self.assertEqual(command.answer(f, "", "A", "", self.put)[0], 409)
 
     def test_without_a_coordinator_the_worker_then_the_maker(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
         f = self.brief("2026-11-08-a", {"worker": "w"})
-        self.assertEqual(command.answer(f, "A", "", self.put)[0], 200)
+        self.assertEqual(command.answer(f, "", "A", "", self.put)[0], 200)
         g = self.brief("2026-11-08-b", {})
-        self.assertEqual(command.answer(g, "A", "", self.put)[0], 200)
+        self.assertEqual(command.answer(g, "", "A", "", self.put)[0], 200)
         self.assertEqual(self.sent, [(WORKER, f"[brief answer] {f}: A"), (MAKER, f"[brief answer] {g}: A")])
 
     def test_refusals(self):
         f = self.brief("2026-11-08-a", {"coordinator": "../../etc"})
-        self.assertEqual(command.answer(f, "C", "", self.put)[0], 400)
-        self.assertEqual(command.answer("../x.html", "A", "", self.put)[0], 404)
-        self.assertEqual(command.answer(self.brief("2026-11-08-plain"), "A", "", self.put)[0], 409)
+        self.assertEqual(command.answer(f, "", "C", "", self.put)[0], 400)
+        self.assertEqual(command.answer("../x.html", "", "A", "", self.put)[0], 404)
+        self.assertEqual(command.answer(self.brief("2026-11-08-plain"), "", "A", "", self.put)[0], 409)
         # A coordinator id that is not one is never a path to write to.
-        self.assertEqual(command.answer(f, "A", "", self.put)[0], 200)
+        self.assertEqual(command.answer(f, "", "A", "", self.put)[0], 200)
         self.assertEqual(self.sent, [(MAKER, f"[brief answer] {f}: A")])
 
     def fake_cli(self, script: str) -> None:
@@ -176,23 +176,116 @@ class AnswerTest(BriefsCase):
     def test_the_cli_answers_when_it_can(self):
         self.fake_cli(
             "import json, sys\n"
-            "brief, label = sys.argv[2], sys.argv[3]\n"
+            "brief, qid, label = sys.argv[2], sys.argv[3], sys.argv[4]\n"
             "side = brief[:-5] + '.brief.json'\n"
             "d = json.load(open(side))\n"
-            "d['decision']['answer'] = {'choice': label, 'note': None, 'by': sys.argv[5], 'at': 'cli'}\n"
+            "d['decision']['answer'] = {'choice': label, 'note': None, 'by': sys.argv[6], 'at': 'cli'}\n"
             "json.dump(d, open(side, 'w'))\n"
         )
         f = self.brief("2026-11-08-a", {"coordinator": COORD})
-        code, out = command.answer(f, "A", "", self.put)
+        code, out = command.answer(f, "", "A", "", self.put)
         self.assertEqual((code, out["via"]), (200, "cli"))
         self.assertEqual(self.side(f)["decision"]["answer"]["at"], "cli")
 
     def test_an_older_cli_falls_back_to_the_sidecar(self):
         self.fake_cli("import sys\nsys.stderr.write(\"invalid choice: 'answer'\\n\")\nsys.exit(2)\n")
         f = self.brief("2026-11-08-a", {"coordinator": COORD})
-        code, out = command.answer(f, "A", "", self.put)
+        code, out = command.answer(f, "", "A", "", self.put)
         self.assertEqual((code, out["via"]), (200, "sidecar"))
         self.assertEqual(self.side(f)["decision"]["answer"]["choice"], "A")
+
+
+class FreeAndSeveralTest(BriefsCase):
+    """Answers in the person's own words, and briefs asking several questions."""
+
+    def multi(self, name: str, coordinator: str | None = COORD) -> str:
+        file = name + ".html"
+        (self.repo / file).write_text("<html><head><title>식대</title></head><body>x</body></html>")
+        decs = [
+            {"id": "q1", "question": "15,000원 넘는 식대는?", "options": [{"label": "A", "detail": "a"}, {"label": "B", "detail": "b"}], "recommended": 0, "coordinator": coordinator, "worker": "w", "asked": "2026-11-10T01:00Z", "answer": None},
+            {"id": "q2", "question": "야근 식대 포함?", "options": [{"label": "예", "detail": ""}, {"label": "아니오", "detail": ""}], "recommended": None, "coordinator": coordinator, "worker": "w", "asked": "2026-11-10T01:00Z", "answer": None},
+        ]
+        side = {"sessions": [{"id": MAKER}], "decisions": decs, "decision": {**decs[0], "history": [{"question": "old"}]}}
+        (self.repo / (name + ".brief.json")).write_text(json.dumps(side, ensure_ascii=False))
+        return file
+
+    WORDS = "15000원 기준으로 맞출수 있는걸 onetable에 넣고 나머진 환급 안함 처리"
+
+    def test_a_free_answer_is_recorded_and_its_words_reach_the_coordinator(self):
+        f = self.brief("2026-11-10-meals", {"coordinator": COORD})
+        code, out = command.answer(f, "", "", "", self.put, text=f"  {self.WORDS} ")
+        self.assertEqual(code, 200, out)
+        ans = self.side(f)["decision"]["answer"]
+        self.assertEqual((ans["choice"], ans["note"], ans["by"], ans["free"]), ("직접 답", self.WORDS, "office", True))
+        self.assertEqual(self.sent, [(COORD, f"[brief answer] {f}: 직접 답 — {self.WORDS}")])
+        self.assertEqual(command.pending(), [])
+
+    def test_a_free_answer_refuses_a_label_beside_it(self):
+        f = self.brief("2026-11-10-meals", {"coordinator": COORD})
+        self.assertEqual(command.answer(f, "", "A", "", self.put, text="x")[0], 400)
+        self.assertEqual(command.answer(f, "", "", "", self.put, text="   ")[0], 400)  # no words, no option
+        self.assertIsNone(self.side(f)["decision"]["answer"])
+
+    def test_pending_is_one_card_per_brief_with_every_question(self):
+        f = self.multi("2026-11-10-meals")
+        got = command.pending()
+        self.assertEqual([(i["file"], [q["id"] for q in i["questions"]], i["decision"]["id"]) for i in got], [(f, ["q1", "q2"], "q1")])
+        command.answer(f, "q1", "B", "", self.put)
+        self.assertEqual(command.pending()[0]["decision"]["id"], "q2")
+
+    def test_the_cli_list_is_read_per_question(self):
+        f = self.multi("2026-11-10-meals")
+        row = {"brief": str(self.link / f), "qid": "q2"}
+        with mock.patch.object(command, "_cli", return_value=mock.Mock(returncode=0, stdout=json.dumps([row]), stderr="")):
+            self.assertEqual(command._cli_pending(), {f: {"q2"}})
+            got = command.pending()
+        self.assertEqual(got[0]["decision"]["id"], "q2")
+        # A CLI from before decisions[] names briefs only: all their questions.
+        with mock.patch.object(command, "_cli", return_value=mock.Mock(returncode=0, stdout=json.dumps([{"brief": f}]), stderr="")):
+            self.assertEqual(command._cli_pending(), {f: None})
+
+    def test_the_coordinator_hears_once_when_the_last_question_is_answered(self):
+        f = self.multi("2026-11-10-meals")
+        code, out = command.answer(f, "q2", "", "", self.put, text="야근은 빼고")
+        self.assertEqual((code, out["left"]), (200, 1), out)
+        self.assertEqual(self.sent, [])
+        side = self.side(f)
+        self.assertEqual((side["decisions"][1]["answer"]["choice"], side["decision"]["id"], side["decision"]["history"]), ("직접 답", "q1", [{"question": "old"}]))
+        code, out = command.answer(f, "q1", "B", " 영수증 확인 ", self.put)
+        self.assertEqual((code, out["left"], out["to"]), (200, 0, COORD), out)
+        self.assertEqual(self.sent, [(COORD, f"[brief answer] {f}: q1 B · q2 직접 답\n- q1 15,000원 넘는 식대는? → B — 영수증 확인\n- q2 야근 식대 포함? → 직접 답 — 야근은 빼고")])
+        self.assertEqual(self.side(f)["decision"]["id"], "q2")  # all answered: the mirror is the last
+
+    def test_several_questions_need_a_q_id_and_refuse_another_questions_option(self):
+        f = self.multi("2026-11-10-meals")
+        self.assertEqual(command.answer(f, "", "A", "", self.put)[0], 400)
+        self.assertEqual(command.answer(f, "q9", "A", "", self.put)[0], 400)
+        self.assertEqual(command.answer(f, "q2", "A", "", self.put)[0], 400)  # A is q1's
+        self.assertEqual(command.answer(f, "q1", "A", "", self.put)[0], 200)
+        self.assertEqual(command.answer(f, "q1", "B", "", self.put)[0], 409)
+
+    def test_the_cli_is_asked_with_the_q_id_and_text(self):
+        seen = []
+
+        def cli(args):
+            seen.append(args)
+            return mock.Mock(returncode=2, stdout="", stderr="unrecognized arguments: --text")
+
+        f = self.multi("2026-11-10-meals")
+        with mock.patch.object(command, "_cli", side_effect=cli):
+            code, out = command.answer(f, "q1", "", "", self.put, text="x")
+        self.assertEqual((code, out["via"]), (200, "sidecar"))
+        self.assertEqual(seen, [["answer", str(self.repo.resolve() / f), "q1", "--text", "x", "--by", "office"]])
+
+    def test_the_cockpit_gets_a_row_per_open_question(self):
+        f = self.multi("2026-11-10-meals")
+        command.answer(f, "q1", "A", "", self.put)
+        env = {**os.environ, "BRIEFS_DIR": str(self.link), "PATH": "/usr/bin:/bin"}
+        with mock.patch.dict(os.environ, env):
+            r = subprocess.run([sys.executable, str(pathlib.Path(command.__file__)), "pending"], capture_output=True, text=True, env={**env, "HOME": str(self.tmp)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = json.loads(r.stdout)
+        self.assertEqual([(x["file"], x["qid"], x["decision"]["question"]) for x in rows], [(f, "q2", "야근 식대 포함?")])
 
 
 class SayAndViewTest(BriefsCase):
@@ -274,8 +367,23 @@ KEYS_HARNESS = textwrap.dedent(r"""
     vm.createContext(ctx)
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
-      var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0
+      var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
       cmdRender = () => { renders++ }; cmdRenderDoc = () => {}; cmdLoad = () => {}
+      toast = (m) => { toasts.push(m) }; cmdAnswer = (p, q, a) => { answers.push([p.file, q.id, a]) }
+      // A brief asking two questions, picked.
+      function two() {
+        const qs = [{ id: 'q1', question: 'Q1?', options: [{ label: 'A' }, { label: 'B' }], answer: null }, { id: 'q2', question: 'Q2?', options: [{ label: '예' }, { label: '아니오' }], answer: null }]
+        cmd.data = { pending: [{ file: 'a.html', path: '/b/a.html', title: 'A', questions: qs, decision: qs[0] }, { file: 'b.html', path: '/b/b.html', title: 'B', decision: { question: 'Z?', options: [{ label: 'Y' }] } }], coordinators: [] }
+        press('c'); cmd.sel = { file: 'a.html' }
+        return cmd.data.pending[0]
+      }
+      // A key in a question's box: what cmdNoteKey took and what it did.
+      function inBox(p, qid, key, value = '', more = {}) {
+        let stopped = false, blurred = false
+        const e = { key, shiftKey: false, isComposing: false, keyCode: 0, ...more, target: { value, blur: () => { blurred = true } }, preventDefault: () => { stopped = true } }
+        const took = cmdNoteKey(e, p, p.questions.find((q) => q.id === qid))
+        return [took, stopped, blurred]
+      }
       function press(k, typing = false, alt = false) { let stopped = false; const took = commandKey({ altKey: alt, preventDefault: () => { stopped = true } }, k, typing); return took && stopped }
     `, ctx)
     const out = vm.runInContext(process.argv[3], ctx)
@@ -328,6 +436,56 @@ class CommandKeysTest(unittest.TestCase):
             return [shut, sel, first]
         """)
         self.assertEqual(got, ["a.html|b.html", None, "a.html"])
+
+    def test_enter_in_a_box_sends_the_armed_option_or_the_words_or_says_what_to_do(self):
+        got = self.run_js("""
+            const p = two()
+            const empty = inBox(p, 'q1', 'Enter', '  ')
+            const words = inBox(p, 'q1', 'Enter', ' 15000원 기준으로 onetable ')
+            cmd.armed = { q: 'q1', i: 1 }
+            const armed = inBox(p, 'q1', 'Enter', '메모')
+            // Armed on q1, Enter in q2's box is q2's own answer.
+            const other = inBox(p, 'q2', 'Enter', '야근 제외')
+            return [empty, words, armed, other, answers, toasts.length]
+        """)
+        self.assertEqual(got[:4], [[True, True, False]] * 4)
+        self.assertEqual(got[4], [["a.html", "q1", {"text": "15000원 기준으로 onetable"}], ["a.html", "q1", {"label": "B"}], ["a.html", "q2", {"text": "야근 제외"}]])
+        self.assertEqual(got[5], 1)
+
+    def test_the_box_leaves_composition_newlines_and_other_keys_alone(self):
+        got = self.run_js("""
+            const p = two()
+            const keys = [['Enter', { isComposing: true }], ['Enter', { keyCode: 229 }], ['Enter', { shiftKey: true }], ['j', {}], ['1', {}], ['a', {}]]
+            const took = keys.map(([k, m]) => inBox(p, 'q1', k, 'x', m)[0])
+            return [took, inBox(p, 'q1', 'Escape', 'x'), answers.length]
+        """)
+        self.assertEqual(got, [[False] * 6, [True, True, True], 0])
+
+    def test_keys_typed_in_a_box_never_reach_the_view_and_the_view_keeps_its_own(self):
+        # Ownership: j/k/digits/Enter/m/i typed in a box are the box's; outside
+        # it they still walk the briefs, arm and send.
+        got = self.run_js("""
+            const p = two()
+            const typed = ['j', 'k', '1', '2', 'Enter', 'm', 'i', 'd', 'Escape'].filter((k) => press(k, true))
+            const stillSel = cmd.sel.file, stillArmed = cmd.armed
+            press('2'); const armed = cmd.armed
+            press('Enter'); const sent = answers.slice()
+            cmd.q = 'q2'; press('1'); const armed2 = cmd.armed
+            press('j'); const next = [cmd.sel.file, cmd.armed, cmd.q]
+            return [typed, stillSel, stillArmed, armed, sent, armed2, next]
+        """)
+        self.assertEqual(got, [[], "a.html", None, {"q": "q1", "i": 1}, [["a.html", "q1", {"label": "B"}]], {"q": "q2", "i": 0}, ["b.html", None, None]])
+
+    def test_digits_arm_the_first_open_question_and_an_answered_one_is_skipped(self):
+        got = self.run_js("""
+            const p = two(); p.questions[0].answer = { choice: 'A' }
+            press('2'); const a = cmd.armed
+            // A server from before questions[]: its one decision is q1.
+            cmd.data.pending[1].decision.answer = null; cmd.sel = { file: 'b.html' }; cmd.armed = null
+            press('1'); const b = cmd.armed; press('Enter')
+            return [a, b, answers]
+        """)
+        self.assertEqual(got, [{"q": "q2", "i": 1}, {"q": "q1", "i": 0}, [["b.html", "q1", {"label": "Y"}]]])
 
 
 if __name__ == "__main__":

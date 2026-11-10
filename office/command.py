@@ -5,19 +5,24 @@ A brief is ~/briefs/YYYY-MM-DD-<slug>.html (a symlink to the keyolk/briefs
 repo) with a sidecar <same-name>.brief.json. The sidecar says which sessions
 made it and, when a coordinator asked the person something, the question:
 
-  "sessions": [{"id", "cwd", "transcript", "added", "note"}]
-  "decision": {"question", "options": [{"label", "detail"}], "recommended": int|null,
-               "coordinator": sid|null, "worker": slug|null, "asked": iso,
-               "answer": null|{"choice", "note", "by", "at"}}
+  "sessions":  [{"id", "cwd", "transcript", "added", "note"}]
+  "decisions": [{"id": "q1", "question", "options": [{"label", "detail"}], "recommended": int|null,
+                 "coordinator": sid|null, "worker": slug|null, "asked": iso,
+                 "answer": null|{"choice", "note", "by", "at"[, "free"]}}]
+  "decision":  the first unanswered of them (the last when all are), as a
+               sidecar from before `decisions` has only this one
 
-The `brief` CLI owns that file (`brief pending --json`, `brief answer <brief>
-<label> --by office`). The office asks it first and, when it is missing or
-older than those commands, reads and writes the sidecar itself in the same
-shape. An answer goes back as a prompt to whoever asked: the coordinator, else
-the worker, else the session that made the brief.
+A brief may ask several questions; the person answers each, with one of its
+options or in their own words (choice "직접 답", the words in note). The
+`brief` CLI owns that file (`brief pending --json`, one row per question;
+`brief answer <brief> <q-id> <label>|--text T --by office`). The office asks it
+first and, when it is missing or older than those commands, reads and writes
+the sidecar itself in the same shape. When the brief's last question is
+answered, every answer goes back at once as a prompt to whoever asked: the
+coordinator, else the worker, else the session that made the brief.
 
-Run as a script (`command.py pending`) it prints the waiting decisions as JSON,
-for the cockpit's Coord tab.
+Run as a script (`command.py pending`) it prints the waiting questions as
+JSON, one row each, for the cockpit's Coord tab.
 """
 
 import glob
@@ -107,13 +112,17 @@ def title(file: str) -> str:
     return t
 
 
-def _decision(side: dict) -> dict | None:
-    d = side.get("decision")
+# The choice a free answer records, as `brief answer --text` writes it.
+FREE = "직접 답"
+
+
+def _one(d, qid: str) -> dict | None:
     if not isinstance(d, dict) or not d.get("question"):
         return None
     opts = [o for o in d.get("options") or [] if isinstance(o, dict) and o.get("label")]
     rec = d.get("recommended")
     return {
+        "id": qid,
         "question": str(d["question"]),
         "options": [{"label": str(o["label"]), "detail": str(o.get("detail") or "")} for o in opts],
         "recommended": rec if isinstance(rec, int) and 0 <= rec < len(opts) else None,
@@ -122,6 +131,24 @@ def _decision(side: dict) -> dict | None:
         "asked": d.get("asked"),
         "answer": d.get("answer") if isinstance(d.get("answer"), dict) else None,
     }
+
+
+def _decisions(side: dict) -> list[dict]:
+    """The brief's questions in order; a sidecar from before `decisions` holds
+    its one question in `decision`, read as q1 (as the CLI reads it)."""
+    raw = side.get("decisions")
+    if not isinstance(raw, list):
+        raw = [side["decision"]] if isinstance(side.get("decision"), dict) else []
+    out = []
+    for i, d in enumerate(raw, 1):
+        one = _one(d, str(d.get("id") or f"q{i}") if isinstance(d, dict) else "")
+        if one:
+            out.append(one)
+    return out
+
+
+def _open(qs: list[dict]) -> list[dict]:
+    return [q for q in qs if not q["answer"]]
 
 
 def briefs() -> list[dict]:
@@ -133,7 +160,7 @@ def briefs() -> list[dict]:
             continue
         d = _read_side(file)
         sids = [str(s.get("id")) for s in d.get("sessions") or [] if isinstance(s, dict) and s.get("id")]
-        out.append({"file": file, "path": os.path.join(root(), file), "sessions": sids, "decision": _decision(d)})
+        out.append({"file": file, "path": os.path.join(root(), file), "sessions": sids, "questions": _decisions(d)})
     return out
 
 
@@ -142,7 +169,7 @@ def latest_by_session() -> dict[str, dict]:
     out: dict[str, dict] = {}
     for b in briefs():
         for sid in b["sessions"]:
-            out[sid] = {"file": b["file"], "path": b["path"], "title": title(b["file"]), "pending": bool(b["decision"] and not b["decision"]["answer"])}
+            out[sid] = {"file": b["file"], "path": b["path"], "title": title(b["file"]), "pending": bool(_open(b["questions"]))}
     return out
 
 
@@ -163,9 +190,10 @@ def _cli(args: list[str]) -> subprocess.CompletedProcess | None:
         return None
 
 
-def _cli_pending() -> list[str] | None:
-    """The briefs `brief pending --json` lists, by file name; None when the
-    CLI cannot say (missing, older, or its answer is not a list)."""
+def _cli_pending() -> dict[str, set | None] | None:
+    """The questions `brief pending --json` lists: file name -> the q-ids, or
+    None for a CLI from before `decisions` (a row per brief, no qid: all of
+    them). None when the CLI cannot say (missing, older, or not a list)."""
     if time.time() < _no_pending["until"]:
         return None
     r = _cli(["pending", "--json"])
@@ -181,27 +209,37 @@ def _cli_pending() -> list[str] | None:
         items = items.get("pending") or items.get("briefs")
     if not isinstance(items, list):
         return None
-    out = []
+    out: dict[str, set | None] = {}
     for it in items:
         ref = it if isinstance(it, str) else (it.get("brief") or it.get("file") or it.get("path")) if isinstance(it, dict) else None
-        if ref:
-            out.append(os.path.basename(str(ref)))
+        if not ref:
+            continue
+        name, qid = os.path.basename(str(ref)), it.get("qid") if isinstance(it, dict) else None
+        if not isinstance(qid, str) or out.get(name, set()) is None:
+            out[name] = None
+        else:
+            out.setdefault(name, set()).add(qid)
     return out
 
 
 def pending() -> list[dict]:
-    """Decisions nobody has answered, the longest waiting first. Read at most
-    every 3 s: the CLI is a process start."""
+    """Briefs with a question nobody has answered, the longest waiting first:
+    each with all its questions (the answered ones too, to show what is
+    decided) and `decision`, the first open one. Read at most every 3 s: the
+    CLI is a process start."""
     if time.time() - _pending["at"] < 3:
         return _pending["items"]
-    names = _cli_pending()
-    by = {b["file"]: b for b in briefs()}
-    picked = [by[n] for n in names if n in by] if names is not None else list(by.values())
-    items = [
-        {"file": b["file"], "path": b["path"], "title": title(b["file"]), "decision": b["decision"], "sessions": b["sessions"]}
-        for b in picked
-        if b["decision"] and not b["decision"]["answer"]
-    ]
+    cli = _cli_pending()
+    items = []
+    for b in briefs():
+        qs = _open(b["questions"])
+        if cli is not None:
+            if b["file"] not in cli:
+                continue
+            want = cli[b["file"]]
+            qs = [q for q in qs if want is None or q["id"] in want]
+        if qs:
+            items.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "questions": b["questions"], "decision": qs[0], "sessions": b["sessions"]})
     items.sort(key=lambda i: str(i["decision"].get("asked") or ""))
     _pending.update(at=time.time(), items=items)
     return items
@@ -257,7 +295,7 @@ def view(people: list[dict]) -> dict:
     names = {p["id"]: p.get("name") or p["id"][:8] for p in people}
     recent = []
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
-        recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(b["decision"] and not b["decision"]["answer"])})
+        recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
     return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "recent": recent}
 
 
@@ -277,17 +315,30 @@ def _target(d: dict, sessions: list[str]) -> str | None:
     return None
 
 
-def _write_answer(file: str, label: str, note: str) -> bool:
+def _write_answer(file: str, qid: str, ans: dict) -> bool:
+    """The answer written into the sidecar as `brief answer` writes it: on its
+    question in `decisions`, and `decision` mirrors the first one still open
+    (the last when none is); a sidecar with only `decision` keeps that shape."""
     path = os.path.join(root(), file[: -len(".html")] + ".brief.json")
     try:
         with open(path) as f:
             data = json.load(f)
     except (OSError, ValueError):
         return False
-    dec = data.get("decision") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return False
+    decs = data.get("decisions")
+    if isinstance(decs, list):
+        dec = next((d for i, d in enumerate(decs, 1) if isinstance(d, dict) and str(d.get("id") or f"q{i}") == qid), None)
+    else:
+        dec = data.get("decision") if qid == "q1" else None
     if not isinstance(dec, dict) or dec.get("answer"):
         return False
-    dec["answer"] = {"choice": label, "note": note or None, "by": "office", "at": _iso()}
+    dec["answer"] = ans
+    if isinstance(decs, list):
+        hist = (data.get("decision") or {}).get("history") if isinstance(data.get("decision"), dict) else None
+        mirror = next((d for d in decs if isinstance(d, dict) and not d.get("answer")), decs[-1])
+        data["decision"] = {**mirror, **({"history": hist} if hist else {})}
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         f.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
@@ -295,36 +346,69 @@ def _write_answer(file: str, label: str, note: str) -> bool:
     return True
 
 
-def answer(file: str, label: str, note: str, inbox_put) -> tuple[int, dict]:
-    """Record the person's pick on the brief, then tell whoever asked."""
+def _said(a: dict) -> str:
+    return str(a.get("choice")) + (f" — {a['note']}" if a.get("note") else "")
+
+
+def message(file: str, qs: list[dict]) -> str:
+    """The one prompt for whoever asked, once every question is answered:
+    `[brief answer] <file>: <label> — <note>` as before for one question; for
+    several, each q-id and choice on that line and each question under it. A
+    free answer is `직접 답 — <the words>`, so the words always arrive."""
+    if len(qs) == 1:
+        return f"[brief answer] {file}: {_said(qs[0]['answer'])}"
+    head = " · ".join(f"{q['id']} {q['answer'].get('choice')}" for q in qs)
+    return f"[brief answer] {file}: {head}\n" + "\n".join(f"- {q['id']} {q['question']} → {_said(q['answer'])}" for q in qs)
+
+
+def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = "") -> tuple[int, dict]:
+    """Record the person's answer to one question on the brief: one of its
+    options (`label`, with `note`) or their own words (`text`). When it was
+    the brief's last open question, tell whoever asked every answer at once."""
     if not NAME.match(file or "") or not brief_path(os.path.join(root(), file)):
         return 404, {"error": "no such brief"}
     side = _read_side(file, fresh=True)
-    d = _decision(side)
-    if not d:
+    qs = _decisions(side)
+    if not qs:
         return 409, {"error": "this brief asks nothing"}
-    if d["answer"]:
-        return 409, {"error": "already answered", "answer": d["answer"]}
-    if label not in [o["label"] for o in d["options"]]:
+    if not qid and len(qs) == 1:
+        qid = qs[0]["id"]
+    q = next((x for x in qs if x["id"] == qid), None)
+    if not q:
+        return 400, {"error": "which question? " + ", ".join(x["id"] for x in qs)}
+    if q["answer"]:
+        return 409, {"error": "already answered", "answer": q["answer"]}
+    text, note = text.strip()[:2000], note.strip()[:2000]
+    if text and label:
+        return 400, {"error": "an option or your own words, not both"}
+    if not text and label not in [o["label"] for o in q["options"]]:
         return 400, {"error": "not one of its options"}
-    note = note.strip()[:2000]
-    args = ["answer", os.path.join(root(), file), label, "--by", "office"] + (["--note", note] if note else [])
+    path = os.path.join(root(), file)
+    if text:
+        args = ["answer", path, qid, "--text", text, "--by", "office"]
+    else:
+        args = ["answer", path, qid, label, "--by", "office"] + (["--note", note] if note else [])
     r = _cli(args)
-    via = "cli" if r and r.returncode == 0 and (_decision(_read_side(file, fresh=True)) or {}).get("answer") else None
-    # A CLI that does not have `answer` yet (or not --note) leaves the sidecar
-    # as it was: the office writes the same record itself.
+    via = "cli" if r and r.returncode == 0 and any(x["id"] == qid and x["answer"] for x in _decisions(_read_side(file, fresh=True))) else None
+    # A CLI that does not have `answer` yet (or not --text, or not a q-id)
+    # leaves the sidecar as it was: the office writes the same record itself.
     if not via:
-        if not _write_answer(file, label, note):
+        ans = {"choice": FREE, "note": text, "by": "office", "at": _iso(), "free": True} if text else {"choice": label, "note": note or None, "by": "office", "at": _iso()}
+        if not _write_answer(file, qid, ans):
             return 500, {"error": "could not record the answer", "cli": (r.stderr.strip()[-300:] if r else None)}
         via = "sidecar"
-    _read_side(file, fresh=True)
+    qs = _decisions(_read_side(file, fresh=True))
     _pending["at"] = 0.0
-    to = _target(d, [str(s.get("id")) for s in side.get("sessions") or [] if isinstance(s, dict) and s.get("id")])
+    said = f"{FREE}: {text}" if text else label
+    left = _open(qs)
+    if left:
+        return 200, {"ok": True, "sent": f"{qid} {said} 기록 · 남은 질문 {len(left)}", "via": via, "left": len(left)}
+    to = _target(qs[0], [str(s.get("id")) for s in side.get("sessions") or [] if isinstance(s, dict) and s.get("id")])
     if not to:
-        return 200, {"ok": True, "sent": "기록만 했습니다 (전할 세션 없음)", "via": via}
-    inbox_put(to, f"[brief answer] {file}: {label}" + (f" — {note}" if note else ""))
-    who = "coordinator" if to == d["coordinator"] else "worker"
-    return 200, {"ok": True, "sent": f"{label} → {_coord_name(to) or who}", "via": via, "to": to}
+        return 200, {"ok": True, "sent": "기록만 했습니다 (전할 세션 없음)", "via": via, "left": 0}
+    inbox_put(to, message(file, qs))
+    who = "coordinator" if to == qs[0]["coordinator"] else "worker"
+    return 200, {"ok": True, "sent": f"{said} → {_coord_name(to) or who}" if len(qs) == 1 else f"답 {len(qs)}개 → {_coord_name(to) or who}", "via": via, "to": to, "left": 0}
 
 
 def say(coord_sid: str, slug: str, text: str, inbox_put) -> tuple[int, dict]:
@@ -351,7 +435,7 @@ def say(coord_sid: str, slug: str, text: str, inbox_put) -> tuple[int, dict]:
 def act(body: dict, inbox_put) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
-        return answer(str(body.get("file") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put)
+        return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""))
     if kind == "coord_say":
         return say(str(body.get("coord") or ""), str(body.get("slug") or ""), str(body.get("value") or ""), inbox_put)
     return 400, {"error": "unknown action"}
@@ -359,6 +443,6 @@ def act(body: dict, inbox_put) -> tuple[int, dict]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["pending"]:
-        print(json.dumps([{"file": i["file"], "title": i["title"], "decision": i["decision"], "coordinatorName": _coord_name(i["decision"]["coordinator"])} for i in pending()], ensure_ascii=False))
+        print(json.dumps([{"file": i["file"], "title": i["title"], "qid": q["id"], "decision": q, "coordinatorName": _coord_name(q["coordinator"])} for i in pending() for q in _open(i["questions"])], ensure_ascii=False))
     else:
         sys.exit("usage: command.py pending")
