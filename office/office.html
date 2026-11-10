@@ -116,6 +116,8 @@ body.picking #c { cursor: crosshair; }
 #authp .m { color: #7a7090; font-size: 11px; }
 #authp code { font: 11px ui-monospace, Menlo, monospace; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; word-break: break-all; }
 #authp details summary { cursor: pointer; margin: 6px 0; }
+#authp .r.act { cursor: pointer; } #authp .r.act:hover { background: #ffe9a8; } #authp .r .go { float: right; font-size: 11px; color: #7a5a00; }
+#authp .said { background: #2a2033; color: #fff; border-radius: 8px; padding: 5px 8px; margin: 4px 0 6px; overflow-wrap: anywhere; }
 #authchip { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; } #authchip.bad { background: #ffb3b3; color: #2a2033; } #authchip.soon { background: #ffe08a; color: #2a2033; }
 #settings h3 { margin: 0 0 8px; font-weight: 400; font-family: Jua, sans-serif; }
 #settings .row { margin: 8px 0; }
@@ -353,6 +355,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 <script src="brands.js"></script>
 <script src="skins.js"></script>
 <script src="resources.js"></script>
+<script src="auth.js"></script>
 <script src="review.js"></script>
 <script src="crew.js"></script>
 <script src="look.js"></script>
@@ -1392,19 +1395,6 @@ function policyHtml(p) {
     + (p.blocks.length ? '<div class="h">⛔ 최근에 막힌 것</div>' + p.blocks.map((b) => '<pre>' + esc(b.slice(0, 400)) + '</pre>').join('') : '')
     + '<div class="m">' + (p.updated ? '바뀐 때 ' + esc(clock(p.updated)) + ' · ' : '') + '바꾸려면 그 세션에서 /policy</div>'
 }
-// cc-mods' credential radar, the same for every session: what needs a login
-// first, then what is fine, then the org's claude.ai connectors without one
-// folded behind a count (Claude Code lists every one it offers, used or not).
-const AUTH_MARK = { expired: '⛔', soon: '⏳', unknown: '❔', ok: '✅' }
-function authHtml(a) {
-  const row = (i) => '<div class="r">' + (AUTH_MARK[i.state] || '❔') + ' <b>' + esc(i.label) + '</b>' + (i.mine ? ' <span class="m">(직접 설정)</span>' : '')
-    + '<div class="m">' + esc(i.detail) + (i.expiresAt ? ' · 만료 ' + esc(clock(i.expiresAt)) : '') + '</div>' + (i.fix && i.state !== 'ok' ? '<div class="m">고치려면 <code>' + esc(i.fix) + '</code></div>' : '') + '</div>'
-  const bad = a.items.filter((i) => i.state !== 'ok' && !i.connector), ok = a.items.filter((i) => i.state === 'ok'), idle = a.items.filter((i) => i.state !== 'ok' && i.connector)
-  return '<div class="h">🔑 인증 · 모든 세션 공통 <span class="m">K · Esc</span></div>' + (bad.length ? '<div class="h">⚠ 로그인이 필요한 것 ' + bad.length + '</div>' + bad.map(row).join('') : '<div class="h">✅ 로그인이 필요한 것이 없습니다</div>')
-    + (ok.length ? '<div class="h">✅ 정상 ' + ok.length + '</div>' + ok.map(row).join('') : '')
-    + (idle.length ? '<details><summary class="m">claude.ai 커넥터 ' + idle.length + '개는 로그인 안 됨 (쓰지 않으면 괜찮음)</summary>' + idle.map(row).join('') + '</details>' : '')
-    + '<div class="m">' + (a.at ? esc(clock(a.at)) + '에 확인 · ' : '') + '로그인은 아무 세션에서나 /auth</div>'
-}
 const authp = document.createElement('div'); authp.id = 'authp'; document.body.appendChild(authp)
 const authchip = document.getElementById('authchip')
 let authNow = null
@@ -1414,12 +1404,22 @@ function renderAuthChip() {
   authchip.style.display = authNow ? '' : 'none'
   authchip.className = 'chip' + (bad ? ' bad' : soon ? ' soon' : '')
   authchip.textContent = '🔑 ' + (bad ? '로그인 필요 ' + bad : soon ? '곧 만료 ' + soon : '인증 정상')
-  if (authp.style.display === 'block') authp.innerHTML = authHtml(authNow)
+  if (authp.style.display === 'block') authPaint(authp, authHtml(authNow, authSaid))
 }
+// The line a press left at the panel's top, until the panel closes.
+let authSaid = ''
 function toggleAuth(on = authp.style.display !== 'block') {
-  if (on && authNow) { authp.innerHTML = authHtml(authNow); authp.style.display = 'block' } else authp.style.display = 'none'
+  if (on && authNow) { authPaint(authp, authHtml(authNow, authSaid)); authp.style.display = 'block' } else { authp.style.display = 'none'; authSaid = '' }
 }
 authchip.onclick = () => toggleAuth()
+authp.addEventListener('toggle', (e) => { if (e.target.tagName === 'DETAILS') authFold.open = e.target.open }, true)
+authp.addEventListener('click', async (e) => {
+  const said = await authPress(e)
+  if (said === null) return
+  authSaid = said
+  if (authNow) authPaint(authp, authHtml(authNow, authSaid))
+})
+authp.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && e.target.dataset.act) { e.preventDefault(); e.target.click() } })
 // Sessions whose MCP connections dropped: one press asks each to reconnect.
 const mcpchip = document.getElementById('mcpchip')
 let mcpDown = []
