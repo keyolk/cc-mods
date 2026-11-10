@@ -281,3 +281,15 @@ test('coord: a claude -p child naming the worker\'s pane does not make the worke
   expect(submitted.filter((t) => t.includes('coord-route: its session is gone'))).toHaveLength(1)
   expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeGreaterThan(0)
 })
+
+test('coord: coord_send writes the instruction to the inbox marked keep, and merges with an older one keeping it', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  stubs(on, { files, submitted: [], panes: () => '' })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const inbox = '/home/u/.claude/state/office/inbox/w4.json'
+  await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'first' } as any)
+  expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first', keep: true })
+  await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'second' } as any)
+  expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first\n\n[coordinator] second', keep: true })
+})

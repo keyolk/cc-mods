@@ -547,7 +547,9 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
     old = String(JSON.parse((await readText($, inbox)) ?? '{}').text ?? '')
   } catch {}
   const msg = '[coordinator] ' + text
-  await $.fs.write(inbox, JSON.stringify({ text: old ? old + '\n\n' + msg : msg, at: now / 1000 }))
+  // keep: an instruction reaches a worker in the middle of a long turn, which
+  // may outlast the 2-minute stale limit of an unmarked inbox file.
+  await $.fs.write(inbox, JSON.stringify({ text: old ? old + '\n\n' + msg : msg, at: now / 1000, keep: true }))
   await save($, logged(ledger!, 'send', w.slug + ': ' + text.slice(0, 200), now))
   return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' }
 }

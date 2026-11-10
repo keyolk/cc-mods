@@ -13,7 +13,7 @@ const TEST_ORG = JSON.stringify({
   argocdDomains: { 'tools.acme.io': '', 'edge.acme.io': ' (edge)' },
 })
 
-function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined; seen?: (e: any) => void } = {}) {
+function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBox?: { json: string }; files?: Record<string, string>; written?: Record<string, string>; run?: (argv: string[]) => { code: number; out: string; err?: string } | undefined; runs?: string[][]; store?: Record<string, unknown>; route?: string | (() => string); fork?: string; windows?: string; reach?: () => boolean; submitted?: string[]; failSubmit?: { left: number }; writeBack?: boolean; toasts?: string[]; usage?: (argv: string[]) => { code: number; out: string; err?: string }; status?: string; goal?: unknown; attention?: (req: any) => unknown; mtime?: (path: string) => number | undefined; seen?: (e: any) => void } = {}) {
   const runs = opts.runs ?? []
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? opts.pane : undefined }))
@@ -38,6 +38,8 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
   on('fs.stat', (_$: any, e: any) => ({ value: e.path.endsWith('sid-1.json') ? { mtimeMs: (policyText() ?? '').length } : { mtimeMs: opts.mtime?.(e.path) ?? 1 } }))
   on('fs.write', (_$: any, e: any) => {
     if (opts.written) opts.written[e.path] = String(e.data ?? e.text ?? e.content ?? '')
+    // writeBack: a later read sees what the hook wrote (an inbox put back).
+    if (opts.writeBack && opts.files) opts.files[e.path.replace(/^.*\/\.claude\//, '.claude/')] = String(e.data ?? e.text ?? e.content ?? '')
     return { value: undefined }
   })
   on('process.run', (_$: any, e: any) => {
@@ -77,6 +79,7 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
   on('ui.log', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('prompt.submit', (_$: any, e: any) => {
+    if (opts.failSubmit && opts.failSubmit.left-- > 0) throw new Error('submit refused')
     opts.submitted?.push(e.text)
     return { text: e.text }
   })
@@ -317,6 +320,31 @@ test('office: a reply left for this session from the office goes in as the perso
   files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'ancient', at: Date.now() / 1000 - 2 * 86400, keep: true })
   await clock.advance(2_100)
   expect(submitted).not.toContain('ancient')
+})
+
+test('office: a coordinator instruction older than two minutes (keep) is delivered; a failed submit puts it back, up to a limit', async ($, on) => {
+  const submitted: string[] = []
+  const files: Record<string, string> = {}
+  const failSubmit = { left: 1 }
+  baseStubs(on, { pane: '%42', submitted, files, failSubmit, writeBack: true, run: (a) => (a[0] === 'rm' ? (delete files[a.at(-1)!.replace(/^.*\/\.claude\//, '.claude/')], { code: 0, out: '' }) : undefined) })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const at = Date.now() / 1000 - 600
+  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: '[coordinator] long job', at, keep: true })
+  await clock.advance(2_100)
+  // First submit fails: the message is back in the inbox with its keep and age.
+  expect(submitted).toEqual([])
+  expect(JSON.parse(files['.claude/state/office/inbox/sid-1.json']!)).toMatchObject({ text: '[coordinator] long job', at, keep: true, tries: 1 })
+  await clock.advance(2_100)
+  expect(submitted).toEqual(['(10분 전 office inbox에 들어온 메시지)\n[coordinator] long job'])
+  expect(files['.claude/state/office/inbox/sid-1.json']).toBeUndefined()
+  // A submit that never works is dropped after the limit.
+  failSubmit.left = 99
+  files['.claude/state/office/inbox/sid-1.json'] = JSON.stringify({ text: 'stuck', at: Date.now() / 1000, keep: true })
+  await clock.advance(2_100 * 8)
+  expect(files['.claude/state/office/inbox/sid-1.json']).toBeUndefined()
+  expect(submitted).not.toContain('stuck')
 })
 
 test('the policy pane draws a row per capability and applies a mode', async ($, on) => {
