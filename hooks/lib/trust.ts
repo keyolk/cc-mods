@@ -1,5 +1,5 @@
 // Whether Claude Code will start in a folder without its "Quick safety check:
-// Is this a project you created or one you trust?" dialog. A worker window
+// Is this a project you created or one you trust?" dialog. A worker
 // stopped there never runs its brief (the default answer exits), so the
 // coordinator checks first. Only the person accepts that dialog: this reads
 // ~/.claude.json, it never writes it.

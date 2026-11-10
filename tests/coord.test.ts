@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, HOLD_MS, PANES_FMT, WORKER_CAPS, closeArgv, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -44,6 +44,62 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   // reaches it anyway.
   const fb = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', 'python3 /p/bin/coord-report coord-sid')
   expect(fb).toContain("python3 /p/bin/coord-report coord-sid '[worker tmc-layout] <report>'")
+})
+
+test('coord: a worker is split off the coordinator\'s pane, the longer side, a third of it; too small either way, a window', () => {
+  // Wide: beside it. Tall (cells are about twice as tall as wide): below it.
+  expect(splitPlan(200, 50)).toEqual({ dir: '-h', size: 66 })
+  expect(splitPlan(100, 60)).toEqual({ dir: '-v', size: 20 })
+  // Wide but too narrow for a 60-column worker: below, when 15 rows fit.
+  expect(splitPlan(150, 60)).toEqual({ dir: '-v', size: 20 })
+  // 60 columns on each side is the least.
+  expect(splitPlan(180, 40)).toEqual({ dir: '-h', size: 60 })
+  expect(splitPlan(179, 40)).toBeUndefined()
+  expect(splitPlan(120, 40)).toBeUndefined()
+  expect(splitPlan(0, 0)).toBeUndefined()
+  const argv = workerArgv({ target: '%42', split: { dir: '-h', size: 66 }, slug: 'tmc-layout', cwd: '/w/tmc-layout', model: 'sonnet', effort: 'medium', sid: 'u-1', promptFile: '/r/prompt.txt', addDirs: ['/r'] })
+  // Detached (the person's keyboard stays), off the coordinator's pane; no
+  // window name, no select-layout over the tweb panes and the cockpit.
+  expect(argv.slice(0, 12)).toEqual(['split-window', '-d', '-h', '-l', '66', '-P', '-F', '#{window_id} #{pane_id}', '-t', '%42', '-c', '/w/tmc-layout'])
+  expect(argv.slice(12, 14)).toEqual(['sh', '-c'])
+  expect(argv.slice(15)).toEqual(['worker', 'sonnet', 'medium', 'u-1', 'tmc-layout', '/r/prompt.txt', '--add-dir=/r'])
+  expect(argv).not.toContain('-n')
+  // Labelled by @title: Claude Code rewrites pane_title over OSC.
+  expect(titleArgv('%90', 'tmc-layout')).toEqual(['set', '-p', '-t', '%90', '@title', 'w:tmc-layout'])
+})
+
+test('coord: close kills only the pane (or fallback window) the spawn made, never the coordinator\'s own', () => {
+  const coord = { pane: '%1', window: '@1' }
+  expect(closeArgv(worker({ pane: '%90', window: '@1', made: { kind: 'pane', pane: '%90', window: '@1' } }), coord)).toEqual(['kill-pane', '-t', '%90'])
+  // The session moved elsewhere since (pane/window follow it): the recorded pane is still the one.
+  expect(closeArgv(worker({ pane: '%77', window: '@7', made: { kind: 'pane', pane: '%90', window: '@1' } }), coord)).toEqual(['kill-pane', '-t', '%90'])
+  expect(closeArgv(worker({ made: { kind: 'window', pane: '%91', window: '@9' } }), coord)).toEqual(['kill-window', '-t', '@9'])
+  // Never the coordinator's pane, nor the window it is in.
+  expect(closeArgv(worker({ made: { kind: 'pane', pane: '%1', window: '@1' } }), coord)).toBeUndefined()
+  expect(closeArgv(worker({ made: { kind: 'window', pane: '%91', window: '@1' } }), coord)).toBeUndefined()
+  expect(closeArgv(worker({ made: { kind: 'pane', pane: '', window: '@1' } }), coord)).toBeUndefined()
+  // A worker from before `made` had its own window; an adopted one is not ours to kill.
+  expect(closeArgv(worker({ pane: '%5', window: '@5' }), coord)).toEqual(['kill-window', '-t', '@5'])
+  expect(closeArgv(worker({ pane: '%1', window: '@1' }), coord)).toBeUndefined()
+  expect(closeArgv(worker({ relation: 'adopted', pane: '%5', window: '@5' }), coord)).toBeUndefined()
+})
+
+test('coord: a worker whose pane names another session is not gone while its own session is alive', () => {
+  // Live: worker coord-route (pane %386, 96a4ba54) ran `claude -p`; the child
+  // (8edc482b) took the pane's @cc_pane_session and the coordinator heard
+  // "coord-route: its session is gone" with the worker still at work.
+  const l = on({ workers: [worker({ slug: 'coord-route', sid: '96a4ba54', pane: '%386', window: '@1' })] })
+  const seen = parsePanes('%386\t@1\t8edc482b\tworking\tnone\t/w/coord-route\t')
+  expect(unseen(l, seen, NOW).map((w) => w.sid)).toEqual(['96a4ba54'])
+  const kept = observe(l, seen, NOW, new Set(['96a4ba54']))
+  expect(kept.changes).toEqual([])
+  expect(kept.ledger.workers[0]!.endedAt).toBeUndefined()
+  expect(kept.ledger.workers[0]!.pane).toBe('%386')
+  // Its session really ended: gone, once.
+  const gone = observe(l, seen, NOW, new Set())
+  expect(gone.changes.map((c) => c.text)).toEqual(['coord-route: its session is gone (pane closed or claude exited)'])
+  // Just started, or already ended: not asked about.
+  expect(unseen(on({ workers: [worker({ at: NOW - 5_000 }), worker({ slug: 'b', sid: 'w2', endedAt: NOW })] }), [], NOW)).toEqual([])
 })
 
 test('coord: the watch wakes the coordinator for a question, an exit and the person taking over', () => {

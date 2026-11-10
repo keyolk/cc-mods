@@ -1,6 +1,8 @@
 // Coordinator mode: one session (the one the person turned it on in) hands
-// work to worker sessions, each a claude in its own tmux window, checks what
-// they report, and asks the person before anything their decision rides on.
+// work to worker sessions, each a claude in a pane split off the
+// coordinator's own (its own window only when that pane is too small), checks
+// what they report, and asks the person before anything their decision rides
+// on.
 //
 // The ledger is the one record of who is whose. It lives in
 // ~/.claude/state/office/coord/<coordinator sid>.json, written by the
@@ -8,13 +10,13 @@
 // office draws the same relations the coordinator acts on.
 //
 // Relations, by session id:
-//   owned     a worker this coordinator started (its window, its worktree)
+//   owned     a worker this coordinator started (its pane, its worktree)
 //   adopted   a session that was already running, handed over by the person
 //   observed  every other live session: read, never instructed
 //
 // Workers are started by this mod, never by Claude's Bash: the tmux guard
-// keeps Claude's commands in its own window, and a worker window is the one
-// exception, so it goes through code that checks the person's limits first.
+// keeps Claude's commands in its own window, and a worker's pane (or, as a
+// fallback, window) is made by code that checks the person's limits first.
 // Pure: the mod does the I/O.
 
 import type { Cap, CapValue, Policy } from './policy'
@@ -34,6 +36,9 @@ export type Worker = {
   relation: Relation
   pane?: string
   window?: string
+  // What coord_spawn made, as tmux answered it: the one pane (or fallback
+  // window) coord_close may kill. pane/window above follow the session.
+  made?: Made
   cwd: string
   worktree?: string // owned and made here: removed when the worker is closed
   repoDir?: string // the checkout the worktree came from
@@ -168,15 +173,58 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
   )
 }
 
-export function workerArgv(o: { target: string; slug: string; cwd: string; model: string; effort: string; sid: string; promptFile: string; addDirs?: readonly string[] }): string[] {
-  // The prompt is read from its file by the shell in the new window, so a
+export type Made = { kind: 'pane' | 'window'; pane: string; window: string }
+
+// A split off the coordinator's pane: -h puts the worker beside it, -v below.
+export type Split = { dir: '-h' | '-v'; size: number }
+// The smallest pane either side keeps after a split: a claude narrower or
+// shorter than this wraps its own UI into noise.
+export const SPLIT_MIN = { cols: 60, rows: 15 }
+
+// Where a worker's pane goes, from the coordinator pane's size: the longer
+// side is split and the worker gets a third of it. Never a window-wide
+// select-layout: the window also holds tweb panes and the cockpit, whose
+// sizes are the person's. Undefined: too small either way, so a new window.
+export function splitPlan(width: number, height: number): Split | undefined {
+  const third = (n: number) => Math.floor(n / 3)
+  const across = { dir: '-h' as const, size: third(width), keep: width - third(width) - 1, min: SPLIT_MIN.cols }
+  const down = { dir: '-v' as const, size: third(height), keep: height - third(height) - 1, min: SPLIT_MIN.rows }
+  // A cell is about twice as tall as it is wide.
+  const order = width >= 2 * height ? [across, down] : [down, across]
+  const fit = order.find((o) => o.size >= o.min && o.keep >= o.min)
+  return fit && { dir: fit.dir, size: fit.size }
+}
+
+export function workerArgv(o: { target: string; split?: Split; slug: string; cwd: string; model: string; effort: string; sid: string; promptFile: string; addDirs?: readonly string[] }): string[] {
+  // The prompt is read from its file by the shell in the new pane, so a
   // long brief never rides on tmux's command line. The add-dirs come after
   // it as `--add-dir=<dir>`, put first on claude's line: --add-dir takes
   // several values, and in its spaced form the prompt after it would be read
   // as one more directory.
   const cmd = 'm=$1 e=$2 s=$3 n=$4 p=$5; shift 5; exec claude "$@" --model "$m" --effort "$e" --permission-mode auto --disallowedTools AskUserQuestion --session-id "$s" -n "$n" "$(cat "$p")"'
   const dirs = (o.addDirs ?? []).map((d) => '--add-dir=' + d)
-  return ['new-window', '-d', '-P', '-F', '#{window_id} #{pane_id}', '-t', o.target, '-n', 'w:' + o.slug, '-c', o.cwd, 'sh', '-c', cmd, 'worker', modelAlias(o.model), o.effort, o.sid, o.slug, o.promptFile, ...dirs]
+  const run = ['-c', o.cwd, 'sh', '-c', cmd, 'worker', modelAlias(o.model), o.effort, o.sid, o.slug, o.promptFile, ...dirs]
+  // -d: the person's keyboard stays where it is. `target` is the
+  // coordinator's pane for a split, its tmux session for a window.
+  if (o.split) return ['split-window', '-d', o.split.dir, '-l', String(o.split.size), '-P', '-F', '#{window_id} #{pane_id}', '-t', o.target, ...run]
+  return ['new-window', '-d', '-P', '-F', '#{window_id} #{pane_id}', '-t', o.target, '-n', 'w:' + o.slug, ...run]
+}
+
+// The worker's pane label. @title, not pane_title: Claude Code rewrites
+// pane_title over OSC (register.ts /title).
+export function titleArgv(pane: string, slug: string): string[] {
+  return ['set', '-p', '-t', pane, '@title', 'w:' + slug]
+}
+
+// What coord_close kills: the pane (or fallback window) coord_spawn made,
+// never the coordinator's own pane or window. A worker from before `made`
+// was recorded had its own window. Undefined: nothing of the worker's to kill.
+export function closeArgv(w: Worker, coord: { pane?: string; window?: string }): string[] | undefined {
+  const m: Made | undefined = w.made ?? (w.relation === 'owned' && w.window ? { kind: 'window', pane: w.pane ?? '', window: w.window } : undefined)
+  if (!m) return undefined
+  if (m.kind === 'pane') return m.pane && m.pane !== coord.pane ? ['kill-pane', '-t', m.pane] : undefined
+  if (m.window === coord.window || (m.pane && m.pane === coord.pane)) return undefined
+  return ['kill-window', '-t', m.window]
 }
 
 // A pane seen in tmux, as the coordinator's watch reads it.
@@ -197,11 +245,21 @@ export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_p
 export type Change = { slug: string; sid: string; kind: 'ask' | 'held' | 'turn' | 'gone'; text: string; wake: boolean }
 const GONE = 'its session is gone'
 
+// Workers no pane names past their first minute: the ones observe would call
+// gone, so the mod looks whether they are still alive first.
+export function unseen(l: Ledger, seen: PaneSeen[], now: number): Worker[] {
+  const sids = new Set(seen.map((s) => s.sid))
+  return active(l).filter((w) => !sids.has(w.sid) && now - w.at >= SPAWN_GRACE_MS)
+}
+
 // What changed for the ledger's workers since the last look, and the ledger
 // with the new states. `wake`: worth a message to the coordinator now (a
 // worker waiting on input, gone, or taken over by the person); the rest only
-// updates what the office draws.
-export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Ledger; changes: Change[] } {
+// updates what the office draws. `alive`: session ids whose claude still runs
+// or whose transcript still grows: a worker among them is not gone though no
+// pane names it (a session that took its pane's name over it, such as a
+// `claude -p` from an older cc-mods).
+export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set()): { ledger: Ledger; changes: Change[] } {
   const bySid = new Map(seen.map((s) => [s.sid, s]))
   const changes: Change[] = []
   const workers = l.workers.map((w) => {
@@ -210,8 +268,8 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
     if (!s) {
       // Not yet published: a worker just started has no @cc_pane_session for
       // its first seconds.
-      if (now - w.at < 60_000) return w
-      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': ' + GONE + ' (window closed or claude exited)', wake: true })
+      if (now - w.at < SPAWN_GRACE_MS || alive.has(w.sid)) return w
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: w.slug + ': ' + GONE + ' (pane closed or claude exited)', wake: true })
       return { ...w, endedAt: now }
     }
     const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
@@ -254,8 +312,8 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number): { ledger: Led
 }
 
 // The person must act in the worker's pane: the text says which pane and
-// window (`tmux select-window -t @12`), and the call when it is a
-// permission ask.
+// window (`tmux select-pane -t %12`), and the call when it is a permission
+// ask.
 export function askText(slug: string, s: Pick<PaneSeen, 'pane' | 'window' | 'attention' | 'asks'>): string {
   const where = slug + ' (pane ' + s.pane + ', window ' + s.window + ')'
   if (s.asks) return where + ': asks: ' + s.asks + (s.attention === 'ask' ? ' (a permission dialog only the person can answer in that pane)' : ' (a permission ask still unsettled; a dialog there only the person can answer)')
@@ -327,12 +385,12 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     'You are `' + l.name + '`, the coordinator. You orchestrate, verify, merge, clean up and report; you do not do the work yourself.',
     "- Every task goes to another Claude session, however small: a one-line fix, a config change, a lookup across files, a brief. Do not edit files, write code, run the task's builds or tests, or open PRs yourself. Route each task with `coord_route` first (task: the person's words): it reads every live session and answers send, adopt, spawn or unsure with a reason. Act on that answer: send → `coord_send`; adopt → ask the person to `/coord adopt <pane>`, then `coord_send`; spawn → `coord_spawn` with its repo_dir or cwd, model and effort. Ask the person where a task goes only when the router answers unsure; when the call fails, call it once more, then route by `coord_roster` yourself. Your own tools are for routing and checking: `coord_roster`, reading a worker's diff, report or CI to verify it, merging, and answering the person about status.",
     '- Only when the person says so in this turn ("직접 해", "do it yourself") do the work here; a coordinator that cannot spawn (limits reached) says so and asks, it does not fall back to doing the work.',
-    '- Start workers only with the `coord_spawn` tool (never tmux or claude from Bash). Each gets a worktree off origin and its own tmux window. `coord_route` already looked for a live session working there; `coord_spawn` still refuses one in the very directory, and then the person decides whether to adopt it.',
+    '- Start workers only with the `coord_spawn` tool (never tmux or claude from Bash). Each gets a worktree off origin and a pane split off yours in your tmux window, where the person sees it (its own window only when your pane is too small to split; the result says which). `coord_route` already looked for a live session working there; `coord_spawn` still refuses one in the very directory, and then the person decides whether to adopt it.',
     "- A brief has the person's words verbatim, the evidence paths, the scope, and when to send READY.",
     '- Send instructions only with `coord_send`, and only to owned or adopted workers. Observed sessions are read-only: summarise them, never instruct them. A worker HELD by the person gets nothing until the hold ends.',
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
-    '- After a merge, close the worker with `coord_close` (it removes the worktree and the window).',
+    '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
     '- When the person must decide, put the question on a brief (the worker\'s visual brief, or make one): `brief ask <brief>` with the options, the recommended one marked, and this session as coordinator. It shows in the office\'s 지휘 view; you may also ask with AskUserQuestion, the recommended option first.',
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
