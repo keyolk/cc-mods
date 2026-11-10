@@ -244,6 +244,14 @@ test('coord: a ledger from disk keeps sane limits; the prompt names the workers'
   expect(text).toContain('[brief answer]')
   expect(text).toContain('Every task goes to another Claude session, however small')
   expect(text).toContain('[office→coord]')
+  // The office's box is the person saying "you pick": never asked back where it goes.
+  expect(text).toContain("hand it out at once with `coord_route`")
+  expect(text).toContain('never ask the person where it goes')
+  expect(text).toContain('spawn in the most plausible repository and report the reason in one line')
+  expect(text).toContain('Never ask the person where a task goes')
+  expect(text).not.toContain('Ask the person where a task goes only when')
+  expect(text).toContain("`[office→coord] (re: <brief file>, worker <slug>) <text>`")
+  expect(text).toContain('when it names no worker or that worker is gone, `coord_route` it')
 })
 
 test('coord: /coord limits', () => {

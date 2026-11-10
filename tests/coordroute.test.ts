@@ -87,9 +87,13 @@ test('coord_route: spawn needs a real checkout or directory, and a model and eff
   expect((checkRoute(spawn, CANDS, LIMITS, 2, { repoTop: '/t' }) as any).error).toContain('the limit 2')
 })
 
-test('coord_route: unsure is an answer, telling the coordinator to ask the person', () => {
+test('coord_route: unsure is an answer, telling the coordinator to spawn in the likeliest repository, never to ask the person', () => {
   const d = checkRoute({ action: 'unsure', reason: 'which repo?' }, CANDS, LIMITS, 0, {})
-  expect(routeText(d as any)).toContain('ask the person')
+  const t = routeText(d as any)
+  expect(t).toContain('do not ask the person')
+  expect(t).toContain('coord_spawn in the most plausible repository')
+  expect(t).toContain('in one line where it went and why')
+  expect(routeRequest('x', CANDS, LIMITS, 0).system).toContain('name in it the most plausible repository')
 })
 
 test('coord_route: an auto-adopted session is a send target, marked auto; the owned count leaves adopted ones out', () => {
