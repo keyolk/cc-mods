@@ -232,12 +232,16 @@ export function titleArgv(pane: string, slug: string): string[] {
 
 // What coord_close kills: the pane (or fallback window) coord_spawn made,
 // never the coordinator's own pane or window. A worker from before `made`
-// was recorded had its own window. Undefined: nothing of the worker's to kill.
-export function closeArgv(w: Worker, coord: { pane?: string; window?: string }): string[] | undefined {
+// was recorded had its own window. A fallback window another live worker
+// was split into since (`others`) loses only this worker's pane. Undefined:
+// nothing of the worker's to kill.
+export function closeArgv(w: Worker, coord: { pane?: string; window?: string }, others: readonly Worker[] = []): string[] | undefined {
   const m: Made | undefined = w.made ?? (w.relation === 'owned' && w.window ? { kind: 'window', pane: w.pane ?? '', window: w.window } : undefined)
   if (!m) return undefined
-  if (m.kind === 'pane') return m.pane && m.pane !== coord.pane ? ['kill-pane', '-t', m.pane] : undefined
+  const pane = () => (m.pane && m.pane !== coord.pane ? ['kill-pane', '-t', m.pane] : undefined)
+  if (m.kind === 'pane') return pane()
   if (m.window === coord.window || (m.pane && m.pane === coord.pane)) return undefined
+  if (others.some((o) => o.sid !== w.sid && (o.made?.window ?? o.window) === m.window)) return pane()
   return ['kill-window', '-t', m.window]
 }
 
@@ -397,9 +401,9 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
   return [
     '# Coordinator mode (cc-mods)',
     'You are `' + l.name + '`, the coordinator. You orchestrate, verify, merge, clean up and report; you do not do the work yourself.',
-    "- Every task goes to another Claude session, however small: a one-line fix, a config change, a lookup across files, a brief. Do not edit files, write code, run the task's builds or tests, or open PRs yourself. Route each task with `coord_route` first (task: the person's words): it reads every live session and answers send, adopt, spawn or unsure with a reason. Act on that answer: send → `coord_send`; adopt → ask the person to `/coord adopt <pane>`, then `coord_send`; spawn → `coord_spawn` with its repo_dir or cwd, model and effort. Ask the person where a task goes only when the router answers unsure; when the call fails, call it once more, then route by `coord_roster` yourself. Your own tools are for routing and checking: `coord_roster`, reading a worker's diff, report or CI to verify it, merging, and answering the person about status.",
+    "- Every task goes to another Claude session, however small: a one-line fix, a config change, a lookup across files, a brief. Do not edit files, write code, run the task's builds or tests, or open PRs yourself. Route each task with `coord_route` first (task: the person's words): it reads every live session and answers send, adopt, spawn or unsure with a reason. Act on that answer: send → `coord_send`; adopt → ask the person to `/coord adopt <pane>`, then `coord_send`; spawn → `coord_spawn` with its repo_dir or cwd, model, effort and window. Ask the person where a task goes only when the router answers unsure; when the call fails, call it once more, then route by `coord_roster` yourself. Your own tools are for routing and checking: `coord_roster`, reading a worker's diff, report or CI to verify it, merging, and answering the person about status.",
     '- Only when the person says so in this turn ("직접 해", "do it yourself") do the work here; a coordinator that cannot spawn (limits reached) says so and asks, it does not fall back to doing the work.',
-    '- Start workers only with the `coord_spawn` tool (never tmux or claude from Bash). Each gets a worktree off origin and a pane split off yours in your tmux window, where the person sees it (its own window only when your pane is too small to split; the result says which). `coord_route` already looked for a live session working there; `coord_spawn` still refuses one in the very directory, and then the person decides whether to adopt it.',
+    '- Start workers only with the `coord_spawn` tool (never tmux or claude from Bash). Each gets a worktree off origin and a pane where the person sees it: `coord_route` lists the places (your window, a window that already holds your workers, or new: at most 2 workers a window, 60 columns and 15 rows left on each side of a split) and picks one with the session; pass its window to `coord_spawn` as `window`. A place that no longer has room falls back to your window, else a new window; the result says which. `coord_route` already looked for a live session working there; `coord_spawn` still refuses one in the very directory, and then the person decides whether to adopt it.',
     "- A brief has the person's words verbatim, the evidence paths, the scope, and when to send READY.",
     '- Send instructions only with `coord_send`, and only to owned or adopted workers. Observed sessions are read-only: summarise them, never instruct them. A worker HELD by the person gets nothing until the hold ends.',
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
