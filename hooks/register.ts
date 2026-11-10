@@ -4387,7 +4387,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // asks for routes it does not have (live: resources.js 404, an empty
     // office). The stamp is office.py's code_stamp(); an old server has no
     // /version and answers 404, which also counts as old.
-    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py', 'review.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
+    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py', 'review.py', 'slx.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
     const ver = (await $.process.run(['/usr/bin/curl', '-s', '-m', '2', url + 'version'], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout
     let running: { stamp?: string; pid?: number } | undefined
     try { running = JSON.parse(ver) } catch { running = undefined }

@@ -33,12 +33,14 @@ def epoch(v) -> float:
         return 0.0
 
 
-def rows(waiting: list[dict], calls: list[dict], reviews: list[dict], workers: dict[str, str], now: float | None = None) -> list[dict]:
+def rows(waiting: list[dict], calls: list[dict], reviews: list[dict], workers: dict[str, str], triggers: list[dict] | None = None, now: float | None = None) -> list[dict]:
     """The turn list. `workers`: session id -> worker slug, every coordinator's.
     A decision belongs to the worker its question names, else to a session
     the brief is recorded on; a waiting session to its slug; a review item to
     the worker its id names (an id is the worker slug or a PR). A time not
-    known sorts as now: it has waited the least we can tell."""
+    known sorts as now: it has waited the least we can tell. `triggers`:
+    /command's slx items (office/slx.py); one waits on the person while no
+    session of its own is up and no row above carries it (`merged`)."""
     now = time.time() if now is None else now
     slugs = set(workers.values())
     out = []
@@ -50,6 +52,10 @@ def rows(waiting: list[dict], calls: list[dict], reviews: list[dict], workers: d
         out.append({"kind": "session", "sid": c["sid"], "at": epoch(c.get("since")) or now, "worker": workers.get(c["sid"]) or c.get("slug")})
     for r in reviews:
         out.append({"kind": "review", "coord": r.get("coord"), "id": r["id"], "at": epoch(r.get("updatedAt") or r.get("at")) or now, "worker": r["id"] if r["id"] in slugs else None})
+
+    for x in triggers or []:
+        if not x.get("merged") and not x.get("alive"):
+            out.append({"kind": "slx", "id": x["id"], "at": epoch(x.get("at")) or now, "worker": None})
 
     def group(r: dict) -> str:
         return "w:" + r["worker"] if r["worker"] else r["kind"] + ":" + str(r.get("file") or r.get("sid") or r.get("id"))

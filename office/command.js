@@ -20,7 +20,9 @@
 // floor card's reply does, never through a coordinator.
 // Finished work a coordinator put up for the person's look (🔎 검토,
 // office/review.js) opens there too: 확인함 takes it off, 문제 있음 sends the
-// person's words to its coordinator.
+// person's words to its coordinator. So does a trigger of the slx inbox (📨
+// Slack, 🚨 Meerkat, office/slx.js): 세션 만들기, 무시, 이런 것 숨기기 or
+// 나중에, each done by slx itself.
 // A session at work, picked in its folded table, opens there too: to look at
 // it, and to answer it directly only when the person means to.
 // A picked session shows there in one of two looks, T (⌥T) between them:
@@ -204,27 +206,30 @@ const cmdWorkers = () => (cmd.data?.coordinators || []).flatMap((c) => c.workers
 // An adopted session the person runs, that no coordinator has given a task
 // and that asks nothing: folded away unless asked for.
 const cmdQuiet = (w) => w.auto && !w.instructed && w.attention !== 'ask' && w.attention !== 'alert'
-// review.js, unless the server that sent this page has none.
+// review.js and slx.js, unless the server that sent this page has none.
 const cmdRev = () => typeof revList === 'function'
+const cmdSlx = () => typeof slxList === 'function'
 // The person's turn (내 차례), one list of what waits on their input: a
-// decision ({ p }, a brief's question), a session waiting on them ({ c }) and
-// finished work to look at ({ r }). /command's `turn` (office/turn.py) gives
+// decision ({ p }, a brief's question), a session waiting on them ({ c }),
+// finished work to look at ({ r }) and a trigger slx collected ({ x }, a
+// Slack mention or a Meerkat incident without a session row; slx.js). /command's `turn` (office/turn.py) gives
 // the order: oldest first, a worker's rows together; each row points at the
 // thing in `pending`, `calls` or `reviews`, which an answer takes out. A
 // server from before `turn`: decisions, then sessions, then reviews. j/k walk
 // it, the list draws it, an answer goes on to its next row.
 function cmdItems() {
   const d = cmd.data || {}
-  if (!d.turn) return [...(d.pending || []).map((p) => ({ p })), ...(d.calls || []).map((c) => ({ c })), ...(cmdRev() ? revList() : []).map((r) => ({ r }))]
+  if (!d.turn) return [...(d.pending || []).map((p) => ({ p })), ...(d.calls || []).map((c) => ({ c })), ...(cmdRev() ? revList() : []).map((r) => ({ r })), ...(cmdSlx() ? slxTurn() : []).map((x) => ({ x }))]
   const out = []
   for (const t of d.turn) {
     const p = t.kind === 'decision' && cmdPending(t.file), c = t.kind === 'session' && cmdCall(t.sid)
     const r = t.kind === 'review' && cmdRev() && revList().find((x) => x.coord === t.coord && x.id === t.id)
-    if (p) out.push({ p, worker: t.worker }); else if (c) out.push({ c, worker: t.worker }); else if (r) out.push({ r, worker: t.worker })
+    const x = t.kind === 'slx' && cmdSlx() && slxTurn().find((y) => y.id === t.id)
+    if (p) out.push({ p, worker: t.worker }); else if (c) out.push({ c, worker: t.worker }); else if (r) out.push({ r, worker: t.worker }); else if (x) out.push({ x })
   }
   return out
 }
-const cmdItemKey = (it) => (it.p ? 'p:' + it.p.file : it.r ? 'r:' + it.r.coord + '|' + it.r.id : 'c:' + it.c.sid)
+const cmdItemKey = (it) => (it.p ? 'p:' + it.p.file : it.r ? 'r:' + it.r.coord + '|' + it.r.id : it.x ? 'x:' + it.x.id : 'c:' + it.c.sid)
 // The row after this one (else the one before), to open once it is answered;
 // asked before the answer takes it out of the list.
 function cmdNextAfter(it) {
@@ -232,8 +237,8 @@ function cmdNextAfter(it) {
   if (at < 0) return items[0] || null
   return items[at + 1] || items[at - 1] || null
 }
-const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : it.r ? revIsSel(it.r) : cmd.sel.sid === it.c.sid)
-function cmdGo(it) { if (it.p) cmdPick(it.p); else if (it.r) revPick(it.r); else cmdPickCall(it.c); cmdRender() }
+const cmdIsSel = (it) => !!cmd.sel && (it.p ? cmd.sel.file === it.p.file : it.r ? revIsSel(it.r) : it.x ? slxIsSel(it.x) : cmd.sel.sid === it.c.sid)
+function cmdGo(it) { if (it.p) cmdPick(it.p); else if (it.r) revPick(it.r); else if (it.x) slxPick(it.x); else cmdPickCall(it.c); cmdRender() }
 
 async function cmdAsk() {
   const sid = cmd.sel?.sid
@@ -263,6 +268,7 @@ function cmdRender() {
   if (!items.length) out.push('<div class="m" style="margin-bottom:10px">기다리는 것이 없습니다. 결정 질문, 답이나 승인을 기다리는 세션, 검토할 일이 생기면 여기에 나옵니다.</div>')
   else out.push('<ul class="feed turn">' + shown.map((it, i) => cmdTurnRow(it, shown[i - 1])).join('')
     + (more > 0 ? '<li class="more" data-fold="turn">더 보기 · ' + more + '개 더</li>' : cmd.turnOpen && items.length > TURN_SHOWN ? '<li class="more" data-fold="turn">접기</li>' : '') + '</ul>')
+  if (cmdSlx()) out.push(slxFoot())
   out.push(cmdWorkersHtml(d))
   const recent = d.recent || []
   out.push('<h3 class="recent">📄 최근 브리프 <span class="m">누르면 옆에 열림</span></h3>')
@@ -294,7 +300,7 @@ function cmdWorkersHtml(d) {
     for (const w of rows) {
       const sel = !!cmd.sel && cmd.sel.sid === w.sid
       const st = !w.live ? 'gone' : w.doing === 'asking' || w.doing === 'alert' ? w.doing : w.state
-      out.push('<tr class="w' + (sel ? ' sel' : '') + '" data-sid="' + cmdEsc(w.sid) + '" title="옆에 열기 (마지막 답, G로 pane)"><td>' + cmdEsc(w.slug) + (w.relation === 'adopted' ? ' <span class="m">' + (w.auto ? '자동 입양' : '입양') + '</span>' : '') + (w.summary && w.summary !== w.slug ? '<span class="sum">' + cmdEsc(w.summary) + '</span>' : '') + '</td><td>' + cmdEsc((w.model || '-') + '/' + (w.effort || '-')) + '</td>'
+      out.push('<tr class="w' + (sel ? ' sel' : '') + '" data-sid="' + cmdEsc(w.sid) + '" title="옆에 열기 (마지막 답, G로 pane)"><td>' + cmdEsc(w.slug) + (cmdSlx() ? slxBadge(w) : '') + (w.relation === 'adopted' ? ' <span class="m">' + (w.auto ? '자동 입양' : '입양') + '</span>' : '') + (w.summary && w.summary !== w.slug ? '<span class="sum">' + cmdEsc(w.summary) + '</span>' : '') + '</td><td>' + cmdEsc((w.model || '-') + '/' + (w.effort || '-')) + '</td>'
         + '<td class="st-' + cmdEsc(st) + '">' + cmdEsc(w.live ? STATE_KO[w.state] || w.state || '?' : '창 없음') + (ATTN_KO[w.attention] ? ' ' + ATTN_KO[w.attention] : '') + '</td>'
         + '<td>' + (w.brief ? '<a href="#" data-brief="' + cmdEsc(w.brief.path) + '" data-title="' + cmdEsc(w.brief.title) + '">' + (w.brief.pending ? '⏳ ' : '📄 ') + cmdEsc(w.brief.title.slice(0, 24)) + '</a>' : '<span class="m">—</span>') + '</td>'
         + '<td>' + (w.live ? '<button class="end" data-end="' + cmdEsc(w.sid) + '" title="세션 끝내기 (옆에 열고 확인)">⏹</button>' : '') + '</td></tr>')
@@ -315,8 +321,9 @@ function cmdTurnShown(items = cmdItems()) {
 // and what it asks. A row of the same worker as the one above it leaves the
 // name out: the worker's rows read as one.
 function cmdTurnRow(it, prev) {
+  if (it.x) return cmdSlx() ? slxTurnRow(it.x) : ''
   const who = it.worker || (it.c ? it.c.slug || it.c.name : it.p ? it.p.decision.worker : it.r ? it.r.id : '') || ''
-  const same = !!prev && !!who && who === (prev.worker || (prev.c ? prev.c.slug || prev.c.name : prev.p ? prev.p.decision.worker : prev.r ? prev.r.id : ''))
+  const same = !!prev && !prev.x && !!who && who === (prev.worker || (prev.c ? prev.c.slug || prev.c.name : prev.p ? prev.p.decision.worker : prev.r ? prev.r.id : ''))
   let icon, title, ask, meta, key
   if (it.p) {
     const p = it.p, open = cmdOpen(p)
@@ -337,6 +344,7 @@ function cmdTurnRow(it, prev) {
   // A session with no summary is called by its name: said once.
   const name = who && !same ? '<b>' + cmdEsc(who) + '</b>' + (title && title !== who ? ' · ' : '') : ''
   return '<li ' + key + ' class="t' + (cmdIsSel(it) ? ' sel' : '') + (same ? ' cont' : '') + '">' + icon + ' ' + name + (title !== who || same ? cmdEsc(title) : '')
+    + (it.c && cmdSlx() ? slxBadge(it.c) : '')
     + (ask ? '<span class="ask">' + cmdEsc(ask) + '</span>' : '') + ' <span class="m">' + cmdEsc(meta.filter(Boolean).join(' · ')) + '</span></li>'
 }
 
@@ -352,6 +360,7 @@ function cmdFold(which) {
 
 function cmdClick(ev) {
   if (cmdRev() && revClick(ev)) return
+  if (cmdSlx() && slxClick(ev)) return
   const f = ev.target.closest('[data-fold]')
   if (f) return cmdFold(f.dataset.fold)
   const li = ev.target.closest('li[data-call]')
@@ -411,18 +420,21 @@ function cmdRenderSent() {
 }
 
 // What the person has open beside the panel is what the box speaks about:
-// a brief (its worker), a session (straight to it) or a review item, shown
+// a brief (its worker), a session (straight to it), a review item or an slx
+// item (who wrote, where, its link and the start of its text), shown
 // as a chip over the box. ✕ on the chip makes the box a plain task again
 // until something else is opened. Nothing open: the coordinator places it.
 function cmdAbout() {
   const s = cmd.sel
   if (!s) return null
-  const key = s.sid ? 'sid:' + s.sid : s.review ? 'review:' + s.review : 'brief:' + s.file
+  const key = s.sid ? 'sid:' + s.sid : s.review ? 'review:' + s.review : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
   // A ✕ holds for the thing it was pressed on; opening another brings the chip back.
   if (cmd.aboutSeen !== key) { cmd.aboutSeen = key; cmd.aboutOff = null }
   if (cmd.aboutOff === key) return null
   if (s.sid) return { key, kind: 'session', sid: s.sid, label: '👷 ' + s.name + ' 에게' }
   if (s.review) return { key, kind: 'review', id: s.review, coord: s.coord, label: '🔎 ' + s.review + ' 에 대해' }
+  if (s.slx && s.slx[0] === '!') return null
+  if (s.slx) return { key, kind: 'slx', id: s.slx, label: '📨 ' + (s.title || s.slx) + ' 에 대해' }
   const p = cmdPending(s.file)
   // The brief's worker: the one its question names, else the session whose latest brief it is.
   const worker = p?.decision?.worker || cmdWorkers().find((x) => x.w.brief && x.w.brief.file === s.file)?.w.slug || ''
@@ -434,6 +446,7 @@ const SAY_HINT = {
   brief: '이 브리프에 대해 할 일 (coordinator가 그 worker에게 넘깁니다)',
   review: '이 검토 항목에 대해 할 일 (문제 제기는 옆의 문제 있음 칸)',
   session: '이 세션에 바로 보낼 말 (coordinator를 거치지 않음)',
+  slx: '이 slx 항목에 대해 할 일 (coordinator가 맡길 곳을 고릅니다)',
 }
 
 // The task in the box, to where cmdAbout says: true once it went.
@@ -447,7 +460,7 @@ async function cmdSay(text) {
   }
   const c = (ab && ab.coord && cs.find((x) => x.sid === ab.coord)) || cmdCoord()
   if (!c) return false
-  const re = !ab ? null : ab.kind === 'review' ? { review: ab.id } : { brief: ab.file, worker: ab.worker }
+  const re = !ab ? null : ab.kind === 'review' ? { review: ab.id } : ab.kind === 'slx' ? { slx: ab.id } : { brief: ab.file, worker: ab.worker }
   const j = await cmdPost({ kind: 'coord_say', coord: c.sid, slug: '', value: text, ...(re ? { re } : {}) })
   if (!j) return false
   cmd.said = { coord: c.sid, at: j.at || Date.now(), text, re: ab ? ab.label : '' }
@@ -506,6 +519,7 @@ function cmdRenderDoc() {
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
   if (s.sid) return cmdRenderCall(bar, doc, dec, s)
   if (s.review) return cmdRev() ? revRenderDoc(bar, doc, dec, s) : cmdShut()
+  if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
   if (cmd.frame !== s.path) {
     cmd.frame = s.path
@@ -810,6 +824,8 @@ function commandKey(e, k, typing) {
   if (cardUp) return false
   if (typeof viewer !== 'undefined' && viewer.path) return false
   const hit = (fn) => { e.preventDefault(); fn(); return true }
+  // A trigger's armed choice (slx.js) backs out first: 3 and 4 take numbers of their own.
+  if (k === 'Escape' && cmd.sel?.slx && cmd.armed?.slx) return hit(() => { cmd.armed = null; cmdRenderDoc() })
   if (k === 'Escape' && cmd.sel) return hit(cmdShut)
   if (k === 'Escape' || k === 'd') return hit(() => setCommand(false))
   // j/k only: the arrows walk the floor beside the panel.
@@ -824,6 +840,7 @@ function commandKey(e, k, typing) {
     if ((k === '[' || k === ']') && cmdCardUp()?.shelfTab) return hit(() => cmd.card.shelfTab(k === ']' ? 1 : -1))
   }
   if (cmd.sel?.review && cmdRev() && revKey(k, cmd.sel, hit)) return true
+  if (cmd.sel?.slx && cmdSlx() && slxKey(k, cmd.sel, hit)) return true
   const p = cmd.sel && cmdPending(cmd.sel.file)
   const q = p && cmdActive(p)
   if (q && /^[1-9]$/.test(k) && +k <= q.options.length) return hit(() => { cmd.armed = { q: q.id, i: +k - 1 }; cmdRenderDoc(); toast('Enter로 「' + q.options[+k - 1].label + '」 보내기') })

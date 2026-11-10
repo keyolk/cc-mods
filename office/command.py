@@ -1,5 +1,5 @@
 """The command view: briefs that wait on the person's decision, and the
-coordinators' workers beside them.
+coordinators' workers beside them, and the slx inbox (office/slx.py).
 
 A brief is ~/briefs/YYYY-MM-DD-<slug>.html (a symlink to the keyolk/briefs
 repo) with a sidecar <same-name>.brief.json. The sidecar says which sessions
@@ -40,11 +40,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import review  # noqa: E402 - office/review.py, finished work the person should judge
 import turn  # noqa: E402 - office/turn.py, the one list of what waits on the person
+import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat incidents)
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
-KINDS = ("brief_answer", "coord_say", *review.KINDS)
+KINDS = ("brief_answer", "coord_say", *review.KINDS, *slx.KINDS)
 RECENT = 8  # briefs listed in the command panel
 # file -> (sidecar mtime, sidecar), (html mtime, title): 180 briefs are read
 # on every poll of the view, so only a changed file is read again.
@@ -312,13 +313,19 @@ def view(people: list[dict]) -> dict:
         for p in people
         if p.get("attention") in ("ask", "alert")
     ]
+    # The slx inbox: an item whose session has a row above rides on it (📨);
+    # the rest get rows of their own.
+    inbox = slx.view({c["sid"] for c in calls} | {w["sid"] for c in coords for w in c["workers"] if w.get("sid")})
+    on = slx.by_sid(inbox)
+    for row in [*calls, *(w for c in coords for w in c["workers"])]:
+        row["slx"] = on.get(row.get("sid") or "")
     names = {p["id"]: p.get("name") or p["id"][:8] for p in people}
     recent = []
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
         recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
     reviews = review.items()
     slugs = {w["sid"]: w["slug"] for c in coords for w in c["workers"] if w.get("sid") and w.get("slug")}
-    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "turn": turn.rows(waiting, calls, reviews, slugs)}
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "turn": turn.rows(waiting, calls, reviews, slugs, inbox["items"]), "slx": inbox}
 
 
 # What a session waiting on the person shows in the view's left pane: the
@@ -461,13 +468,16 @@ SLUG = re.compile(r"^[\w.-]{1,64}$")
 
 def _re(about: dict | None) -> str | None:
     """What the person has open beside the box, as the coordinator reads it:
-    `(re: <brief file>, worker <slug>) ` or `(re: review <id>) `. "" for
-    nothing open; None for something that is not a brief or a review item."""
+    `(re: <brief file>, worker <slug>) `, `(re: review <id>) ` or
+    `(re: slx <id>: <from> · <where> · <link> · "<text>") `. "" for nothing
+    open; None for something that is not a brief, a review or an slx item."""
     if not about:
         return ""
     if about.get("review"):
         rid = str(about["review"])
         return f"(re: review {rid}) " if review.ID.match(rid) else None
+    if about.get("slx"):
+        return slx.about(str(about["slx"]))
     file, worker = str(about.get("brief") or ""), str(about.get("worker") or "")
     if not NAME.match(file) or (worker and not SLUG.match(worker)):
         return None
@@ -508,6 +518,8 @@ def act(body: dict, inbox_put) -> tuple[int, dict]:
         return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""))
     if kind in review.KINDS:
         return review.act(body, inbox_put)
+    if kind in slx.KINDS:
+        return slx.act(body)
     if kind == "coord_say":
         return say(str(body.get("coord") or ""), str(body.get("slug") or ""), str(body.get("value") or ""), inbox_put, body.get("re"))
     return 400, {"error": "unknown action"}
