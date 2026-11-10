@@ -21,6 +21,13 @@
 // marked the slx line offers 무시, 나중에 and 같은 곳 숨기기 on all of them,
 // and 모두 무시 takes every trigger row at a second press. The slx line also
 // counts what is hidden and opens the mute rules, each with 해제.
+//
+// With slx's TUI off, 1 is [⏻ slx 켜기 · 세션 만들기]: the office has slx
+// start its TUI in its own tmux session (slx up) and then opens the session,
+// one press. With an older slx TUI up (it runs, but from before slx said
+// so), 1 is [↻ slx 다시 시작 · 세션 만들기]: slx quits that one as a person
+// would (Escape, q) and starts the new one; one that does not quit is left
+// to the person, with where it is. The slx line offers the same, alone.
 // Nothing here writes to Slack. Loaded before command.js.
 
 const SLX_CSS = `
@@ -44,7 +51,7 @@ document.head.appendChild(Object.assign(document.createElement('style'), { textC
 // The rules view's pick: not an id slx can have.
 const SLX_RULES = '!rules'
 // marks: trigger id -> true; allArmed: when 모두 무시 was pressed once; runOpen: ⚙ 진행 중 unfolded.
-const slxUi = { marks: {}, allArmed: 0, runOpen: false }
+const slxUi = { marks: {}, allArmed: 0, runOpen: false, upping: false }
 
 const slxData = () => cmd.data?.slx || { items: [], old: 0, mutes: [] }
 // The items with a row of their own: their session has none above.
@@ -57,6 +64,8 @@ function slxPick(x) { cmd.sel = { slx: x.id, title: x.from }; cmd.armed = null; 
 const slxIsSel = (x) => !!cmd.sel && cmd.sel.slx === x.id
 const slxLine = (t) => String(t || '').replace(/\s+/g, ' ').trim()
 const slxMarked = () => slxTurn().filter((x) => slxUi.marks[x.id])
+// An older slx TUI that runs although slx says none does.
+const slxStale = () => (slxData().stale || [])[0]
 
 // What a session's row adds when it works on slx triggers.
 function slxBadge(row) {
@@ -86,7 +95,11 @@ function slxFoot() {
   const d = slxData(), turn = slxTurn(), run = slxRunning(), marked = slxMarked(), rules = d.mutes || []
   const parts = []
   if (d.error) parts.push(cmdEsc(d.error))
-  else if (d.tui === false) parts.push('slx 꺼짐: 세션 만들기 불가')
+  else if (d.tui === false) {
+    const st = slxStale()
+    parts.push(st ? 'slx가 예전 버전으로 떠 있음 (' + cmdEsc(st.pane + ' · ' + st.window) + ')' : 'slx 꺼짐')
+    if (d.canUp) parts.push('<button data-slxf="up"' + (slxUi.upping ? ' disabled' : '') + '>' + (slxUi.upping ? '켜는 중…' : st ? '↻ slx 다시 시작' : '⏻ slx 켜기') + '</button>')
+  }
   if (run.length) parts.push('<a href="#" data-slxf="run">⚙ 진행 중 ' + run.length + (slxUi.runOpen ? ' ▾' : ' ▸') + '</a>')
   if (rules.length || d.muted) parts.push('<a href="#" data-slxf="rules">🙈 숨김 규칙 ' + rules.length + (d.muted ? ' · 가린 ' + d.muted : '') + '</a>')
   if (d.snoozed) parts.push('⏰ 나중에 ' + d.snoozed)
@@ -123,6 +136,7 @@ async function slxFootDo(what) {
   if (what === 'run') { slxUi.runOpen = !slxUi.runOpen; return cmdRender() }
   if (what === 'rules') { cmd.sel = { slx: SLX_RULES, title: '숨김 규칙' }; cmd.armed = null; return cmdRender() }
   if (what === 'clear') { slxUi.marks = {}; return cmdRender() }
+  if (what === 'up') return slxUp()
   if (what === 'all') {
     if (Date.now() - slxUi.allArmed >= 8000) { slxUi.allArmed = Date.now(); toast('한 번 더 누르면 trigger 행 ' + slxTurn().length + '건을 모두 무시합니다'); return cmdRender() }
     slxUi.allArmed = 0
@@ -218,17 +232,22 @@ function slxRenderDoc(bar, doc, dec, s) {
     }
   }
   const armed = cmd.armed && cmd.armed.slx === s.slx ? cmd.armed : null
-  const tui = slxData().tui !== false
-  const key = JSON.stringify([!!x, armed, tui, x && x.sid, x && x.alive])
+  const d = slxData(), tui = d.tui !== false, stale = !tui && slxStale(), canUp = !tui && !!d.canUp
+  const key = JSON.stringify([!!x, armed, tui, !!stale, canUp, slxUi.upping, x && x.sid, x && x.alive])
   if (dec.dataset.key === key) return
   dec.dataset.key = key
   if (!x) { dec.style.display = 'none'; dec.innerHTML = ''; return }
   dec.style.display = 'block'
   const open = x.alive ? '세션에 새 멘션 보내기' : x.sid ? '끝난 세션 이어 열기' : '세션 만들기'
-  const top = [['open', '▶ ' + open], ['done', '✓ 무시'], ['mute', '🙈 이런 것 숨기기'], ['snooze', '⏰ 나중에']]
+  const first = tui ? '▶ ' + open : slxUi.upping ? '켜는 중…' : (stale ? '↻ slx 다시 시작 · ' : '⏻ slx 켜기 · ') + open
+  const top = [['open', first], ['done', '✓ 무시'], ['mute', '🙈 이런 것 숨기기'], ['snooze', '⏰ 나중에']]
   const on = (a) => (armed && armed.act === a ? ' armed' : '')
-  let html = '<div class="m" style="margin-bottom:4px">' + cmdEsc(tui ? '숫자를 고르고 Enter · slx가 b 키처럼 뒤에서 엽니다 · Slack에는 아무것도 보내지 않습니다' : 'slx가 꺼져 있어 세션을 만들 수 없습니다 (무시·숨기기·나중에는 됩니다)') + '</div>'
-    + '<div class="qa"><div class="opts">' + top.map(([a, label], i) => '<button class="act opt' + (i === 0 ? ' rec' : '') + on(a) + '" data-sact="' + a + '"' + (a === 'open' && !tui ? ' disabled' : '') + '><span class="key">' + (i + 1) + '</span>' + cmdEsc(label) + '</button>').join('') + '</div>'
+  const say = tui ? '숫자를 고르고 Enter · slx가 b 키처럼 뒤에서 엽니다 · Slack에는 아무것도 보내지 않습니다'
+    : !canUp ? 'slx가 꺼져 있고 이 slx는 스스로 켜지 못합니다: keyolk/slx에서 make install (무시·숨기기·나중에는 됩니다)'
+      : stale ? 'slx가 예전 버전으로 떠 있어 세션을 열지 못합니다 (' + stale.pane + ' · ' + stale.window + '): 1은 그 slx를 q로 끄고 새로 띄운 뒤 세션을 엽니다 · 안 꺼지면 강제로 끄지 않고 알려 드립니다'
+        : 'slx가 꺼져 있습니다: 1은 slx를 tmux의 slx 세션(inbox 창)에 띄운 뒤 세션을 엽니다'
+  let html = '<div class="m" style="margin-bottom:4px">' + cmdEsc(say) + '</div>'
+    + '<div class="qa"><div class="opts">' + top.map(([a, label], i) => '<button class="act opt' + (i === 0 ? ' rec' : '') + on(a) + '" data-sact="' + a + '"' + (a === 'open' && !tui && (!canUp || slxUi.upping) ? ' disabled' : '') + '><span class="key">' + (i + 1) + '</span>' + cmdEsc(label) + '</button>').join('') + '</div>'
   const subs = armed ? slxSubs(x, armed.act) : []
   if (subs.length) {
     html += '<div class="sub"><div class="m">' + (armed.act === 'mute' ? '무엇을 숨길까요? 숫자를 고르고 Enter · 지금 것과 앞으로 올 것 모두 · Esc로 돌아가기' : '언제 다시 보일까요? 숫자를 고르고 Enter · 새 멘션이 오면 바로 다시 보입니다 · Esc로 돌아가기') + '</div><div class="opts">'
@@ -297,6 +316,12 @@ function slxKey(k, s, hit) {
 // rest take it off and go on as any answer does: the row's next need, else
 // the next row (table.js tblAfter), or close when none is left.
 async function slxDo(s, act, extra = {}, label = '') {
+  const d = slxData()
+  if (act === 'open' && d.tui === false) {
+    cmd.armed = null
+    if (!d.canUp || slxUi.upping) { toast(slxUi.upping ? 'slx를 켜는 중입니다' : 'slx가 꺼져 있고 이 slx는 스스로 켜지 못합니다'); return cmdRenderDoc() }
+    return slxUp(s.slx)
+  }
   const kind = { open: 'slx_open', done: 'slx_done', mute: 'slx_mute', snooze: 'slx_snooze' }[act]
   const j = await cmdPost({ kind, id: s.slx, ...extra })
   cmd.armed = null
@@ -308,4 +333,20 @@ async function slxDo(s, act, extra = {}, label = '') {
   if (cmd.data?.slx) cmd.data.slx.items = (cmd.data.slx.items || []).filter((x) => x.id !== s.slx)
   if (typeof tblAfter === 'function' && cmd.row) tblAfter(); else { cmdShut(); cmdRender() }
   if (act === 'mute') cmdLoad()
+}
+
+// [slx 켜기] / [slx 다시 시작]: slx starts its TUI (replacing an older one
+// that runs), then, with `then`, opens that trigger's session: the person
+// pressed once. The press waits for slx (up to ~20 s).
+async function slxUp(then) {
+  if (slxUi.upping) return
+  const stale = !!slxStale()
+  slxUi.upping = true
+  toast(stale ? '↻ 예전 slx를 끄고 새로 띄우는 중…' : '⏻ slx를 띄우는 중…')
+  cmdRender(); cmdRenderDoc()
+  const j = await cmdPost({ kind: 'slx_up', ...(stale ? { replace: true } : {}), ...(then ? { then } : {}) })
+  slxUi.upping = false
+  if (j) toast('⏻ ' + (j.sent || 'slx를 켰습니다'))
+  if (cmd.data?.slx && j) { cmd.data.slx.tui = true; cmd.data.slx.stale = [] }
+  cmdRender(); cmdRenderDoc(); cmdLoad()
 }

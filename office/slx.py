@@ -25,6 +25,16 @@ policy.
   coordinator works it): that row carries 📨 and the item gets no row of its own.
 - old: the open items left out as older, counted only.
 - tui: whether a slx TUI runs; without one 세션 열기 cannot.
+- stale: panes that run a slx TUI from before tui.lock (`slx list`'s
+  stale_tui), listed while none holds the lock: tui is false although one
+  runs, and 다시 시작 quits it first.
+- canUp: whether this slx has `up`, which [slx 켜기] runs.
+
+[slx 켜기] (slx_up) runs `slx up`: slx starts its TUI in its own tmux session
+(`slx`, window `inbox`) and returns once the TUI takes requests; with `then`,
+the 세션 만들기 the person pressed follows. With an older TUI up, `replace`
+has slx quit it first as a person would (Escape, q); slx never kills it, and
+one that does not quit is the person's to quit.
 - error: why the inbox could not be read (no slx, one without `list`).
 - mutes: slx's mute rules (id, label, hides); muted, snoozed: how many open
   items they and the snoozes keep out of the list.
@@ -41,7 +51,7 @@ import subprocess
 import time
 from datetime import datetime
 
-KINDS = ("slx_open", "slx_done", "slx_link", "slx_snooze", "slx_mute", "slx_unmute")
+KINDS = ("slx_open", "slx_done", "slx_link", "slx_snooze", "slx_mute", "slx_unmute", "slx_up")
 # How a mute is made from an item (slx mute -by), per trigger.
 MUTE_BY = {"slack": ("channel", "from", "text"), "meerkat": ("service", "kind", "text")}
 MUTE_ID = re.compile(r"^m[0-9a-f]{1,16}$")
@@ -52,11 +62,16 @@ CACHE_S = 5
 # A trigger older than this with no live session is left out of the view (counted only).
 WINDOW_H = float(os.environ.get("SLX_WINDOW_H") or 24)
 ID = re.compile(r"^[\w][\w:./-]{0,127}$")
+PANE = re.compile(r"^%\d{1,6}$")
 ICON = {"slack": "📨", "meerkat": "🚨"}
 TEXT_MAX = 4000
 _cache: dict = {"at": 0.0, "out": None}
-# binary path -> (mtime, knows `list`)
-_knows: dict[str, tuple[float, bool]] = {}
+# binary path -> (mtime, its usage text)
+_knows: dict[str, tuple[float, str]] = {}
+# `slx up` waits up to 15 s for the TUI, and -replace up to 5 s more for the old one to quit.
+UP_TIMEOUT = 30
+# A `slx open` right after up: tries, while slx says it has no TUI yet.
+OPEN_TRIES = 3
 
 # What `slx open|done` says, as the person reads it.
 NOTES_KO = {
@@ -82,23 +97,33 @@ def binary() -> str | None:
     return None
 
 
-def knows_list(path: str) -> bool:
-    """Whether this slx has `list`: its usage names it. Asked again only when
-    the binary changes (a reinstall)."""
+def _usage(path: str) -> str:
+    """This slx's usage text. Asked again only when the binary changes (a
+    reinstall)."""
     try:
         mt = os.path.getmtime(path)
     except OSError:
-        return False
+        return ""
     hit = _knows.get(path)
     if hit and hit[0] == mt:
         return hit[1]
     try:
         r = subprocess.run([path, "-h"], capture_output=True, text=True, timeout=5)
-        ok = "slx list" in (r.stdout + r.stderr)
+        out = r.stdout + r.stderr
     except (OSError, subprocess.TimeoutExpired):
-        ok = False
-    _knows[path] = (mt, ok)
-    return ok
+        out = ""
+    _knows[path] = (mt, out)
+    return out
+
+
+def knows_list(path: str) -> bool:
+    """Whether this slx has `list`: its usage names it."""
+    return "slx list" in _usage(path)
+
+
+def knows_up(path: str | None) -> bool:
+    """Whether this slx can start its own TUI (`slx up`)."""
+    return bool(path) and "slx up" in _usage(path)
 
 
 def _run(args: list[str], timeout: float) -> tuple[subprocess.CompletedProcess | None, str | None]:
@@ -127,7 +152,8 @@ def read() -> dict:
         except ValueError:
             d = None
         if isinstance(d, dict) and isinstance(d.get("items"), list):
-            out = {"items": d["items"], "tui": bool(d.get("tui")), "error": None, "mutes": d.get("mutes") if isinstance(d.get("mutes"), list) else [], "muted": int(d.get("muted") or 0), "snoozed": int(d.get("snoozed") or 0)}
+            stale = [{"pane": str(p.get("pane") or ""), "window": str(p.get("window") or "")[:80]} for p in d.get("stale_tui") or [] if isinstance(p, dict) and PANE.match(str(p.get("pane") or ""))]
+            out = {"items": d["items"], "tui": bool(d.get("tui")), "stale": stale, "error": None, "mutes": d.get("mutes") if isinstance(d.get("mutes"), list) else [], "muted": int(d.get("muted") or 0), "snoozed": int(d.get("snoozed") or 0)}
         else:
             out["error"] = "slx list: " + ((r.stderr or r.stdout).strip().splitlines() or [f"exit {r.returncode}"])[-1][:300]
     _cache.update(at=time.time(), out=out)
@@ -198,7 +224,7 @@ def view(rows: set[str], now: float | None = None) -> dict:
         for m in d.get("mutes") or []
         if isinstance(m, dict) and MUTE_ID.match(str(m.get("id") or ""))
     ]
-    return {"items": items, "old": old, "tui": d["tui"], "error": d["error"], "windowH": WINDOW_H, "mutes": mutes, "muted": d.get("muted", 0), "snoozed": d.get("snoozed", 0)}
+    return {"items": items, "old": old, "tui": d["tui"], "stale": d.get("stale") or [], "canUp": knows_up(binary()), "error": d["error"], "windowH": WINDOW_H, "mutes": mutes, "muted": d.get("muted", 0), "snoozed": d.get("snoozed", 0)}
 
 
 def by_sid(v: dict) -> dict[str, dict]:
@@ -270,9 +296,58 @@ def _slx(args: list[str], timeout: float = 15) -> tuple[int, dict]:
     if r.returncode != 0:
         why = _note(r.stdout) or (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
         if "not running" in why:
-            why = "slx가 꺼져 있습니다: tmux에서 slx를 켜야 세션을 열 수 있습니다"
+            why = "slx가 꺼져 있습니다: [slx 켜기]로 켜면 세션을 열 수 있습니다"
         return 409, {"error": why[:300]}
     return 200, {"ok": True, "sent": _note(r.stdout) or "보냈습니다"}
+
+
+def _up_error(out: str) -> str:
+    """Why `slx up` failed, as the person reads it."""
+    if m := re.search(r"older slx TUI is running in (%\d+) \(([^)]*)\)", out):
+        return f"slx가 예전 버전으로 떠 있습니다 ({m.group(1)} · {m.group(2)}): [slx 다시 시작]을 고르세요"
+    if m := re.search(r"older slx TUI in (%\d+) \(([^)]*)\) did not quit", out):
+        return f"예전 slx({m.group(1)} · {m.group(2)})가 꺼지지 않았습니다: 그 창에서 q로 끄고 다시 누르세요 (강제로 끄지 않았습니다)"
+    if m := re.search(r"exited at start: (.*)", out):
+        return "slx가 켜지자마자 꺼졌습니다: " + m.group(1)[:200]
+    if "did not start taking requests" in out:
+        return "slx를 띄웠지만 15초 안에 요청을 받지 않습니다: slx tmux 세션의 inbox 창을 보세요"
+    if "no tmux server" in out:
+        return "office가 tmux 밖에서 돌고 있어 slx를 띄울 수 없습니다"
+    return (out.strip().splitlines() or ["slx up 실패"])[-1][:300]
+
+
+def up(body: dict) -> tuple[int, dict]:
+    """[slx 켜기]: `slx up` (with `replace`, `-replace`), then the 세션 만들기
+    the person pressed (`then`, an item id) as if pressed again."""
+    then = body.get("then")
+    if then is not None:
+        then = str(then)
+        if not ID.match(then):
+            return 400, {"error": "bad id"}
+        if not _find(then):
+            return 404, {"error": "slx inbox에 없는 항목입니다"}
+    if not knows_up(binary()):
+        return 503, {"error": "이 slx는 스스로 켜지 못합니다: slx를 새로 설치하세요 (keyolk/slx에서 make install)"}
+    r, err = _run(["up", *(["-replace"] if body.get("replace") else [])], UP_TIMEOUT)
+    _cache["at"] = 0.0
+    if err:
+        return 503, {"error": err}
+    out = r.stdout + r.stderr
+    if r.returncode != 0:
+        return 409, {"error": _up_error(out)}
+    said = "slx가 이미 켜져 있습니다" if "already running" in out else "slx를 다시 시작했습니다" if "quit the older TUI" in out else "slx를 켰습니다"
+    if then is None:
+        return 200, {"ok": True, "sent": said}
+    # The TUI marks its pane once it takes requests, and up waits for that;
+    # a retry covers a TUI that a person quit in the moment between.
+    for i in range(OPEN_TRIES):
+        code, j = _slx(["open", then])
+        if code == 200 or "꺼져" not in j.get("error", "") and "did not take" not in j.get("error", ""):
+            break
+        time.sleep(1)
+    if code != 200:
+        return code, {"error": said + "만 세션은 못 열었습니다: " + j["error"]}
+    return 200, {"ok": True, "sent": said + " · " + j["sent"]}
 
 
 def act(body: dict) -> tuple[int, dict]:
@@ -284,6 +359,8 @@ def act(body: dict) -> tuple[int, dict]:
     slx's list, never from the request) in the default app: Slack opens
     there. Every id must be in the inbox now; unmute names a rule instead."""
     kind = body.get("kind")
+    if kind == "slx_up":
+        return up(body)
     if kind == "slx_unmute":
         rule = str(body.get("rule") or "")
         if not MUTE_ID.match(rule):
