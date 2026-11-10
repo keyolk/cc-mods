@@ -15,7 +15,8 @@
 
 const DFR_CSS = `
 #command .rtabs .dfr { margin-left: auto; align-self: center; }
-#command .rtabs .dfr.on { background: #fff3c4; }
+#command .rtabs button.dfr.on { background: #fff3c4; color: #2a2033; border-color: rgba(59,42,53,.35); }
+#command .decide button.memo { white-space: nowrap; }
 #command .dfrc { flex-basis: 100%; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; padding: 4px 0 6px; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; }
 #command .dfrc button { border-radius: 8px !important; border-bottom: 2px solid rgba(59,42,53,.35) !important; }
 #command .dfrc button.armed { background: #2a2033; color: #fff; }
