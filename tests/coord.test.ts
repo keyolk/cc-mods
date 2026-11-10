@@ -639,7 +639,8 @@ test('coord: a wake names the worker by what it was doing, the slug after it, an
   expect(done.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout): finished its turn'])
   const ask = observe(l, parsePanes('%1\t@1\tw1\twaiting\task\t/w/tmc-layout\t'), NOW, new Set(), sums)
   expect(ask.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout, pane %1, window @1): waiting on an answer in its pane'])
-  const gone = observe(l, [], NOW + 600_000, new Set(), sums)
+  // Gone on the second tick in a row that misses it.
+  const gone = observe(observe(l, [], NOW + 590_000, new Set(), sums).ledger, [], NOW + 600_000, new Set(), sums)
   expect(gone.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout): its session is gone (pane closed or claude exited)'])
   // No summary, or one that is the slug: the slug alone, as before.
   expect([who('fix'), who('fix', 'fix'), who('fix', '  a   b ')]).toEqual(['fix', 'fix', 'a b (fix)'])
@@ -653,4 +654,9 @@ test('coord: a wake names the worker by what it was doing, the slug after it, an
   const closed: Ledger = { ...two, workers: two.workers.map((w) => (w.sid === 'w1' ? { ...w, endedAt: NOW } : w)) }
   expect(recheck('[coord] tmux 레이아웃 정리 (tmc-layout): finished its turn', closed, NOW, new Map())).toBeUndefined()
   expect(recheck('[coord] tmux 레이아웃 정리 (tmc-layout): its session is gone (pane closed or claude exited)', closed, NOW, new Map())).toContain('gone')
+  // Taken back meanwhile (its pane named it again): the gone line, sent
+  // before a reload, is no longer true.
+  expect(recheck('[coord] tmux 레이아웃 정리 (tmc-layout): its session is gone (pane closed or claude exited)', two, NOW, new Map())).toBeUndefined()
+  const back = observe({ ...l, workers: [worker({ endedAt: NOW - 5_000, goneAt: NOW - 5_000 })] }, parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t'), NOW, new Set(), sums)
+  expect(back.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout): its session is back (taken for gone, it was alive)'])
 })
