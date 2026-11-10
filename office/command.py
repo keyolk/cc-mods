@@ -276,7 +276,7 @@ def view(people: list[dict]) -> dict:
                 "name": c.get("name") or c["sid"][:8],
                 **{k: v for k, v in live(c["sid"]).items() if k != "name"},
                 "workers": [
-                    {"slug": w.get("slug"), "sid": w.get("sid"), "relation": w.get("relation") or "owned", "model": w.get("model"), "effort": w.get("effort"), **live(w.get("sid")), "brief": latest.get(w.get("sid") or "")}
+                    {"slug": w.get("slug"), "sid": w.get("sid"), "relation": w.get("relation") or "owned", "auto": bool(w.get("auto")), "model": w.get("model"), "effort": w.get("effort"), **live(w.get("sid")), "brief": latest.get(w.get("sid") or "")}
                     for w in c["workers"]
                 ],
             }

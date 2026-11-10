@@ -3182,6 +3182,8 @@ function commandFlag(x, y, top, p, t) {
   g.fillStyle = '#fff'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(label, px + 5 * cam.s, fy + fh / 2 + wave * 0.5, w - 8 * cam.s)
 }
 const RELATION = { owned: '직접 띄움', adopted: '입양' }
+// auto: the coordinator adopted it by itself (every live session, while on).
+const relKo = (w) => w.auto ? '자동 입양' : RELATION[w.relation] || w.relation
 // The card's role box: a coordinator's workers (a press opens one's card),
 // or the coordinator a worker reports to.
 function roleHtml(p) {
@@ -3189,18 +3191,18 @@ function roleHtml(p) {
   if (p.coord) {
     const ws = (p.crew || []).map((w) => {
       const on = w.sid && ents.get(w.sid), dot = on ? (DOING[on.data.doing] || '').split(' ')[0] + ' ' : ''
-      const tipT = esc((RELATION[w.relation] || w.relation) + (w.model ? ' · ' + w.model + (w.effort ? '/' + w.effort : '') : '') + (on ? '' : ' · 아직 자리에 없음'))
+      const tipT = esc(relKo(w) + (w.model ? ' · ' + w.model + (w.effort ? '/' + w.effort : '') : '') + (on ? '' : ' · 아직 자리에 없음'))
       return on ? '<button data-sid="' + esc(w.sid) + '" title="' + tipT + '">' + dot + '👷 ' + esc(w.slug || w.sid.slice(0, 8)) + '</button>' : '<button class="off" title="' + tipT + '">👷 ' + esc(w.slug || '?') + '</button>'
     }).join('')
     h += '<div class="h">🎖 지휘관 <b>' + esc(p.coordName || p.name) + '</b> · 일꾼 ' + (p.crew || []).length + '명</div>' + (ws ? '<div class="ws">' + ws + '</div>' : '<div class="m">아직 일꾼이 없습니다</div>')
   }
   if (p.boss) {
     const b = p.boss, on = ents.get(b.sid)
-    h += '<div class="h"' + (p.coord ? ' style="margin-top:6px"' : '') + '>👷 ' + esc(b.slug || '') + ' · ' + esc(RELATION[b.relation] || b.relation) + ' 일꾼</div><div class="ws">' + (on ? '<button data-sid="' + esc(b.sid) + '" style="--cc:' + p.bossColor + '">🎖 ' + esc(b.name) + '에게 보고</button>' : '<span class="m">🎖 ' + esc(b.name) + '에게 보고</span>') + '</div>'
+    h += '<div class="h"' + (p.coord ? ' style="margin-top:6px"' : '') + '>👷 ' + esc(b.slug || '') + ' · ' + esc(relKo(b)) + ' 일꾼</div><div class="ws">' + (on ? '<button data-sid="' + esc(b.sid) + '" style="--cc:' + p.bossColor + '">🎖 ' + esc(b.name) + '에게 보고</button>' : '<span class="m">🎖 ' + esc(b.name) + '에게 보고</span>') + '</div>'
   }
   return h
 }
-const roleTip = (p) => p.coord ? '<div style="color:' + p.coordColor + '">🎖 지휘관 · 일꾼 ' + (p.crew || []).length + '명</div>' : p.boss ? '<div style="color:' + p.bossColor + '">👷 ' + esc(p.boss.name) + '의 일꾼 (' + esc(RELATION[p.boss.relation] || p.boss.relation) + ')</div>' : ''
+const roleTip = (p) => p.coord ? '<div style="color:' + p.coordColor + '">🎖 지휘관 · 일꾼 ' + (p.crew || []).length + '명</div>' : p.boss ? '<div style="color:' + p.bossColor + '">👷 ' + esc(p.boss.name) + '의 일꾼 (' + esc(relKo(p.boss)) + ')</div>' : ''
 // The card's list: who it talked with, newest first.
 function talkSection(sid) {
   const mine = talkLog.filter((t) => t.from === sid || t.to === sid).slice(-6).reverse()

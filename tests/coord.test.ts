@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, DECISION_BRIEF, HOLD_MS, PANES_FMT, WORKER_CAPS, closeArgv, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, held, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, DECISION_BRIEF, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -16,10 +16,10 @@ test('coord: nothing starts while the mode is off, or beyond the limits', () => 
   expect(spawnRefusal(on(), req)).toBeUndefined()
   expect(spawnRefusal(on(), { ...req, slug: 'Bad Slug' })).toContain('slug')
   expect(spawnRefusal(on(), { ...req, effort: 'max' })).toContain('above the limit high')
-  expect(spawnRefusal(on({ limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 4 } }), { ...req, model: 'opus' })).toContain('not allowed')
+  expect(spawnRefusal(on({ limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 4, autoAdopt: true } }), { ...req, model: 'opus' })).toContain('not allowed')
   // A full model id counts as its alias.
   expect(spawnRefusal(on(), { ...req, model: 'claude-opus-5-5' })).toBeUndefined()
-  const full = on({ limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 1 }, workers: [worker({ slug: 'other' })] })
+  const full = on({ limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 1, autoAdopt: true }, workers: [worker({ slug: 'other' })] })
   expect(spawnRefusal(full, req)).toContain('already 1 workers')
   // An adopted session does not take a worker slot; an ended one frees it.
   expect(spawnRefusal({ ...full, workers: [worker({ slug: 'other', relation: 'adopted' })] }, req)).toBeUndefined()
@@ -137,21 +137,22 @@ test('coord: a worker whose pane names another session is not gone while its own
   expect(unseen(on({ workers: [worker({ at: NOW - 5_000 }), worker({ slug: 'b', sid: 'w2', endedAt: NOW })] }), [], NOW)).toEqual([])
 })
 
-test('coord: the watch wakes the coordinator for a question, an exit and the person taking over', () => {
+test('coord: the watch wakes the coordinator for a question, a finished turn and an exit; the person typing is recorded, not told', () => {
   const l = on({ workers: [worker(), worker({ slug: 'b', sid: 'w2' }), worker({ slug: 'c', sid: 'w3' }), worker({ slug: 'fresh', sid: 'w4', at: NOW - 5_000 })] })
   const seen = parsePanes(['%1\t@1\tw1\tworking\task\t/w/tmc-layout\t', '%2\t@2\tw2\tdone\tnone\t/w/b\t' + Math.floor((NOW - 1000) / 1000), ''].join('\n'))
   const { ledger, changes } = observe(l, seen, NOW)
-  expect(changes.map((c) => c.slug)).toEqual(['tmc-layout', 'b', 'b', 'c'])
+  expect(changes.map((c) => c.slug)).toEqual(['tmc-layout', 'b', 'c'])
   expect(changes[0]!.text).toContain('waiting on an answer')
-  expect(changes[1]!.text).toContain('the person is typing')
-  expect(changes[2]!.text).toContain('finished its turn')
-  expect(changes[3]!.text).toContain('gone')
+  expect(changes[1]!.text).toContain('finished its turn')
+  expect(changes[2]!.text).toContain('gone')
+  expect(changes.some((c) => /send it nothing|typing/.test(c.text))).toBe(false)
   // Just started and not yet published: not counted gone.
   expect(ledger.workers.find((w) => w.slug === 'fresh')!.endedAt).toBeUndefined()
   expect(ledger.workers.find((w) => w.slug === 'c')!.endedAt).toBe(NOW)
   const b = ledger.workers.find((w) => w.slug === 'b')!
-  expect(held(b, NOW)).toBe(true)
-  expect(held(b, NOW + HOLD_MS)).toBe(false)
+  expect(b.typedAt).toBe(NOW - 1000)
+  expect(typedLately(b, NOW)).toBe(true)
+  expect(typedLately(b, NOW + TYPED_MS)).toBe(false)
   // Seen again unchanged: nothing new to say.
   expect(observe(ledger, seen, NOW + 10_000).changes).toEqual([])
 })
@@ -194,13 +195,12 @@ test('coord: a wake held through the coordinator\'s turn is delivered only while
   // Live: "its session is gone" was queued behind the coordinator's turn and
   // arrived two minutes later, after it had found out and respawned.
   const l = on({ workers: [worker({ state: 'done', attention: 'none' }), worker({ slug: 'b', sid: 'w2', endedAt: NOW }), worker({ slug: 'c', sid: 'w3', state: 'working', attention: 'none' })] })
-  const c = (sid: string, kind: 'ask' | 'held' | 'turn' | 'gone') => ({ slug: sid, sid, kind, text: '', wake: true })
+  const c = (sid: string, kind: 'ask' | 'turn' | 'gone') => ({ slug: sid, sid, kind, text: '', wake: true })
   expect(current(c('w1', 'turn'), l, NOW)).toBe(true)
   expect(current(c('w2', 'gone'), l, NOW)).toBe(true)
   // Working again (the coordinator sent it more): no longer finished.
   expect(current(c('w3', 'turn'), l, NOW)).toBe(false)
   expect(current(c('w3', 'ask'), l, NOW)).toBe(false)
-  expect(current(c('w1', 'held'), l, NOW)).toBe(false)
   expect(current(c('nobody', 'gone'), l, NOW)).toBe(false)
 })
 
@@ -225,7 +225,7 @@ test('trust: Claude Code\'s rule, read only', () => {
 
 test('coord: a ledger from disk keeps sane limits; the prompt names the workers', () => {
   const l = parseLedger(JSON.stringify({ on: true, limits: { models: [], maxEffort: 'turbo', maxWorkers: -1 }, workers: [{ slug: 'a', sid: 'x', relation: 'owned', cwd: '/a', at: 1 }, { nope: 1 }] }), 'sid', 'n', NOW)
-  expect(l.limits).toEqual({ models: ['haiku', 'sonnet', 'opus'], maxEffort: 'high', maxWorkers: 4 })
+  expect(l.limits).toEqual({ models: ['haiku', 'sonnet', 'opus'], maxEffort: 'high', maxWorkers: 4, autoAdopt: true })
   expect(l.workers.length).toBe(1)
   expect(parseLedger('{oops', 'sid', 'n', NOW).on).toBe(false)
   const text = coordSection(l, NOW)
@@ -258,9 +258,11 @@ test('coord: /coord limits', () => {
 test('coord: the brief, the worker\'s first prompt, does not count as the person typing', () => {
   const l = on({ workers: [worker({ at: NOW - 30_000 })] })
   const seen = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW - 29_000) / 1000))
-  expect(observe(l, seen, NOW).changes).toEqual([])
+  const first = observe(l, seen, NOW)
+  expect(first.changes).toEqual([])
+  expect(first.ledger.workers[0]!.typedAt).toBeUndefined()
   const later = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t' + Math.floor((NOW + 60_000) / 1000))
-  expect(observe(l, later, NOW + 61_000).changes.map((c) => c.text)[0]).toContain('the person is typing')
+  expect(observe(l, later, NOW + 61_000).ledger.workers[0]!.typedAt).toBe(NOW + 60_000)
 })
 
 test('coord: a turn that ended between two ticks still wakes the coordinator', () => {
@@ -423,4 +425,121 @@ test('coord: the worker is told what its tools reach and to ask for anything els
   expect(text).toContain('put a folder it needs in add_dirs at spawn')
   expect(text).toContain('A repository Claude Code does not trust is not refused')
   expect(text).toContain('/h/research/x (code /h/worktrees/ar/x)')
+})
+
+// ---- auto-adopt: every live session is a worker while the mode is on ------
+
+const live = (sid: string, over: Partial<PaneSeen> = {}): PaneSeen => ({ pane: '%' + sid, window: '@1', sid, state: 'done', attention: 'none', cwd: '/src/' + sid, ...over })
+
+test('coord: with the mode on every live session is adopted, but not itself, a worker it has, or one it handed back', () => {
+  const l = on({ workers: [worker({ sid: 'w1' })], released: ['gone-back'] })
+  const seen = [live('coord-sid'), live('w1'), live('ops'), live('ops'), live('gone-back'), live('x9abcdef')]
+  const { ledger: next, adopted } = autoAdopt(l, seen, new Map([['ops', 'ops-k8s']]), new Set(), NOW)
+  expect(adopted.map((w) => [w.slug, w.sid, w.relation, w.auto])).toEqual([['ops-k8s', 'ops', 'adopted', true], ['x9abcdef', 'x9abcdef', 'adopted', true]])
+  expect(adopted[0]).toMatchObject({ pane: '%ops', cwd: '/src/ops', at: NOW })
+  expect(next.workers.length).toBe(3)
+  expect(next.log.at(-1)).toMatchObject({ kind: 'adopt', text: 'auto: ops-k8s (%ops), x9abcdef (%x9abcdef)' })
+  // Nothing new: the very same ledger, so the mod does not save.
+  expect(autoAdopt(next, seen, new Map(), new Set(), NOW + 1).ledger).toBe(next)
+  // Off, or the mode off: nothing.
+  expect(autoAdopt(on({ limits: { ...on().limits, autoAdopt: false } }), seen, new Map(), new Set(), NOW).adopted).toEqual([])
+  expect(autoAdopt({ ...l, on: false }, seen, new Map(), new Set(), NOW).adopted).toEqual([])
+})
+
+test('coord: another coordinator that is on, and its owned workers, are not adopted', () => {
+  const other = JSON.stringify({ on: true, sid: 'c2', workers: [{ slug: 'a', sid: 'c2w', relation: 'owned' }, { slug: 'b', sid: 'c2old', endedAt: 1 }, { slug: 'c', sid: 'c2ad', relation: 'adopted' }, { slug: 'd', sid: 'c2legacy' }] })
+  const skip = foreign([other, JSON.stringify({ on: false, sid: 'c3', workers: [{ slug: 'z', sid: 'c3w' }] }), '{oops', JSON.stringify({ on: true, sid: 'coord-sid' })], 'coord-sid')
+  // A worker from before `relation` was written is owned, as the office reads it.
+  expect([...skip].sort()).toEqual(['c2', 'c2legacy', 'c2w'])
+  const { adopted } = autoAdopt(on(), ['c2', 'c2w', 'c2old', 'c2ad', 'c3', 'c3w'].map((s) => live(s)), new Map(), skip, NOW)
+  expect(adopted.map((w) => w.sid)).toEqual(['c2old', 'c2ad', 'c3', 'c3w'])
+  // One adopted before it turned coordinator is dropped while still quiet;
+  // one the coordinator has instructed stays.
+  const l = on({ workers: [worker({ sid: 'c2', slug: 'c2', relation: 'adopted', auto: true }), worker({ sid: 'c2w', slug: 'c2w', relation: 'adopted', auto: true, instructed: NOW - 5 })] })
+  expect(autoAdopt(l, [], new Map(), skip, NOW).ledger.workers.map((w) => w.sid)).toEqual(['c2w'])
+})
+
+test('coord: a slug from the session name, SLUG-shaped and unique among the active workers', () => {
+  expect(adoptSlug('ops-k8s', 'abcd1234', new Set())).toBe('ops-k8s')
+  expect(adoptSlug('My Session!', 'abcd1234', new Set())).toBe('my-session')
+  expect(adoptSlug(undefined, 'ABCD1234-ffff', new Set())).toBe('abcd1234')
+  expect(adoptSlug('--', 'abcd1234', new Set())).toBe('abcd1234')
+  expect(adoptSlug('ops-k8s', 'abcd1234', new Set(['ops-k8s']))).toBe('ops-k8s-abcd')
+  expect(adoptSlug('ops-k8s', 'abcd1234', new Set(['ops-k8s', 'ops-k8s-abcd']))).toBe('ops-k8s-abcd1')
+  expect(adoptSlug('x'.repeat(60), 'abcd1234', new Set(['x'.repeat(40)]))).toMatch(/^x{34}-abcd$/)
+  // Two sessions with one name, adopted in one pass.
+  const { adopted } = autoAdopt(on(), [live('s1aaaaaa'), live('s2bbbbbb')], new Map([['s1aaaaaa', 'cc-mods'], ['s2bbbbbb', 'cc-mods']]), new Set(), NOW)
+  expect(adopted.map((w) => w.slug)).toEqual(['cc-mods', 'cc-mods-s2bb'])
+})
+
+test('coord: a session handed back is never adopted again, until the person adopts it', () => {
+  const w = worker({ slug: 'ops-k8s', sid: 'ops', relation: 'adopted', auto: true })
+  const l = released(on({ workers: [w] }), w, NOW)
+  expect(l.workers[0]!.endedAt).toBe(NOW)
+  expect(l.released).toEqual(['ops'])
+  expect(l.log.at(-1)).toMatchObject({ kind: 'release', text: 'ops-k8s' })
+  expect(autoAdopt(l, [live('ops')], new Map(), new Set(), NOW + 60_000).adopted).toEqual([])
+  // Recorded once, and kept across a save.
+  expect(released(l, w, NOW + 1).released).toEqual(['ops'])
+  expect(parseLedger(JSON.stringify({ ...l, released: ['ops', 7] }), 'coord-sid', 'n', NOW).released).toEqual(['ops'])
+  // The ended quiet entry itself is dropped at the next pass.
+  expect(autoAdopt(l, [live('new')], new Map(), new Set(), NOW).ledger.workers.map((x) => x.sid)).toEqual(['new'])
+})
+
+test('coord: adopted sessions never count toward the worker limit; only owned ones do', () => {
+  const lim = { ...on().limits, maxWorkers: 1 }
+  const many = autoAdopt(on({ limits: lim }), ['a1', 'a2', 'a3', 'a4', 'a5'].map((s) => live(s)), new Map(), new Set(), NOW).ledger
+  expect(many.workers.length).toBe(5)
+  expect(spawnRefusal(many, req)).toBeUndefined()
+  expect(spawnRefusal({ ...many, workers: [...many.workers, worker({ slug: 'mine', sid: 'm1' })] }, req)).toContain('already 1 workers')
+})
+
+test('coord: /coord limits adopt on|off; a ledger from before the setting adopts; off sends the quiet ones back to observed', () => {
+  const cur = on().limits
+  expect(cur.autoAdopt).toBe(true)
+  expect(parseLimits('adopt off', cur)).toEqual({ ...cur, autoAdopt: false })
+  expect(parseLimits('adopt on', { ...cur, autoAdopt: false })).toEqual(cur)
+  expect(parseLimits('adopt maybe', cur)).toBe('adopt: on or off')
+  expect(parseLedger(JSON.stringify({ on: true, limits: { maxWorkers: 2 } }), 's', 'n', NOW).limits.autoAdopt).toBe(true)
+  expect(parseLedger(JSON.stringify({ on: true, limits: { autoAdopt: false } }), 's', 'n', NOW).limits.autoAdopt).toBe(false)
+  const l = on({ workers: [worker({ slug: 'q', sid: 'q', relation: 'adopted', auto: true }), worker({ slug: 't', sid: 't', relation: 'adopted', auto: true, instructed: NOW - 1 }), worker({ slug: 'h', sid: 'h', relation: 'adopted' }), worker()] })
+  const off = unadopt(l, NOW)
+  expect(off.workers.map((w) => w.slug)).toEqual(['t', 'h', 'tmc-layout'])
+  expect(off.released).toEqual([])
+  expect(unadopt(off, NOW)).toBe(off)
+  expect(coordSection(on({ limits: { ...cur, autoAdopt: false } }), NOW)).toContain('/coord limits adopt off')
+  const text = coordSection(on({ workers: [worker({ slug: 'q', sid: 'q', relation: 'adopted', auto: true })] }), NOW)
+  expect(text).toContain('Every live session is your adopted worker')
+  expect(text).toContain("Adopted, the person's (not instructed yet; coord_roster has their state): q /w/tmc-layout.")
+  expect(text).toContain('No workers yet.')
+  const told = coordSection(on({ workers: [worker({ slug: 'q', sid: 'q', relation: 'adopted', auto: true, instructed: NOW })] }), NOW)
+  expect(told).toContain('| q | adopted (auto) |')
+  expect(told).not.toContain("Adopted, the person's")
+  expect(text).toContain('4 owned workers; auto-adopt on.')
+})
+
+test('coord: the person typing in an auto-adopted session is only noted; its own work wakes nobody until the coordinator instructs it', () => {
+  const t = (ms: number) => String(Math.floor(ms / 1000))
+  // Typed 2 minutes before it was adopted: noted for the rest of TYPED_MS.
+  const [a] = autoAdopt(on(), parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t' + t(NOW - 120_000)), new Map(), new Set(), NOW).adopted
+  expect(a!.typedAt).toBe(NOW - 120_000)
+  expect(typedLately(a!, NOW)).toBe(true)
+  expect(typedNote(a!, NOW)).toBe(' Note: the person typed in this pane lately (' + new Date(NOW - 120_000).toTimeString().slice(0, 5) + ', 2 min ago); the instruction is queued behind their turn and their draft is not touched.')
+  expect(typedNote(a!, NOW - 120_000 + TYPED_MS)).toBe('')
+  // Typed again after adoption, even within the first minute: recorded, no change at all.
+  const l = on({ workers: [{ ...a!, typedAt: undefined }] })
+  const r = observe(l, parsePanes('%7\t@1\tops\tworking\tnone\t/src/ops\t' + t(NOW + 5_000)), NOW + 6_000)
+  expect(r.changes).toEqual([])
+  expect(r.ledger.workers[0]!.typedAt).toBe(NOW + 5_000)
+  // Its turns end silently, its asks do not wake; gone does not wake either.
+  const busy = on({ workers: [{ ...a!, state: 'working', typedAt: undefined }] })
+  expect(observe(busy, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([])
+  expect(observe(busy, parsePanes('%7\t@1\tops\twaiting\task\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'ask', wake: false })])
+  expect(observe(busy, [], NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'gone', wake: false })])
+  // Instructed once: its turns are news.
+  const told = on({ workers: [{ ...a!, state: 'working', typedAt: undefined, instructed: NOW + 1 }] })
+  expect(observe(told, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'turn', wake: true })])
+  // Handed over by the person (/coord adopt): wakes as before.
+  const manual = on({ workers: [{ ...a!, auto: undefined, state: 'working', typedAt: undefined }] })
+  expect(observe(manual, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'turn', wake: true })])
 })

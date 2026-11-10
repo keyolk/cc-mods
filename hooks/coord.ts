@@ -7,7 +7,7 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, HOLD_MS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, closeArgv, coordSection, current, held, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordSection, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -32,13 +32,13 @@ type Ctx = { sid: () => string; home: () => string; pane: () => string | undefin
 const TOOLS = {
   roster: {
     name: 'coord_roster',
-    description: 'Coordinator mode: every live Claude session in tmux with its relation to this coordinator (owned, adopted, observed), state, attention, directory and SendMessage name. Call before starting a worker.',
+    description: 'Coordinator mode: every live Claude session in tmux with its relation to this coordinator (owned; adopted, every live session by default; observed: another coordinator, its owned workers, a session handed back), state, attention, directory and SendMessage name. Call before starting a worker.',
     inputSchema: { type: 'object', properties: {} },
   },
   route: {
     name: 'coord_route',
     description:
-      'Coordinator mode: where a task goes. One cheap model call reads every live session (relation, state, directory, repository, its recent prompts) and your limits, and answers send (an owned or adopted worker), adopt (an observed session that fits; the person hands it over), spawn (a new worker: repo_dir or cwd, model, effort) or unsure, with a reason. It only answers: act on it with coord_send or coord_spawn. Call it first for every task.',
+      'Coordinator mode: where a task goes. One cheap model call reads every live session (relation, state, directory, repository, its recent prompts) and your limits, and answers send (an owned or adopted worker: every live session is adopted by default), adopt (an observed session that fits; the person hands it over), spawn (a new worker: repo_dir or cwd, model, effort) or unsure, with a reason. It only answers: act on it with coord_send or coord_spawn. Call it first for every task.',
     inputSchema: { type: 'object', properties: { task: { type: 'string', description: "the task, in the person's words" } }, required: ['task'] },
   },
   spawn: {
@@ -63,12 +63,12 @@ const TOOLS = {
   },
   send: {
     name: 'coord_send',
-    description: 'Coordinator mode: send an instruction to an owned or adopted worker; it arrives in that session as a prompt starting with [coordinator]. Refused for observed sessions and while the person holds the worker.',
+    description: 'Coordinator mode: send an instruction to an owned or adopted worker (every live session is adopted by default); it arrives in that session as a prompt starting with [coordinator]. Refused for observed sessions. The person typing in that pane is no bar (the instruction is queued behind their turn and leaves their draft alone); the result notes it when they typed there in the last 10 minutes.',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' }, text: { type: 'string' } }, required: ['slug', 'text'] },
   },
   close: {
     name: 'coord_close',
-    description: 'Coordinator mode: end a worker. Owned: kills the pane coord_spawn made for it (or its fallback window) and removes its worktree (refused when the worktree has uncommitted changes). Adopted: hands it back to the person (the session keeps running).',
+    description: 'Coordinator mode: end a worker. Owned: kills the pane coord_spawn made for it (or its fallback window) and removes its worktree (refused when the worktree has uncommitted changes). Adopted: hands it back to the person (the session and its pane keep running) and it is not adopted again.',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' } }, required: ['slug'] },
   },
 }
@@ -204,19 +204,23 @@ async function turnOn($: any, fresh: boolean) {
 // framed prompt; the rest only updates the ledger the office draws.
 let ticking = false
 async function tick($: any) {
-  if (ticking || !ledger?.on || !active(ledger).length) return
+  if (ticking || !ledger?.on || (!active(ledger).length && !ledger.limits.autoAdopt)) return
   ticking = true
   try {
     // Panes first: a coord tool (close, spawn) may save the ledger while
     // tmux answers, and observing the ledger from before that would undo it.
     const seen = await panes($)
+    // A session that appeared since the last tick becomes an adopted worker.
+    await adoptLive($, seen, false)
     // A worker no pane names is gone only when its session is: another
     // session can take its pane's name (a `claude -p` it ran, from a cc-mods
     // before register.ts kept those off the pane).
     const live = await alive($, unseen(ledger, seen, Date.now()).map((w) => w.sid))
     const { ledger: l, changes } = observe(ledger, seen, Date.now(), live)
     let out = l
-    for (const c of changes) out = logged(out, 'event', c.text, Date.now())
+    // A quiet worker's asks are the person's own work: kept in its
+    // row, not in the log the office shows.
+    for (const c of changes) if (c.wake || c.kind === 'gone') out = logged(out, 'event', c.text, Date.now())
     if (changes.length || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
     // A worker coord_close is closing: its pane went first, its endedAt
     // comes when the close saves. Not news to the coordinator that closed it.
@@ -225,6 +229,23 @@ async function tick($: any) {
   } finally {
     ticking = false
   }
+}
+
+// The ledger with every live session adopted (lib/coord.ts autoAdopt). The
+// other ledgers and the names are read only when a session is new (`full`:
+// always, for roster and route), so a quiet tick costs no more than before.
+// The ledger is taken again after the reads: a coord tool may have saved it
+// meanwhile.
+async function adoptLive($: any, seen: PaneSeen[], full: boolean) {
+  const l = ledger!
+  if (!l.on || !l.limits.autoAdopt) return
+  if (!full) {
+    const known = new Set([l.sid, ...l.released, ...active(l).map((w) => w.sid)])
+    if (seen.every((s) => known.has(s.sid))) return
+  }
+  const [n, others] = await Promise.all([names($), sh($, ['sh', '-c', 'for f in "$0"/*.json; do [ "$f" = "$1" ] || jq -c . "$f" 2>/dev/null; done', dir(), file()], { timeoutMs: 3000 })])
+  const r = autoAdopt(ledger!, seen, n, foreign(others.out.split('\n').filter(Boolean), ledger!.sid), Date.now())
+  if (r.ledger !== ledger) await save($, r.ledger)
 }
 
 // Wakes not yet delivered. A prompt submitted while the coordinator's turn
@@ -277,7 +298,7 @@ export async function coordCommand($: any, args: string): Promise<string> {
   const now = Date.now()
   if (verb === 'on') {
     await turnOn($, true)
-    return 'Coordinator mode on as `' + ledger.name + '`, with its own policy: merge only in its workers\' repositories, auto-continue, no prod write, Slack or other windows' + (ctx.policy.godBefore() ? ' (applied when god mode ends)' : '') + '. Limits: models ' + ledger.limits.models.join(', ') + ', effort up to ' + ledger.limits.maxEffort + ', ' + ledger.limits.maxWorkers + ' workers (/coord limits to change). The coord_* tools are there from the next prompt.'
+    return 'Coordinator mode on as `' + ledger.name + '`, with its own policy: merge only in its workers\' repositories, auto-continue, no prod write, Slack or other windows' + (ctx.policy.godBefore() ? ' (applied when god mode ends)' : '') + '. Limits: ' + limitsText(ledger.limits) + ' (/coord limits to change)' + (ledger.limits.autoAdopt ? ' Every live session becomes an adopted worker within 10 s; /coord release <slug> hands one back for good.' : '') + ' The coord_* tools are there from the next prompt.'
   }
   if (verb === 'off') {
     watch?.cancel()
@@ -292,11 +313,12 @@ export async function coordCommand($: any, args: string): Promise<string> {
     return 'Coordinator mode off; this session\'s policy is back to what it was. Workers keep running in their panes; the ledger stays for the next /coord on.'
   }
   if (verb === 'limits') {
-    if (!arg) return 'Limits: models ' + ledger.limits.models.join(', ') + '; effort up to ' + ledger.limits.maxEffort + '; ' + ledger.limits.maxWorkers + ' workers.'
+    if (!arg) return 'Limits: ' + limitsText(ledger.limits)
     const lim = parseLimits(arg, ledger.limits)
     if (typeof lim === 'string') return lim
-    await save($, logged({ ...ledger, limits: lim }, 'limits', arg, now))
-    return 'Limits now: models ' + lim.models.join(', ') + '; effort up to ' + lim.maxEffort + '; ' + lim.maxWorkers + ' workers.'
+    const next = logged({ ...ledger, limits: lim }, 'limits', arg, now)
+    await save($, lim.autoAdopt ? next : unadopt(next, now))
+    return 'Limits now: ' + limitsText(lim)
   }
   if (verb === 'adopt') {
     // By pane id (%12), session name, or the start of a session id.
@@ -305,20 +327,28 @@ export async function coordCommand($: any, args: string): Promise<string> {
     const hit = seen.find((s) => s.pane === arg || n.get(s.sid) === arg || (arg.length >= 6 && s.sid.startsWith(arg)))
     if (!hit) return 'No live session matches ' + JSON.stringify(arg) + '; give its pane id, name or session id.'
     if (hit.sid === ledger.sid) return 'That is this session.'
-    if (active(ledger).some((w) => w.sid === hit.sid)) return 'Already in the ledger.'
-    const slug = (n.get(hit.sid) ?? hit.sid.slice(0, 8)).toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 40)
+    const had = active(ledger).find((w) => w.sid === hit.sid)
+    // Adopted by autoAdopt: the person handing it over makes it theirs no
+    // longer, so its turns wake the coordinator from now on.
+    if (had?.auto) {
+      await save($, logged({ ...ledger, workers: ledger.workers.map((x) => (x === had ? { ...x, auto: undefined } : x)) }, 'adopt', had.slug + ' (' + hit.pane + ') handed over', now))
+      return 'Adopted ' + had.slug + ' (' + hit.pane + '), handed over: its turns wake the coordinator now.'
+    }
+    if (had) return 'Already in the ledger.'
+    const slug = adoptSlug(n.get(hit.sid), hit.sid, new Set(active(ledger).map((x) => x.slug)))
     const w: Worker = { slug, sid: hit.sid, relation: 'adopted', pane: hit.pane, window: hit.window, cwd: hit.cwd, at: now, state: hit.state, attention: hit.attention }
-    await save($, logged({ ...ledger, workers: [...ledger.workers, w] }, 'adopt', slug + ' (' + hit.pane + ')', now))
+    // A session handed back before is the coordinator's again.
+    await save($, logged({ ...ledger, released: ledger.released.filter((x) => x !== hit.sid), workers: [...ledger.workers, w] }, 'adopt', slug + ' (' + hit.pane + ')', now))
     return 'Adopted ' + slug + ' (' + hit.pane + '). The coordinator may instruct it now.'
   }
   if (verb === 'release') {
     const w = active(ledger).find((x) => x.slug === arg)
     if (!w) return 'No worker ' + arg
-    await save($, logged({ ...ledger, workers: ledger.workers.map((x) => (x === w ? { ...x, endedAt: now } : x)) }, 'release', arg, now))
-    return 'Released ' + arg + '; it keeps running, now observed only.'
+    await save($, released(ledger, w, now))
+    return 'Released ' + arg + '; it keeps running, now observed only, and is not adopted again (/coord adopt takes it back).'
   }
-  const rows = active(ledger).map((w) => '- ' + w.slug + ' · ' + w.relation + ' · ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' · ' + (w.state ?? '?') + (held(w, now) ? ' · held by you' : '') + ' · ' + (w.pane ?? ''))
-  return 'Coordinator mode ' + (ledger.on ? 'on' : 'off') + ' as `' + ledger.name + '`.\n' + (rows.length ? rows.join('\n') : 'No workers.') + '\n/coord on|off|adopt <pane|name>|release <slug>|limits [models <list>|effort <level>|workers <n>]'
+  const rows = active(ledger).map((w) => '- ' + w.slug + ' · ' + w.relation + (w.auto ? ' (auto)' : '') + ' · ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' · ' + (w.state ?? '?') + (typedLately(w, now) ? ' · you typed lately' : '') + ' · ' + (w.pane ?? ''))
+  return 'Coordinator mode ' + (ledger.on ? 'on' : 'off') + ' as `' + ledger.name + '`.\n' + (rows.length ? rows.join('\n') : 'No workers.') + '\n/coord on|off|adopt <pane|name>|release <slug>|limits [models <list>|effort <level>|workers <n>|adopt on|off]'
 }
 
 // ---- the tools --------------------------------------------------------------
@@ -346,6 +376,7 @@ export async function coordTool($: any, tool: string, input: any): Promise<{ res
 
 async function roster($: any): Promise<string> {
   const seen = await panes($)
+  await adoptLive($, seen, true)
   const n = await names($)
   const mine = new Map(active(ledger!).map((w) => [w.sid, w]))
   const now = Date.now()
@@ -353,8 +384,8 @@ async function roster($: any): Promise<string> {
     .filter((s, i) => seen.findIndex((x) => x.sid === s.sid) === i)
     .map((s) => {
       const w = mine.get(s.sid)
-      const rel = s.sid === ledger!.sid ? 'self' : (w?.relation ?? 'observed')
-      return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && held(w, now) ? ' HELD' : '') + ' | ' + s.cwd + ' |'
+      const rel = s.sid === ledger!.sid ? 'self' : (w?.relation ?? 'observed') + (w?.auto ? ' (auto)' : '')
+      return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && typedLately(w, now) ? ' person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) : '') + ' | ' + s.cwd + ' |'
     })
   return '| name | relation | pane | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n')
 }
@@ -369,8 +400,9 @@ const PROMPTS_SH =
 async function route($: any, i: any): Promise<{ result: string } | { deny: string }> {
   const task = String(i.task ?? '').trim()
   if (!task) return { deny: 'coord_route: the task is empty' }
-  const l = ledger!
   const seen = await panes($)
+  await adoptLive($, seen, true)
+  const l = ledger!
   const others = seen.filter((s) => s.sid !== l.sid)
   const [n, titles, prompts, repos] = await Promise.all([
     names($),
@@ -555,10 +587,9 @@ async function placeOf($: any, dir: string, common: string | undefined) {
 async function send($: any, i: any): Promise<{ result: string } | { deny: string }> {
   const w = active(ledger!).find((x) => x.slug === String(i.slug ?? ''))
   const text = String(i.text ?? '').trim()
-  if (!w) return { deny: 'no owned or adopted worker ' + i.slug + '; observed sessions are not instructed' }
+  if (!w) return { deny: 'no owned or adopted worker ' + i.slug + '; observed sessions (another coordinator, its workers, one handed back) are not instructed: the person adopts one with /coord adopt <pane>' }
   if (!text) return { deny: 'empty instruction' }
   const now = Date.now()
-  if (held(w, now)) return { deny: 'the person is working in ' + w.slug + ' (held until ' + new Date(w.heldAt! + HOLD_MS).toTimeString().slice(0, 5) + '); tell the person instead' }
   // The office inbox (office.py inbox_put): the worker's cc-mods takes it
   // within 2 s and submits it there as a prompt.
   const inbox = ctx!.home() + '/.claude/state/office/inbox/' + w.sid + '.json'
@@ -571,8 +602,10 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
   // keep: an instruction reaches a worker in the middle of a long turn, which
   // may outlast the 2-minute stale limit of an unmarked inbox file.
   await $.fs.write(inbox, JSON.stringify({ text: old ? old + '\n\n' + msg : msg, at: now / 1000, keep: true }))
-  await save($, logged(ledger!, 'send', w.slug + ': ' + text.slice(0, 200), now))
-  return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' }
+  // The first instruction ends a quiet worker's quiet: its reply is news.
+  const l = w.instructed ? ledger! : { ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, instructed: now } : x)) }
+  await save($, logged(l, 'send', w.slug + ': ' + text.slice(0, 200), now))
+  return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + ').' + typedNote(w, now) }
 }
 
 async function close($: any, i: any): Promise<{ result: string } | { deny: string }> {
@@ -580,8 +613,8 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
   if (!w) return { deny: 'no worker ' + i.slug }
   const now = Date.now()
   if (w.relation === 'adopted') {
-    await save($, logged({ ...ledger!, workers: ledger!.workers.map((x) => (x === w ? { ...x, endedAt: now } : x)) }, 'release', w.slug, now))
-    return { result: 'Handed ' + w.slug + ' back to the person; it keeps running.' }
+    await save($, released(ledger!, w, now))
+    return { result: 'Handed ' + w.slug + ' back to the person; it keeps running in its pane and is not adopted again.' }
   }
   if (w.worktree) {
     const dirty = await sh($, ['git', '-C', w.worktree, 'status', '--porcelain'])

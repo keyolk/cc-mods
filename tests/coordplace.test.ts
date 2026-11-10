@@ -8,7 +8,7 @@ import { BOX_FMT, WINDOW_WORKERS, parseBoxes, pick, places, spots, type PaneBox 
 import { checkRoute, routeRequest, routeText } from '../hooks/lib/coordroute'
 
 const NOW = 1_800_000_000_000
-const LIMITS: Limits = { models: ['haiku', 'sonnet'], maxEffort: 'high', maxWorkers: 4 }
+const LIMITS: Limits = { models: ['haiku', 'sonnet'], maxEffort: 'high', maxWorkers: 4, autoAdopt: true }
 const ledger = (workers: Worker[] = []): Ledger => ({ ...emptyLedger('coord', 'cc-mods-d9', NOW), on: true, limits: LIMITS, workers })
 const worker = (slug: string, made: Worker['made']): Worker => ({ slug, sid: 's-' + slug, relation: 'owned', cwd: '/w/' + slug, at: NOW, made, window: made?.window, pane: made?.pane })
 // The coordinator's pane %1 in window @1, wide enough to split.

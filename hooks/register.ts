@@ -4172,7 +4172,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     if (e.origin?.kind === 'composer' && !e.text.startsWith('<')) pendingHuman = e.text
     // The person typed here themselves (a coordinator's instructions come in
     // through the office inbox, a plugin prompt): a coordinator holding this
-    // session as a worker leaves it alone for a while (lib/coord.ts HOLD_MS).
+    // session as a worker notes it in coord_send's result (lib/coord.ts TYPED_MS).
     if (e.origin?.kind === 'composer' && !String(e.text ?? '').startsWith('/') && isPaneId(pane)) void ownPane($, [['set', '-p', '-t', pane!, '@cc_human_at', String(Math.floor(Date.now() / 1000))]])
     // A prompt to Claude takes the person's attention to the chat; a slash
     // command (/web, /reload-plugins) does not.

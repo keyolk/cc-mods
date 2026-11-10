@@ -43,6 +43,14 @@ class CoordRelationsTest(unittest.TestCase):
         # An ended worker is observed again: no entry.
         self.assertNotIn("w3", rel)
 
+    def test_an_auto_adopted_session_is_marked(self):
+        # The coordinator adopted it by itself: the office labels it 자동 입양.
+        self.write("c1", on=True, name="lead", workers=[{"slug": "ops", "sid": "w1", "relation": "adopted", "auto": True}, {"slug": "b", "sid": "w2", "relation": "adopted"}])
+        rel = coord.relations()
+        self.assertEqual(rel["w1"]["boss"]["auto"], True)
+        self.assertEqual(rel["c1"]["crew"][0]["auto"], True)
+        self.assertNotIn("auto", rel["w2"]["boss"])
+
     def test_a_coordinator_turned_off_draws_nothing(self):
         self.write("c1", on=False, workers=[{"slug": "a", "sid": "w1"}])
         (self.dir / "broken.json").write_text("{")
