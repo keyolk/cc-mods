@@ -1730,7 +1730,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/command.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/command.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")
