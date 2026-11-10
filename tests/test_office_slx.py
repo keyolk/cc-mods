@@ -273,6 +273,28 @@ class SlxKeysTest(unittest.TestCase):
         # 무시: the trigger's row is gone; on to the first row that still needs the person.
         self.assertEqual((row_, left), ("s:s1", ["m", "b"]))
 
+    def test_many_trigger_rows_fold_to_one_line_and_j_skips_them_until_unfolded(self):
+        got = self.run_js("""
+            inbox()
+            cmd.data.slx.items.push(...[1, 2, 3, 4].map((n) => ({ id: 'z' + n, icon: '📨', from: 'P' + n, text: 't' + n })))
+            const folded = tblHtml()
+            const seen = []; cmd.row = null
+            for (let i = 0; i < 3; i++) { press('j', false, true); seen.push(cmd.row) }
+            // One opened from elsewhere stays in sight while folded.
+            slxPick({ id: 'z2', from: 'P2' }); cmd.row = 'x:z2'; const one = tblHtml()
+            cmdFold('slx'); const open = tblHtml(), walk = tblOrder().length
+            return [folded, seen, one, open, walk]
+        """)
+        folded, seen, one, opened, walk = got
+        self.assertIn("▸ 📨 slx 5", folded)
+        self.assertIn("내 차례 2 <span class=\"m\">+ 📨 5</span>", folded)
+        self.assertNotIn('data-row="x:z1"', folded)
+        self.assertEqual(seen, ["s:s1", "r:c1|r1", "s:s1"])
+        self.assertIn('data-row="x:z2"', one)
+        self.assertNotIn('data-row="x:z1"', one)
+        self.assertIn('data-row="x:z1"', opened)
+        self.assertEqual(walk, 7)
+
     def test_a_number_then_enter_and_nothing_else(self):
         got = self.run_js("""
             inbox(); cmd.sel = { slx: 'a', title: 'Alice' }

@@ -40,8 +40,17 @@ const TABLE_CSS = `
 `
 document.head.appendChild(Object.assign(document.createElement('style'), { textContent: TABLE_CSS }))
 
-// othersOpen: the rows waiting on nobody unfolded.
-const tbl = { othersOpen: false }
+// othersOpen: the rows waiting on nobody unfolded; slxOpen: the triggers'
+// own rows unfolded.
+const tbl = { othersOpen: false, slxOpen: false }
+// Triggers with no session up to this many show as rows; more fold to one
+// line, 📨 slx N: a day of Slack mentions (26 in the live inbox) would
+// otherwise bury the table, the length the person complained about.
+const TBL_SLX_SHOWN = 3
+const tblOwnSlx = (R) => String(R.row.key).startsWith('x:')
+// The triggers' own rows fold away when there are many; one that is open
+// stays in sight.
+const tblSlxFolded = (all = tblAll()) => !tbl.slxOpen && all.filter((R) => R.needs && tblOwnSlx(R)).length > TBL_SLX_SHOWN
 // A row's name for the person, and its slug when that says something else.
 const tblName = (r) => r.summary || r.name || (r.sid || '').slice(0, 8)
 const tblSlug = (r) => (r.summary && r.name && r.summary !== r.name ? r.name : '')
@@ -143,12 +152,14 @@ function tblShow(R, k, render = true) {
   // The order it was opened in: an answer that takes the row out of an
   // older server's rows goes on from where it stood (tblHtml draws it too).
   tbl.order = tblOrder()
-  // A coordinator opened from the table is the one the box speaks to once it is closed.
-  if (r.isCoord) cmd.coord = r.sid
   if (render) cmdRender()
 }
 // The rows that need the person in the table's order (j/k and tblAfter walk it).
-const tblOrder = () => tblNeeds().map((R) => R.row.key)
+// Folded trigger rows are not walked; the open one is.
+function tblOrder() {
+  const all = tblAll(), folded = tblSlxFolded(all)
+  return all.filter((R) => R.needs && !(folded && tblOwnSlx(R) && R.row.key !== cmd.row)).map((R) => R.row.key)
+}
 // The row of what is open now: the one opened from the table, else the row
 // holding the picked brief, session or review item (a chip or a link opened
 // it), so j/k go on from there.
@@ -233,13 +244,24 @@ function tblRow(R, other) {
 // The table for the list: the rows that need the person, then 👷 그 밖 N.
 // Nothing is drawn for what is empty.
 function tblHtml() {
-  const all = tblAll(), needs = all.filter((R) => R.needs), others = all.filter((R) => !R.needs)
-  tbl.order = needs.map((R) => R.row.key)
+  const all = tblAll(), others = all.filter((R) => !R.needs)
+  const slxRows = all.filter((R) => R.needs && tblOwnSlx(R)), needs = all.filter((R) => R.needs && !tblOwnSlx(R))
+  const folded = tblSlxFolded(all)
+  tbl.order = tblOrder()
   // A row picked from under 그 밖 shows there even folded.
   const picked = !tbl.othersOpen && others.find((R) => R.row.key === cmd.row)
   const out = []
-  if (needs.length) out.push('<h3>✋ 내 차례 ' + needs.length + ' <span class="m">오래 기다린 순 · j/k 행 · Tab 탭</span></h3>')
+  // 내 차례 counts what sessions and briefs wait on; triggers are candidates, counted on their own line.
+  if (needs.length || slxRows.length) out.push('<h3>✋ 내 차례 ' + needs.length + (slxRows.length ? ' <span class="m">+ 📨 ' + slxRows.length + '</span>' : '') + ' <span class="m">오래 기다린 순 · j/k 행 · Tab 탭</span></h3>')
   const rows = needs.map((R) => tblRow(R, false))
+  if (folded) {
+    rows.push('<tr class="more" data-fold="slx"><td colspan="3">▸ 📨 slx ' + slxRows.length + ' <span class="m">세션 없는 멘션·incident · 펼치기</span></td></tr>')
+    const open = slxRows.find((R) => R.row.key === cmd.row)
+    if (open) rows.push(tblRow(open, false))
+  } else {
+    if (slxRows.length > TBL_SLX_SHOWN) rows.push('<tr class="more" data-fold="slx"><td colspan="3">▾ 📨 slx ' + slxRows.length + '</td></tr>')
+    rows.push(...slxRows.map((R) => tblRow(R, false)))
+  }
   if (others.length) {
     rows.push('<tr class="more" data-fold="others"><td colspan="3">' + (tbl.othersOpen ? '▾' : '▸') + ' 👷 그 밖 ' + others.length + ' <span class="m">일하는 중 ' + others.filter((R) => R.row.state === 'working').length + '</span></td></tr>')
     if (tbl.othersOpen) rows.push(...others.map((R) => tblRow(R, true)))

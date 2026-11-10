@@ -257,6 +257,7 @@ function cmdRender() {
 
 function cmdFold(which) {
   if (which === 'others') tbl.othersOpen = !tbl.othersOpen
+  else if (which === 'slx') tbl.slxOpen = !tbl.slxOpen
   cmdRender()
 }
 
@@ -273,7 +274,13 @@ function cmdClick(ev) {
   const f = ev.target.closest('[data-fold]')
   if (f) return cmdFold(f.dataset.fold)
   const tr = ev.target.closest('tr[data-row]')
-  if (tr) tblOpen(tr.dataset.row)
+  if (!tr) return
+  // A coordinator's row clicked: the box's plain tasks go to it from now on
+  // (with several on). Walking past one with j/k, or an answer moving on,
+  // never changes where they go.
+  const R = tblFind(tr.dataset.row)
+  if (R && R.row.isCoord) cmd.coord = R.row.sid
+  tblOpen(tr.dataset.row)
 }
 
 // The coordinator the box speaks to: the one last clicked, else the first
@@ -743,7 +750,7 @@ function commandKey(e, k, typing) {
 // the walk): j starts at the first, k at the last. Nothing waiting: the key
 // is the floor's.
 function cmdWalk(e, k) {
-  const list = tblNeeds().map((R) => R.row.key)
+  const list = tblOrder()
   if (!list.length) return false
   e.preventDefault()
   const at = list.indexOf(tblCur())

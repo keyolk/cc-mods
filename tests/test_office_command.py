@@ -1187,11 +1187,14 @@ class CommandKeysTest(unittest.TestCase):
             const revSel = cmd.sel
             // A session waiting on nobody: its last answer and its card.
             cmdClick(row('w4')); const quiet = tabs()
-            // The coordinator's row: its review and its look.
+            // Walking onto the coordinator's row never changes where the box's tasks go.
+            cmd.coord = null; cmd.row = 's:s1'; press('j', false, true); const walked = [cmd.row, cmd.coord]
+            // Clicking it does: its review and its look.
             cmdClick(row('c1')); const boss = [tabs(), cmd.sel.revs, cmd.coord]
-            return [first, walk, revSel, quiet, boss]
+            return [first, walk, revSel, quiet, boss, walked]
         """)
-        first, walk, rev_sel, quiet, boss = got
+        first, walk, rev_sel, quiet, boss, walked = got
+        self.assertEqual(walked, ["s:c1", None])
         self.assertEqual(first, [["dec", "wait", "rev", "card"], "dec", "a.html"])
         self.assertEqual(walk, ["wait", "rev", "card", "dec", "card", "dec", "card", "dec"])
         self.assertEqual(quiet, ["said", "card"])
