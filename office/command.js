@@ -384,7 +384,7 @@ function cmdRenderCall(bar, doc, dec, s) {
   if (!a || a.error) { dec.style.display = 'none'; dec.innerHTML = ''; return }
   dec.style.display = 'block'
   const chs = cmdChoices(a)
-  dec.innerHTML = '<div class="m" style="margin-bottom:4px">' + cmdEsc(['→ 이 세션에 직접 (coordinator를 거치지 않음)', c && c.boss ? '🎖 ' + c.boss + '의 worker · 답하면 coordinator가 10분 동안 보내지 않음' : '', c ? '' : '지금은 기다리지 않음'].filter(Boolean).join(' · ')) + '</div>'
+  dec.innerHTML = '<div class="m" style="margin-bottom:4px">' + cmdEsc(['→ 이 세션에 직접 (coordinator를 거치지 않음)', c && c.boss ? '🎖 ' + c.boss + '의 worker' : '', c ? '' : '지금은 기다리지 않음'].filter(Boolean).join(' · ')) + '</div>'
     + (a.inbox ? '<div class="m" style="margin-bottom:4px">📨 앞서 보낸 답이 아직 전달 전: ' + cmdEsc(a.inbox.text) + '</div>' : '')
     + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div><div class="opts"></div>'
     // A choice drawn on its screen takes a key, not a prompt (as on the card).
@@ -423,9 +423,9 @@ function cmdCallKey(e, s) {
 // An answer to a waiting session, as the floor card sends it: a key for the
 // choice on its screen, or a reply (its next prompt, by the office inbox).
 // Not coord_say: the person answers the session itself, in their own words,
-// and the server marks the pane as theirs, so its coordinator holds it
-// instead of answering too. A session at work, or with a reply not yet
-// taken, is busy: a second Enter within 8 s sends it anyway, as on the card.
+// and a coordinator's hold on its worker (coord_send's held) never stops it.
+// A session at work, or with a reply not yet taken, is busy: a second Enter
+// within 8 s sends it anyway, as on the card.
 async function cmdReply(s, body, label) {
   const sig = JSON.stringify([s.sid, body])
   const force = !!cmd.force && cmd.force.sig === sig && Date.now() - cmd.force.at < 8000

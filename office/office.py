@@ -1144,17 +1144,6 @@ def asking(sid: str) -> dict:
     return {"sid": sid, **me, **command.ask_block(text), "dialog": d, "suggestions": [] if d else suggestions(text), "inbox": inbox_waiting(sid)}
 
 
-def mark_human(pane: str) -> None:
-    """The person answered this session from the office: mark its pane as
-    their typing in it does (cc-mods sets @cc_human_at on a composer prompt;
-    an inbox prompt is a plugin's, so it does not). A coordinator then holds
-    it as its worker for a while (hooks/lib/coord.ts HOLD_MS) instead of
-    sending it a second answer of its own."""
-    try:
-        subprocess.run(["tmux", "set-option", "-p", "-t", pane, "@cc_human_at", str(int(time.time()))], capture_output=True, timeout=3)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-
 
 def panels(sid: str) -> dict:
     me = pane_of(sid)
@@ -1368,7 +1357,6 @@ def act(body: dict) -> tuple[int, dict]:
         if not d or not any(str(o["n"]) == str(value) for o in d["options"]):
             return 409, {"error": "no dialog with that choice on its screen now"}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
-        mark_human(pane)
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
         # value: minutes to set it aside for, "speak" for until the person
@@ -1458,7 +1446,6 @@ def act(body: dict) -> tuple[int, dict]:
             if os.path.exists(os.path.join(INBOX, sid + ".json")):
                 return 409, {"error": "busy", "busy": "inbox"}
         inbox_put(sid, text)
-        mark_human(pane)
         return 200, {"ok": True, "sent": "reply"}
     if kind in ("send", "merge"):
         return rearrange(kind, me, value)

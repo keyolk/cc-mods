@@ -391,16 +391,13 @@ class AskingTest(BriefsCase):
         with mock.patch.object(office, "pane_of", return_value=None):
             self.assertEqual(office.asking(WORKER), {"error": "no such session"})
 
-    def test_an_answer_from_the_office_marks_the_pane_as_the_persons(self):
-        # So a coordinator holds its worker (coord.ts held) instead of answering it too.
+    def test_an_answer_from_the_office_goes_to_the_session_not_its_coordinator(self):
+        # Not coord_say: coord_send's hold on a worker the person typed in never stops it.
+        self.ledger([{"slug": "w", "sid": WORKER}])
         me = {"id": WORKER, "pane": "%9", "state": "waiting"}
-        runs = []
-        with mock.patch.object(office, "snapshot", return_value=[me]), mock.patch.object(office, "inbox_put", side_effect=self.put), mock.patch.object(office, "INBOX", str(self.tmp / "inbox")), \
-                mock.patch.object(office, "set_mute"), mock.patch.object(office.subprocess, "run", side_effect=lambda a, **k: runs.append(a)):
+        with mock.patch.object(office, "snapshot", return_value=[me]), mock.patch.object(office, "inbox_put", side_effect=self.put), mock.patch.object(office, "INBOX", str(self.tmp / "inbox")), mock.patch.object(office, "set_mute"):
             self.assertEqual(office.act({"sid": WORKER, "kind": "reply", "value": "B로 해"})[0], 200)
         self.assertEqual(self.sent, [(WORKER, "B로 해")])
-        self.assertEqual(runs[0][:6], ["tmux", "set-option", "-p", "-t", "%9", "@cc_human_at"])
-        self.assertEqual(self.kept, [False])
 
     def test_the_view_route_answers_one_session_when_asked(self):
         srv = office.ThreadingHTTPServer(("127.0.0.1", 0), office.Handler)

@@ -288,9 +288,7 @@ its screen or the card's quick replies (`1-9` arms, Enter sends) and a box for
 an answer in the person's words; `j/k` walk the briefs and then these
 sessions. That answer goes to the session itself, as the card's reply or key
 does, not through `coord_say`, so a coordinator's hold on the worker never
-stops it; and the office marks the pane (`@cc_human_at`) as the person's own
-typing does, so the coordinator holds that worker for 10 minutes instead of
-answering it too. The cockpit's Coord tab (0) lists
+stops it. The cockpit's Coord tab (0) lists
 the same decisions as text. A session's card shows the newest brief it is
 recorded on (`sessions[].id` in the sidecar) as a badge that opens it.
 
