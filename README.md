@@ -24,7 +24,7 @@ needs ≥ 2.1.290).
 | **gh account** | A `gh` call against a repo whose owner `org.json` maps to a login runs with that login's token (`GH_TOKEN` from `gh auth token --user`), without `gh auth switch`, so other sessions keep their account. | `gh auth switch` (170× in 30 days) |
 | **PR polling** | One GraphQL query per account every 90 s for every PR any session touched, cached in `$.store` for all sessions; toast on newly failing checks or merge. | per-PR `gh pr view` / `gh pr checks` polling |
 | **autocomplete** | kubectl contexts and AWS profiles labelled with their stack (`org.json`), Jira keys seen, open PRs (`#91…`), tmux windows (`@w:name`). | — |
-| **policy in the system prompt** | Policy reaches Claude once via `prompt.compose` (session scope), not as context on every prompt. | `session_policy.py inject` |
+| **policy in the system prompt** | Policy (and coordinator, RCA and moved-topic context) reaches Claude once via `prompt.compose` (session scope), not as context on every prompt. Where `cc-plugin-sec-default` sends `prompt.compose` past user-tier plugins (managed settings, Team and Enterprise; the debug log says `prompt.compose bypassed by cc-plugin-sec-default (tier user)`), the same blocks go as a user-role note row (`$.session.append`) before the prompt, each block again only when its text changed (`[cc-mods context: <key> #<digest>]`, read back from the conversation, so a compaction or `/clear` sends it again). Main conversation only. | `session_policy.py inject` |
 
 Judgment that already existed in `~/.claude/hooks` is reused through
 `bin/cc-bridge.py` (Jev attention, fork judgment, neighbors), not rewritten.

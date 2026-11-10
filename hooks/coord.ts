@@ -1,13 +1,14 @@
 // Coordinator mode, the I/O side (the rules are lib/coord.ts): the /coord
 // command, the coord_* tools the coordinator's Claude calls, and the watch
 // that tells it when a worker needs it. register.ts calls coordStart from
-// session.start and adds coordSection to the system prompt.
+// session.start and adds coordSection to the system prompt (or, where
+// cc-plugin-sec-default keeps that out of reach, to the conversation).
 //
 // Only the person turns the mode on (/coord on, a command Claude cannot run)
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
-import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordSection, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -186,8 +187,11 @@ export function coordLedger(): Ledger | undefined {
   return ledger
 }
 
-export function coordPrompt(now: number): string | undefined {
-  return ledger?.on ? coordSection(ledger, now, 'Korean', reviewLine(review)) : undefined
+// coordSection in its two halves: one text in the system prompt, two
+// conversation rows where that is out of reach (register.ts contextNotes),
+// the rules sent once and the roster when it changed.
+export function coordParts(now: number): { rules: string; roster: string } | undefined {
+  return ledger?.on ? { rules: coordRules(ledger, 'Korean'), roster: coordRoster(ledger, now, reviewLine(review)) } : undefined
 }
 
 async function readOps($: any) {

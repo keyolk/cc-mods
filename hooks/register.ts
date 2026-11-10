@@ -81,7 +81,8 @@ import { renderCoordTab } from './views/coord'
 import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
-import { coordCommand, coordIdle, coordPrompt, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
+import { noteText, sentDigests, userTexts, type NoteBlock } from './lib/notes'
+import { coordCommand, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -230,6 +231,13 @@ let quietTurn: { turnId: string; taskId: string; event: string; weight: Weight; 
 // The task a quiet re-arm replaces, while its Monitor call runs: the
 // tool.call hook carries the Watch row over to the new task id.
 let rearmingFrom: string | undefined
+// Whether this session's prompt.compose hook has run: false where
+// cc-plugin-sec-default sends the event past this tier, and then the
+// context goes as conversation rows (contextNotes) instead. The engine
+// renders a prompt before the first prompt.submit (live: compose 44.552,
+// first submit's note 44.624), so where compose runs no row is sent; were
+// it ever later, the first prompt would carry the row once as well.
+let composeRan = false
 // Watches the cockpit runs itself (lib/monitor.ts, holdDeadline), by task id.
 const holds = new Map<string, { stop: (why: 'stopped' | 'expired') => void }>()
 const quietTools = new Set<string>()
@@ -986,6 +994,57 @@ async function readText($: any, path: string): Promise<string | undefined> {
     return typeof r === 'string' ? r : r?.text
   } catch {
     return undefined
+  }
+}
+
+// What cc-mods tells Claude about this session, in blocks: coordinator mode
+// (its rules and its roster), RCA mode, moved topics, the session policy.
+// One text for the system prompt's `cc-mods:policy` section; each block a
+// part of a conversation row where that section cannot be sent. Nothing
+// without a policy, as the section always was.
+async function contextBlocks($: any): Promise<NoteBlock[]> {
+  const p = (await read($, policyA)) as Policy | null
+  if (!p) return []
+  const caps = Object.entries(p.caps)
+    .map(([k, v]) => k + '=' + v)
+    .join(', ')
+  const scopes = Object.entries(p.scopes)
+    .map(([k, v]) => k + ' scoped-allow: ' + (v as string[]).join(', '))
+    .join('; ')
+  const rca = (await read($, rcaA)) as RcaState
+  const moved = (await read($, movedA)) as { prompt: string; pane: string }[]
+  const coord = coordParts(Date.now())
+  return [
+    ...(coord ? [{ key: 'coordinator', text: coord.rules }, { key: 'workers', text: coord.roster }] : []),
+    ...(rca ? [{ key: 'rca', text: rcaSection(rca) }] : []),
+    ...(moved.length ? [{ key: 'moved', text: movedSection(moved) }] : []),
+    {
+      key: 'policy',
+      text:
+        '# Session policy (' + p.mode + ')\n' + caps + (scopes ? '\n' + scopes : '') +
+        (p.caps.auto_continue === 'allow' ? '\n' + PROCEED_POLICY : '') +
+        '\nOnly the user changes this policy, with /policy. Never run session_policy.py or *_unlock.py to change it yourself; if a gate blocks you, say what you need and stop.',
+    },
+  ]
+}
+
+// The same blocks as a conversation row, before a prompt goes in, where
+// prompt.compose never reached this plugin (lib/notes.ts says why). Only the
+// blocks whose text changed since the row the conversation last holds; the
+// conversation is read each time, so a compaction or /clear that dropped
+// the row has it sent again. The row joins main's conversation alone: a
+// subagent never had the system prompt section either.
+async function contextNotes($: any) {
+  if (composeRan) return
+  const blocks = await contextBlocks($)
+  const msgs = (await $.session.messages({ as: 'api' }).catch(() => [])) as { role: string; content: unknown }[]
+  const text = noteText(blocks, sentDigests(userTexts(Array.isArray(msgs) ? msgs : [])))
+  if (!text) return
+  try {
+    const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+    if (r?.deny) $.ui.log('context note refused: ' + r.deny, { to: 'debug' })
+  } catch (err) {
+    $.ui.log('context note failed: ' + String(err), { to: 'debug' })
   }
 }
 
@@ -4231,6 +4290,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         if (alert) await startRca($, alert)
       }
     }
+    // After RCA mode may have started: the row says what holds for this prompt.
+    if (!String(e.text ?? '').startsWith('/')) await contextNotes($)
     if (e.origin?.kind !== 'composer' || !isPaneId(pane) || e.text.length < 15 || e.text.startsWith('/')) return next(e)
     const turns = (await read($, turnsA)) as TurnRecord[]
     const flow = (await read($, flowA)) as FlowEntry[]
@@ -4248,26 +4309,15 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // Session policy reaches Claude once, in the system prompt, instead of as
   // additionalContext on every prompt. Lives in the `session` scope so a
   // policy change does not invalidate the shared cache prefix.
+  // Where cc-plugin-sec-default sends prompt.compose past this tier the hook
+  // never runs: the same blocks then go as conversation rows (contextNotes,
+  // on prompt.submit). `composeRan` is how a session knows which way it is.
   on('prompt.compose', async ($: any, e: any, next: any) => {
     const r = await next(e)
-    const p = (await read($, policyA)) as Policy | null
-    if (!p) return r
-    const caps = Object.entries(p.caps)
-      .map(([k, v]) => k + '=' + v)
-      .join(', ')
-    const scopes = Object.entries(p.scopes)
-      .map(([k, v]) => k + ' scoped-allow: ' + (v as string[]).join(', '))
-      .join('; ')
-    const rca = (await read($, rcaA)) as RcaState
-    const moved = (await read($, movedA)) as { prompt: string; pane: string }[]
-    const coord = coordPrompt(Date.now())
-    const text =
-      (coord ? coord + '\n\n' : '') +
-      (rca ? rcaSection(rca) + '\n\n' : '') +
-      (moved.length ? movedSection(moved) + '\n\n' : '') +
-      '# Session policy (' + p.mode + ')\n' + caps + (scopes ? '\n' + scopes : '') +
-      (p.caps.auto_continue === 'allow' ? '\n' + PROCEED_POLICY : '') +
-      '\nOnly the user changes this policy, with /policy. Never run session_policy.py or *_unlock.py to change it yourself; if a gate blocks you, say what you need and stop.'
+    composeRan = true
+    // The coordinator's rules and roster are one section here, as coordSection.
+    const text = (await contextBlocks($)).map((b, i, all) => (i && all[i - 1]!.key === 'coordinator' ? '\n' : i ? '\n\n' : '') + b.text).join('')
+    if (!text) return r
     return { sections: [...r.sections, { id: P + ':policy', text, scope: 'session' }] }
   })
 
