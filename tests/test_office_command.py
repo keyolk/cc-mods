@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import textwrap
+import urllib.error
 import urllib.request
 from unittest import mock
 
@@ -112,6 +113,95 @@ class BriefPathTest(BriefsCase):
             self.assertIn("sandbox", extra["Content-Security-Policy"])
             self.assertEqual(office.viewable("any", str(self.link / "2026-11-08-escape.html"))[0], 403)
             self.assertEqual(office.viewable("any", str(self.link / ".." / "secret.html"))[0], 403)
+
+
+class BriefFrameTest(BriefsCase):
+    """The links inside a framed brief (← 모든 브리프, another brief) and ↗ 밖으로."""
+
+    def serve(self):
+        srv = office.ThreadingHTTPServer(("127.0.0.1", 0), office.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_port}"
+
+    def get(self, url):
+        try:
+            with urllib.request.urlopen(url) as r:
+                return r.status, r.read(), r.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.read(), e.headers
+
+    def test_the_index_and_a_sibling_resolve_beside_the_brief(self):
+        f = self.brief("2026-11-08-a")
+        (self.repo / "index.html").write_text("<html><body>list</body></html>")
+        base = self.serve()
+        code, body, h = self.get(base + "/briefs/" + f)
+        self.assertEqual(code, 200)
+        self.assertIn(b"officeBrief", body)  # tells the page which brief its frame shows
+        self.assertIn("sandbox", h["Content-Security-Policy"])
+        # What <a href="index.html"> resolves to from /briefs/<f>:
+        code, body, _ = self.get(base + "/briefs/index.html")
+        self.assertEqual(code, 200)
+        self.assertIn(b"list", body)
+        self.assertNotIn(b"cc-office", body)
+
+    def test_only_a_file_directly_in_the_folder_is_served(self):
+        self.brief("2026-11-08-a")
+        outside = self.tmp / "secret.html"
+        outside.write_text("secret")
+        (self.repo / "2026-11-08-escape.html").symlink_to(outside)
+        (self.repo / "sub").mkdir()
+        (self.repo / "sub" / "x.html").write_text("x")
+        (self.repo / "notes.txt").write_text("x")
+        base = self.serve()
+        for path in ("2026-11-08-escape.html", "sub/x.html", "..%2Fsecret.html", "%2E%2E/secret.html", "notes.txt", "missing.html", ""):
+            self.assertEqual(self.get(base + "/briefs/" + path)[0], 404, path)
+
+    def test_the_brief_route_does_not_swallow_the_scripts(self):
+        # /briefline.js shares the prefix: it must stay JavaScript.
+        base = self.serve()
+        code, body, h = self.get(base + "/briefline.js")
+        self.assertEqual(code, 200)
+        self.assertIn("javascript", h["Content-Type"])
+
+    def test_nothing_frames_the_office_page(self):
+        base = self.serve()
+        for path in ("/", "/index.html"):
+            _, _, h = self.get(base + path)
+            self.assertEqual(h["Content-Security-Policy"], "frame-ancestors 'none'")
+            self.assertEqual(h["X-Frame-Options"], "DENY")
+
+    def test_open_outside_opens_the_brief_and_needs_no_session(self):
+        f = self.brief("2026-11-08-a")
+        with mock.patch.object(command.subprocess, "Popen") as popen:
+            code, out = command.act({"kind": "brief_open", "file": f}, self.put)
+        self.assertEqual(code, 200)
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args[0][0], ["open", str((self.repo / f).resolve())])
+
+    def test_a_picked_tweb_place_still_opens_with_open_never_tmux_chrome_open(self):
+        # tmux-chrome-open lands in the caller's tmux window: the office's own pane.
+        f = self.brief("2026-11-08-a")
+        with mock.patch.object(command.subprocess, "Popen") as popen:
+            self.assertEqual(command.act({"kind": "brief_open", "file": f, "via": "tweb-chrome"}, self.put)[0], 200)
+            self.assertEqual(popen.call_args[0][0][0], "open")
+        with mock.patch.object(command.subprocess, "Popen") as popen:
+            self.assertEqual(command.act({"kind": "brief_open", "file": f, "via": "finder"}, self.put)[0], 400)
+        popen.assert_not_called()
+
+    def test_open_outside_refuses_what_is_not_a_brief(self):
+        outside = self.tmp / "secret.html"
+        outside.write_text("secret")
+        (self.repo / "2026-11-08-escape.html").symlink_to(outside)
+        for name in ("2026-11-08-escape.html", "../secret.html", "/etc/passwd", "", "sub/x.html"):
+            with mock.patch.object(command.subprocess, "Popen") as popen:
+                self.assertEqual(command.act({"kind": "brief_open", "file": name}, self.put)[0], 404, name)
+            popen.assert_not_called()
+
+    def test_the_office_routes_the_kind_without_a_session(self):
+        f = self.brief("2026-11-08-a")
+        with mock.patch.object(command.subprocess, "Popen"):
+            self.assertEqual(office.act({"kind": "brief_open", "file": f})[0], 200)
 
 
 class PendingTest(BriefsCase):
@@ -869,6 +959,55 @@ class CommandKeysTest(unittest.TestCase):
             return [g, altInBox, onBrief, altOnBrief, cardG, cardAltG, shut, focused]
         """)
         self.assertEqual(got, [True, True, False, False, False, False, False, ["%1", "%1", "%7"]])
+
+    def test_a_link_inside_the_frame_moves_the_bar_and_the_answers_with_it(self):
+        # ← 모든 브리프 inside the frame: the bar and the decision strip must
+        # not stay under the brief that was picked. Only the frame itself may say so.
+        got = self.run_js("""
+            cmdEl.querySelector = (q) => (q === '.doc iframe' ? { contentWindow: 'F' } : null)
+            cmdBriefBar = (bar, s) => { bars.push(s.file) }
+            var bars = []
+            two()
+            const ev = (src, page) => ({ source: src, data: { officeBrief: page } })
+            cmdFrameMsg(ev('X', '/briefs/index.html'))      // not the frame
+            cmdFrameMsg(ev('F', '/index.html'))             // not a brief path
+            cmdFrameMsg(ev('F', '/briefs/../etc.html'))
+            const same = [cmd.sel.file, bars.length]
+            cmdFrameMsg(ev('F', '/briefs/b.html'))          // a pending sibling
+            const sib = [cmd.sel.file, cmd.sel.path, cmd.frame]
+            cmdFrameMsg(ev('F', '/briefs/index.html'))      // the list
+            return [same, sib, cmd.sel.file, cmd.sel.path, bars]
+        """)
+        self.assertEqual(got[0], ["a.html", 0])
+        self.assertEqual(got[1], ["b.html", "/b/b.html", "/b/b.html"])
+        self.assertEqual(got[2:], ["index.html", "~/briefs/index.html", ["b.html", "index.html"]])
+
+    def test_a_redraw_keeps_the_reply_box_itself_so_the_caret_and_the_composition_survive(self):
+        # The 3 s poll redraws the decision strip; the box under the person's hands is put back, not remade.
+        got = self.run_js("""
+            const mk = (tag) => { const e = { tagName: tag, dataset: {}, style: {}, removed: 0, replaced: 0, value: '', classList: { toggle() {} } }; e.remove = () => { e.removed++ }; e.focus = () => { e.focused = true }; return e }
+            const old = mk('INPUT'); old.dataset.call = 'sid1'; old.value = 'hel'
+            const fresh = mk('INPUT'); fresh.dataset.call = 'sid1'; fresh.replaceWith = (n) => { fresh.replacedWith = n }
+            const dec = { dataset: { key: 'x' }, style: {}, contains: () => true, appendChild() {}, querySelector: (q) => (q.startsWith('.note[data-call]') ? (dec.rebuilt ? fresh : old) : q === '.opts' ? { appendChild() {} } : null) }
+            Object.defineProperty(dec, 'innerHTML', { set() { dec.rebuilt = true }, get: () => '' })
+            document.activeElement = old
+            cmd.ask = { sid: 'sid1', text: 't', suggestions: ['a'], dialog: null, inbox: null }
+            cmdAsk = () => {}
+            cmdRenderCall({ innerHTML: '', querySelector: () => ({ onclick: null, textContent: '' }) }, { querySelector: () => ({ dataset: { key: 'k' }, innerHTML: '' }), className: '', style: {}, innerHTML: '' }, dec, { sid: 'sid1', name: 'n' })
+            return [old.removed, fresh.replacedWith === old, !!old.focused, typeof old.onkeydown]
+        """)
+        self.assertEqual(got, [1, True, True, "function"])
+
+    def test_the_brief_bar_posts_a_brief_open_and_never_the_session_path(self):
+        got = self.run_js("""
+            const btn = {}, bar = { innerHTML: '', querySelector: (q) => (q === '.out' ? btn : {}) }
+            const posts = []
+            globalThis.lastPlace = () => 'session'  // office.html's, the person's remembered place
+            cmdPost = async (b) => { posts.push(b); return { sent: 'x' } }
+            cmdBriefBar(bar, { file: 'a.html', path: '/b/a.html', title: 'A' })
+            return btn.onclick().then(() => posts)
+        """)
+        self.assertEqual(got, [{"kind": "brief_open", "file": "a.html", "via": "session"}])
 
     def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
         got = self.run_js("""

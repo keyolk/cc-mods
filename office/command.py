@@ -45,7 +45,7 @@ import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
-KINDS = ("brief_answer", "coord_say", *review.KINDS, *slx.KINDS)
+KINDS = ("brief_answer", "brief_open", "coord_say", *review.KINDS, *slx.KINDS)
 RECENT = 8  # briefs listed in the command panel
 # file -> (sidecar mtime, sidecar), (html mtime, title): 180 briefs are read
 # on every poll of the view, so only a changed file is read again.
@@ -70,6 +70,54 @@ def brief_path(path: str) -> str | None:
         return None
     real = os.path.realpath(os.path.expanduser(path))
     return real if os.path.dirname(real) == root() and real.endswith(".html") and os.path.isfile(real) else None
+
+
+BRIEF_FILE = re.compile(r"^[\w.-]+\.html$")
+# Tells the office page which brief its frame shows now: a link inside a brief
+# (← 모든 브리프, another brief) moves the frame, and the page's answer buttons
+# must not stay under a brief they are not about. A sandboxed frame's URL is
+# not readable from outside, so the page says it itself.
+FRAME_NOTE = b"<script>try{parent.postMessage({officeBrief:location.pathname},'*')}catch(e){}</script>"
+
+
+def brief_by_name(name: str) -> str | None:
+    """A brief (or the index) in the briefs folder by its file name only."""
+    if not BRIEF_FILE.match(name or ""):
+        return None
+    return brief_path(os.path.join(root(), name))
+
+
+def serve_brief(name: str) -> tuple[int, bytes, str, dict]:
+    """GET /briefs/<name>: the page at a path-shaped URL, so the links inside
+    it (index.html, another brief) resolve beside it and not against the
+    office's own root, which would put the office page in the frame."""
+    path = brief_by_name(name or "index.html")
+    if not path:
+        return 404, b"not a brief", "text/plain", {}
+    try:
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError as e:
+        return 404, str(e).encode(), "text/plain", {}
+    i = body.rfind(b"</body>")
+    body = body[:i] + FRAME_NOTE + body[i:] if i >= 0 else body + FRAME_NOTE
+    return 200, body, "text/html; charset=utf-8", {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
+
+
+def open_outside(name: str, via: str = "") -> tuple[int, dict]:
+    """↗ 밖으로: the brief alone, in a window or tab of its own, never in the
+    office page (the person's screen). Always the default browser's `open`:
+    tmux-chrome-open opens in the caller's tmux window, and the server's window
+    can be the office's own, where the brief landed in the office's pane (seen
+    on a live run with the place set to TWeb). `via` is accepted only so the
+    page's remembered place does not make the click fail."""
+    path = brief_by_name(name)
+    if not path:
+        return 404, {"error": "not a brief"}
+    if via not in ("", "session", "default", "tweb", "tweb-chrome", "tweb-webkit", "chrome"):
+        return 400, {"error": "unknown place to open"}
+    subprocess.Popen(["open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 200, {"ok": True, "sent": "opened in the default browser"}
 
 
 def _iso() -> str:
@@ -608,6 +656,8 @@ def act(body: dict, inbox_put) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
         return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""))
+    if kind == "brief_open":
+        return open_outside(str(body.get("file") or ""), str(body.get("via") or ""))
     if kind in review.KINDS:
         return review.act(body, inbox_put)
     if kind in slx.KINDS:

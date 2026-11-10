@@ -398,6 +398,29 @@ function cmdRenderSay() {
   cmdRenderSent()
 }
 
+// ↗ 밖으로 opens this brief alone in the browser (the server's `open`); the
+// office page is the person's screen and never moves.
+function cmdBriefBar(bar, s) {
+  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+  bar.querySelector('.out').onclick = async () => { const j = await cmdPost({ kind: 'brief_open', file: s.file, via: lastPlace(s.path) }); if (j) toast('↗ ' + (j.sent || '열었습니다')) }
+  bar.querySelector('.shut').onclick = cmdShut
+}
+
+// The frame told which page it shows now (office/command.py FRAME_NOTE): a link
+// inside the brief moved it. The bar and the answer buttons follow, so they
+// never stay under a page they are not about; the frame itself is not rebuilt.
+// office.html listens for 'message' and calls this.
+function cmdFrameMsg(ev) {
+  const fr = cmdEl.querySelector('.doc iframe')
+  const m = fr && ev.source === fr.contentWindow && ev.data && typeof ev.data.officeBrief === 'string' && ev.data.officeBrief.match(/^\/briefs\/([\w.-]+\.html)$/)
+  if (!m || !cmd.sel || !cmd.sel.file || m[1] === cmd.sel.file) return
+  const known = [...(cmd.data?.pending || []), ...(cmd.data?.recent || [])].find((p) => p.file === m[1])
+  cmd.sel = { file: m[1], path: known ? known.path : '~/briefs/' + m[1], title: known ? known.title : m[1] }
+  cmd.frame = cmd.sel.path; cmd.armed = null; cmd.q = null; cmd.row = null
+  cmdBriefBar(cmdEl.querySelector('.bar'), cmd.sel)
+  cmdRenderDoc()
+}
+
 function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
   cmdEl.classList.toggle('doc-on', !!s)
@@ -408,13 +431,14 @@ function cmdRenderDoc() {
   if (s.revs) return cmdRev() ? revRenderList(bar, doc, dec, s) : cmdShut()
   if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
+  // It loads /briefs/<name>, not /file?path=: a link inside the brief
+  // (← 모든 브리프, another brief) then resolves beside it in ~/briefs. Against
+  // /file it became "/index.html", the office page, framed in itself.
   if (cmd.frame !== s.path) {
     cmd.frame = s.path
-    bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
-    bar.querySelector('.out').onclick = () => openLink(s.path)
-    bar.querySelector('.shut').onclick = cmdShut
+    cmdBriefBar(bar, s)
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;min-height:0'
-    doc.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="/file?sid=command&path=' + encodeURIComponent(s.path) + '"></iframe>'
+    doc.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="/briefs/' + encodeURIComponent(s.file) + '"></iframe>'
   }
   const p = cmdPending(s.file)
   const act = p && cmdActive(p)
@@ -512,7 +536,11 @@ function cmdRenderCall(bar, doc, dec, s) {
   }
   const key = JSON.stringify([a && [a.error, a.dialog, a.suggestions, a.inbox], cmd.armed, !!c])
   if (dec.dataset.key === key) return
-  const typed = dec.querySelector('.note[data-call]')?.value || '', focused = !!document.activeElement && dec.contains(document.activeElement)
+  const old = dec.querySelector('.note[data-call]'), typed = old?.value || '', focused = !!document.activeElement && dec.contains(document.activeElement)
+  // A caret, a selection and an IME composition live in the input: it is taken out of the
+  // redraw and put back (not made anew) so that a redraw under the person's hands keeps all three.
+  const keep = old && old.dataset.call === s.sid && !a?.dialog && a && !a.error ? old : null
+  if (keep) keep.remove()
   dec.dataset.key = key
   if (!a || a.error) { dec.style.display = 'none'; dec.innerHTML = ''; return }
   dec.style.display = 'block'
@@ -521,7 +549,7 @@ function cmdRenderCall(bar, doc, dec, s) {
     + (a.inbox ? '<div class="m" style="margin-bottom:4px">📨 앞서 보낸 답이 아직 전달 전: ' + cmdEsc(a.inbox.text) + '</div>' : '')
     + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div><div class="opts"></div>'
     // A choice drawn on its screen takes a key, not a prompt (as on the card).
-    + (a.dialog ? '' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다"></div>') + '</div>'
+    + (a.dialog ? '<div class="m" style="margin-top:4px">권한 확인 창은 글로 답할 수 없습니다: 위 선택지를 누르거나, 그 pane에서 답하세요 · G로 이동</div>' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다"></div>') + '</div>'
   const opts = dec.querySelector('.opts')
   chs.forEach((ch, i) => {
     const b = document.createElement('button'), armed = cmd.armed && cmd.armed.call === s.sid && cmd.armed.i === i
@@ -530,6 +558,13 @@ function cmdRenderCall(bar, doc, dec, s) {
     b.onclick = () => cmdReply(s, ch.body, ch.label)
     opts.appendChild(b)
   })
+  const fresh = dec.querySelector('.note[data-call]')
+  if (keep && fresh) {
+    fresh.replaceWith(keep)
+    keep.onkeydown = (e) => cmdCallKey(e, s)
+    if (focused) keep.focus({ preventScroll: true })
+    return
+  }
   const note = dec.querySelector('.note')
   if (note) {
     note.value = typed
