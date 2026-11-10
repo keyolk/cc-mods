@@ -109,13 +109,27 @@ def forms(real: str, cwd: str | None = None) -> list[str]:
     return out
 
 
+# A byte that may sit in a path: a match with one of these on either side is
+# part of a longer path (exp/a.md inside exp/a.md.bak or other/exp/a.md).
+_PATHCHAR = re.compile(rb"[\w.@+~/:-]")
+
+
 def mentioned(text: bytes, real: str, cwd: str | None = None) -> bool:
-    """Whether a session's transcript names `real` in one of its forms
-    (raw, or as JSON writes it with \\u escapes)."""
+    """Whether a session's transcript names `real` in one of its forms (raw,
+    or as JSON writes it with \\u escapes), as a whole path and not inside a
+    longer one. Anything in the transcript counts: what it said, what it was
+    told, what its tools printed."""
     if not text:
         return False
     for f in forms(real, cwd):
         for b in {f.encode(), json.dumps(f)[1:-1].encode()}:
-            if len(b) > 2 and b in text:
-                return True
+            if len(b) <= 2:
+                continue
+            i = text.find(b)
+            while i >= 0:
+                before, after = text[i - 1:i], text[i + len(b):i + len(b) + 1]
+                # A trailing '.' or ':' ends a sentence or starts :line.
+                if not (before and _PATHCHAR.match(before)) and not (after and _PATHCHAR.match(after) and after not in b".:"):
+                    return True
+                i = text.find(b, i + 1)
     return False

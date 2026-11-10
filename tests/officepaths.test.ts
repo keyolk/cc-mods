@@ -29,6 +29,12 @@ test('paths: absolute, ~ and relative paths in plain text, without trailing punc
   expect(ps('한글 ~/exp/2026_보고서/결과.md 도')).toEqual(['~/exp/2026_보고서/결과.md'])
 })
 
+test('paths: a colon inside a folder name is part of the path, a :line after it is not', () => {
+  expect(codePath('~/.claude/skills/sb:slack-followup/watch_thread_gestalt.py')).toBe('~/.claude/skills/sb:slack-followup/watch_thread_gestalt.py')
+  expect(ps('ran ~/.claude/skills/sb:slack-followup/watch_ticket.py:40 again')).toEqual(['~/.claude/skills/sb:slack-followup/watch_ticket.py:40'])
+  expect(ps('see http://127.0.0.1:8811/paths.js')).toEqual([])
+})
+
 test('paths: URLs and prose slashes are not paths', () => {
   expect(ps('https://github.com/keyolk/cc-mods/pull/102 and/or 1/2 of them')).toEqual([])
   expect(ps('read/write access')).toEqual([])

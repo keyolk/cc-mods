@@ -1,7 +1,7 @@
 // File paths in what a session said become 👁 links that open the file in the
 // office's own viewer (office.html viewFile, the 📎 tab's 👁), wherever the
 // office draws a session's text: the card's answer and past turns, the 지휘
-// view's last answer, btw replies, a brief's questions. A path written as
+// view's last answer, btw replies. A path written as
 // `code`, as plain text, or already linked by linkify (which opens it in
 // Finder) counts; absolute, ~/ and relative to the session's folder.
 //
@@ -22,9 +22,10 @@ a.pv::after { content: ' 👁'; font-size: 10px; }
 `
 
 // One path character: letters of any script (a Hangul file name), digits and
-// what file names use. A path does not start right after one of these or ':'
-// (the // of a URL), and ends before trailing punctuation.
-const PC = '[\\p{L}\\p{N}_.@+~-]'
+// what file names use; a ':' only inside a name (a skill folder, sb:slack-x),
+// never before digits (:12 is a line). A path does not start right after one
+// of these or ':' (the // of a URL), and ends before trailing punctuation.
+const PC = '(?:[\\p{L}\\p{N}_.@+~-]|:(?=[\\p{L}_.@+~-]))'
 const ABS = new RegExp('(?<![\\p{L}\\p{N}_.@+~:/-])(?:~|/)' + PC + '*(?:/' + PC + '+)+(?::\\d+(?::\\d+)?)?', 'gu')
 // A relative path in plain text needs a folder and an extension
 // (office/paths.py), or "and/or" would be asked about.
@@ -73,7 +74,10 @@ function pathAsk(sid, list) {
     pathWait.get(sid).add(p)
   }
   if (!pathWait.size) return Promise.resolve()
+  // A draw that arrives while one is asked waits for the next round of the
+  // same loop, so what it adds is asked before the promise resolves.
   if (!pathAsking) pathAsking = Promise.resolve().then(async () => {
+    while (pathWait.size) {
     const jobs = [...pathWait.entries()]; pathWait.clear()
     await Promise.all(jobs.map(async ([s, set]) => {
       const ps = [...set]
@@ -85,6 +89,7 @@ function pathAsk(sid, list) {
       } catch { return } // asked again on the next draw
       for (const p of ps) pathSeen.set(s + '\0' + p, got[p] || null)
     }))
+    }
     pathAsking = null
   })
   return pathAsking

@@ -153,6 +153,15 @@ class ViewableTest(Home):
         self.assertEqual(office.viewable(SID, "~/.config/gh/hosts.yml")[0], 403)
         self.assertEqual(office.shown_paths(SID, ["~/.aws/credentials", "~/.config/gh/hosts.yml"]), {})
 
+    def test_a_path_inside_a_longer_one_is_not_a_mention(self):
+        self.make("src/a.md", "a")
+        self.make("src/x/a.md", "b")
+        self.say("wrote ~/src/x/a.md.bak and other/src/a.md")
+        self.assertEqual(office.viewable(SID, "~/src/a.md")[0], 403)
+        self.say("wrote `~/src/a.md`. Then ~/src/x/a.md:3")
+        self.assertEqual(office.viewable(SID, "~/src/a.md")[0], 200)
+        self.assertEqual(office.viewable(SID, "~/src/x/a.md")[0], 200)
+
     def test_a_named_path_outside_home_is_refused(self):
         outside = self.make("x.md", root=self.out)
         self.say("see " + str(outside))
