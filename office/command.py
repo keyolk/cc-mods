@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import review  # noqa: E402 - office/review.py, finished work the person should judge
+import turn  # noqa: E402 - office/turn.py, the one list of what waits on the person
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
@@ -307,7 +308,7 @@ def view(people: list[dict]) -> dict:
     # With nothing to decide the panel still says something: who waits on
     # the person across the floor, and the briefs written lately.
     calls = [
-        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug"), "summary": sums.get(p["id"])}
+        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug"), "summary": sums.get(p["id"]), "since": p.get("since")}
         for p in people
         if p.get("attention") in ("ask", "alert")
     ]
@@ -315,7 +316,9 @@ def view(people: list[dict]) -> dict:
     recent = []
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
         recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
-    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": review.items(), "recent": recent}
+    reviews = review.items()
+    slugs = {w["sid"]: w["slug"] for c in coords for w in c["workers"] if w.get("sid") and w.get("slug")}
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "turn": turn.rows(waiting, calls, reviews, slugs)}
 
 
 # What a session waiting on the person shows in the view's left pane: the

@@ -258,6 +258,29 @@ export function released(l: Ledger, w: Worker, now: number): Ledger {
   return logged({ ...l, released: r, workers: l.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, endedAt: now } : x)) }, 'release', w.slug, now)
 }
 
+// Requests the office left for this coordinator (office/crew.py writes
+// coord/ops/<sid>.json): `release` takes a worker off the view for good, as
+// /coord release does. The ledger is this process's to write, so the office
+// asks rather than edits it. An op for a session that is no worker (any
+// more) is dropped; `done` names the workers released.
+export function applyOps(l: Ledger, raw: string | undefined, now: number): { ledger: Ledger; done: string[] } {
+  let ops: unknown[] = []
+  try {
+    const d = JSON.parse(raw ?? '{}')
+    if (Array.isArray(d?.ops)) ops = d.ops
+  } catch {}
+  let out = l
+  const done: string[] = []
+  for (const o of ops) {
+    if (!o || typeof o !== 'object' || (o as { op?: unknown }).op !== 'release') continue
+    const w = active(out).find((x) => x.sid === (o as { sid?: unknown }).sid)
+    if (!w) continue
+    out = released(out, w, now)
+    done.push(w.slug)
+  }
+  return { ledger: out, done }
+}
+
 // The cost cap on a decision brief, the same for the coordinator and its
 // workers. The person asked that asking them never burn many tokens; the
 // office already lists the question and each option's detail from the

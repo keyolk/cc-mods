@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resources  # noqa: E402 - office/resources.py, beside this file
 import coord  # noqa: E402 - office/coord.py, the coordinators' ledgers
 import command  # noqa: E402 - office/command.py, briefs waiting on a decision
+import crew  # noqa: E402 - office/crew.py, ending a session or releasing it from the command view
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
@@ -1353,6 +1354,8 @@ def act(body: dict) -> tuple[int, dict]:
         # A brief answer, a worker instruction or a review verdict must reach the coordinator
         # even after it was away for a while.
         return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
+    if kind in crew.KINDS:
+        return crew.act(body, snapshot(), inbox_put)
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return 404, {"error": "no such session"}
@@ -1719,7 +1722,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/review.js", "/command.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/command.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")
