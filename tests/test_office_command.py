@@ -457,11 +457,12 @@ KEYS_HARNESS = textwrap.dedent(r"""
       function press(k, typing = false, alt = false) { let stopped = false; const took = commandKey({ altKey: alt, preventDefault: () => { stopped = true } }, k, typing); return took && stopped }
       // One brief and two sessions waiting on the person, the first picked
       // with what it asks; replies are recorded, not sent.
-      var replies = [], cmdReplyReal = cmdReply
+      var replies = [], cmdReplyReal = cmdReply, focused = []
+      focusPane = (pane) => { focused.push(pane) }
       cmdReply = (s, body, label) => { replies.push([s.sid, body, label]) }
       function calls(ask = { suggestions: ['네', '아니요'] }) {
         cmd.data = { pending: [{ file: 'a.html', path: '/b/a.html', title: 'A', decision: { question: 'Z?', options: [{ label: 'Y' }] } }], coordinators: [],
-          calls: [{ sid: 's1', name: 'one', window: 'w:1' }, { sid: 's2', name: 'two', window: 'w:2' }] }
+          calls: [{ sid: 's1', name: 'one', window: 'w:1', pane: '%1' }, { sid: 's2', name: 'two', window: 'w:2', pane: '%2' }] }
         if (!cmd.on) press('c')
         cmd.sel = { sid: 's1', name: 'one', window: 'w:1' }; cmd.ask = { sid: 's1', ...ask }
       }
@@ -612,13 +613,27 @@ class CommandKeysTest(unittest.TestCase):
     def test_keys_typed_in_a_sessions_box_never_reach_the_view_and_the_floor_keeps_its_own(self):
         got = self.run_js("""
             calls()
-            const typed = ['j', 'k', '1', '2', 'Enter', 'm', 'i', 'd', 'Escape'].filter((k) => press(k, true))
-            const still = [cmd.sel.sid, cmd.armed, replies.length]
+            const typed = ['j', 'k', '1', '2', 'Enter', 'm', 'i', 'd', 'g', 'Escape'].filter((k) => press(k, true))
+            const still = [cmd.sel.sid, cmd.armed, replies.length, focused.length]
             const floor = ['n', 'p', 'v', 'f', '0', 'Tab', 'ArrowUp', '?', ','].filter((k) => press(k))
             press('Escape'); const shut = [cmd.sel, cmd.ask, cmd.on]
             return [typed, still, floor, shut]
         """)
-        self.assertEqual(got, [[], ["s1", None, 0], [], [None, None, True]])
+        self.assertEqual(got, [[], ["s1", None, 0, 0], [], [None, None, True]])
+
+    def test_g_goes_to_the_picked_sessions_pane_and_alt_g_from_its_box(self):
+        got = self.run_js("""
+            calls()
+            const g = press('g'), altInBox = press('g', true, true)
+            // The pane /command?sid= saw wins over the list's.
+            cmd.ask = { sid: 's1', pane: '%7', suggestions: [] }; press('g')
+            // A brief picked, an open card or the floor: G is not the view's.
+            cmd.sel = { file: 'a.html' }; const onBrief = press('g'), altOnBrief = press('g', true, true)
+            cmd.sel = { sid: 's2', name: 'two' }; card.style.display = 'block'; const cardG = press('g'), cardAltG = press('g', false, true); card.style.display = 'none'
+            press('Escape'); press('Escape'); const shut = press('g')
+            return [g, altInBox, onBrief, altOnBrief, cardG, cardAltG, shut, focused]
+        """)
+        self.assertEqual(got, [True, True, False, False, False, False, False, ["%1", "%1", "%7"]])
 
     def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
         got = self.run_js("""

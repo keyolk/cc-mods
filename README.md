@@ -286,7 +286,8 @@ waiting on the person (`🙋`) opens where a brief does: the end of its last
 answer (whole paragraphs up to 30 lines, `/command?sid=`), the choice drawn on
 its screen or the card's quick replies (`1-9` arms, Enter sends) and a box for
 an answer in the person's words; `j/k` walk the briefs and then these
-sessions. That answer goes to the session itself, as the card's reply or key
+sessions, and `G` (`⌥G` in the box, or `↗ 창으로`) brings its tmux pane in
+front as the card's `G` does (`/focus`, `cc-focus`). That answer goes to the session itself, as the card's reply or key
 does, not through `coord_say`, so a coordinator's hold on the worker never
 stops it. The cockpit's Coord tab (0) lists
 the same decisions as text. A session's card shows the newest brief it is

@@ -360,7 +360,8 @@ function cmdRenderCall(bar, doc, dec, s) {
   const a = cmd.ask && cmd.ask.sid === s.sid ? cmd.ask : null, c = cmdCall(s.sid)
   if (cmd.frame !== 'call:' + s.sid) {
     cmd.frame = 'call:' + s.sid
-    bar.innerHTML = '<b>🙋 ' + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span><button class="act card" title="이 세션의 카드 (지난 대화, 파일, btw)">🗂 카드</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+    bar.innerHTML = '<b>🙋 ' + cmdEsc(s.name) + '</b><span class="m">' + cmdEsc(s.window || '') + '</span><button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗ 창으로</button><button class="act card" title="이 세션의 카드 (지난 대화, 파일, btw)">🗂 카드</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+    bar.querySelector('.go').onclick = () => cmdFocus(s)
     bar.querySelector('.card').onclick = () => { if (typeof openCard === 'function') openCard(s.sid) }
     bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
@@ -403,6 +404,17 @@ function cmdRenderCall(bar, doc, dec, s) {
     note.onkeydown = (e) => cmdCallKey(e, s)
     if (focused) note.focus()
   }
+}
+
+// Bring the picked session's pane in front in tmux, as the card's G does
+// (office.html focusPane: /focus runs cc-focus, which switches every attached
+// client to its window and selects the pane). The pane is the one /command
+// last saw, so a session that moved since is still found.
+function cmdFocus(s) {
+  const pane = (cmd.ask && cmd.ask.sid === s.sid && cmd.ask.pane) || cmdCall(s.sid)?.pane
+  if (!pane) { toast('이 세션의 pane을 모릅니다'); return }
+  focusPane(pane)
+  toast('↗ ' + s.name + ' (' + pane + ')')
 }
 
 // Keys in a session's box: Enter sends the words typed, or with none the
@@ -521,11 +533,14 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
 // to the active question's box; j/k through the waiting briefs and then the
 // sessions waiting on the person; a digit arms an option of the active
 // question (a picked session's choice or quick reply) and Enter sends it, so
-// one stray key never decides. In a box every key is typing; its Enter is
-// cmdNoteKey's (cmdCallKey's in a session's box).
+// one stray key never decides. G (⌥G in its box) goes to a picked session's
+// tmux pane. In a box every key is typing; its Enter is cmdNoteKey's
+// (cmdCallKey's in a session's box).
 function commandKey(e, k, typing) {
   const cardUp = typeof card !== 'undefined' && card.style.display === 'block'
   if (k === 'c' && (e.altKey || !typing) && !cardUp) { e.preventDefault(); setCommand(!cmd.on); return true }
+  // ⌥G to the picked session's pane works in its box too, as on the card.
+  if (k === 'g' && e.altKey && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdFocus(cmd.sel); return true }
   if (e.altKey || typing) return false
   if (!cmd.on) {
     if (k === 'd') { e.preventDefault(); setCommand(true); return true }
@@ -551,6 +566,7 @@ function commandKey(e, k, typing) {
     if (/^[1-9]$/.test(k) && +k <= chs.length) return hit(() => { cmd.armed = { call: s.sid, i: +k - 1 }; cmdRenderDoc(); toast('Enter로 「' + chs[+k - 1].label + '」 보내기') })
     if (k === 'Enter' && cmd.armed && cmd.armed.call === s.sid && chs[cmd.armed.i]) return hit(() => cmdReply(s, chs[cmd.armed.i].body, chs[cmd.armed.i].label))
     if (k === 'm') return hit(() => cmdEl.querySelector('.decide .note[data-call]')?.focus())
+    if (k === 'g') return hit(() => cmdFocus(s))
   }
   const p = cmd.sel && cmdPending(cmd.sel.file)
   const q = p && cmdActive(p)
