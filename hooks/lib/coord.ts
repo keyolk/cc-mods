@@ -154,13 +154,13 @@ export function spawnRefusal(l: Ledger, r: SpawnRequest): string | undefined {
 // The cost cap on a decision brief, the same for the coordinator and its
 // workers. The person asked that asking them never burn many tokens; the
 // office already lists the question and each option's detail from the
-// sidecar, so the page only has to explain, briefly. `brief ask` needs an
-// existing page (brief.py resolve), so the page is still written by hand.
+// sidecar, so the page only has to explain, briefly. `brief ask --new`
+// (keyolk/briefs#2) writes that page itself, about 1 KB, from the arguments.
 export const DECISION_BRIEF =
-  'A decision brief is one short page, written directly (not the full doc:visual-brief workflow): a title, the background in at most 5 lines, ' +
-  "a table of at most 4 options with each option's cost in one line, the recommended one with one line of why, and at most one small inline SVG. " +
-  'No tabs, no second figure, no re-telling of the research (link the research brief instead), no external CSS or scripts; keep the HTML under 8 KB. ' +
-  'Each `--option "label: detail"` detail stays under 100 characters: the office shows it as is.'
+  'A decision brief is made by `brief ask --new <slug> --context "<background, at most 5 lines>" --question Q --option "label: detail" ... --recommend N`: ' +
+  'a minimal page (about 1 KB) and its sidecar, with no HTML written by hand and not the full doc:visual-brief workflow. ' +
+  'At most 4 options; each detail carries the option\'s cost in under 100 characters (the office shows it as is). ' +
+  'Write the page yourself only when a figure is truly needed: one short page with at most one small inline SVG, under 8 KB; no tabs, no second figure, no re-telling of the research (link the research brief instead), no external CSS or scripts; then `brief ask <brief>` on it.'
 
 // What every worker is told about reporting, after the coordinator's brief.
 // `fallback`: the command that queues a report in the coordinator's office
@@ -179,7 +179,9 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. Report to it with SendMessage (to: "' + coordName + '"), and never wait on the person:\n' +
     '- `READY <sha>` when the work is pushed, tests pass, and the PR body has a live run; add the PR URL and, when the person must decide or understand something, a brief made with the doc:visual-brief skill (its path).\n' +
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
-    '- When the person must decide (two or more options, a step hard to undo, a scope call), make a decision brief in ~/briefs. ' + DECISION_BRIEF + ' Then `brief ask <brief> --question Q --option "label: detail" ... --recommend N --coordinator ' + (coordSid ?? '<coordinator sid>') + ' --worker ' + slug + '`, and send `QUESTION <one line> — <brief path>` (or `BLOCKED <why> — <brief path>`). The coordinator shows it to the person; the answer comes back as a `[coordinator]` prompt. Only a yes/no on one small step that is easy to undo goes as a plain QUESTION.\n' +
+    '- When the person must decide (two or more options, a step hard to undo, a scope call), ask on a decision brief. ' + DECISION_BRIEF + ' Add `--coordinator ' + (coordSid ?? '<coordinator sid>') + ' --worker ' + slug + '`, and send `QUESTION <one line> — <brief path>` (or `BLOCKED <why> — <brief path>`). Never run `brief show`: the decision shows in the office\'s 지휘 view, and the answer comes back as a `[coordinator]` prompt. Only a yes/no on one small step that is easy to undo goes as a plain QUESTION.\n' +
+    '- Ask the person once per task where you can: early on, list every open question the work raises, and go on with what needs no answer; then ask them together, one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path. Ask alone and at once only what stops the work entirely.\n' +
+    '- When a skill you use fails you (a script fails, its guidance is wrong, a case it does not cover), work around it to finish, and add a line to your READY or BLOCKED report: `SKILL <skill name>: <the problem in one line> — <evidence: the command and its error, or file:line>`. Do not edit the skill here: fixing it is a separate task.\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     'Messages from the coordinator arrive as prompts starting with `[coordinator]`. The person may also type in this pane; their words win.' +
     (where ? '\nYour tools reach `' + [where.cwd, ...where.addDirs].join('`, `') + '` without a permission dialog. A file anywhere else stops you at a dialog nobody answers: do not read it; send the coordinator `QUESTION need <path>` and go on with the rest.' : '') +
@@ -409,9 +411,11 @@ export function coordSection(l: Ledger, now: number, language = 'Korean'): strin
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
-    "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Use the worker's brief when it is that short, else make one in ~/briefs. Then `brief ask <brief>` with the options, `--recommend N`, `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker; then `brief show <brief>` puts it in a tweb pane (the office's 지휘 view shows it too). In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
+    "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Add `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker. The office's 지휘 view lists every waiting decision: while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`, which covers the office's pane and its controls; only without the office does `brief show <brief>` put it in a tweb pane. In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
     '- Only a yes/no on one small step that is easy to undo goes to the person in chat alone, without a brief.',
-    "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: show it (`brief show`) and tell the person in one line; do not ask it again.",
+    "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: do not ask it again; it is in the office's 지휘 view.",
+    "- Gather the person's questions: say once in chat `결정 N건 대기` with the brief paths, not a message per question, and ask them on one occasion, not as each arrives. Ask alone and at once only what stops a worker entirely.",
+    "- A report line `SKILL <name>: <problem> — <evidence>` is a skill that failed a worker. Give fixing it to a worker as its own task (route it like any task), with the line and its evidence verbatim, and tell that worker to use the meta:self-enhancer or meta:skill-creator skill. The worker that hit it does not edit the skill. Tell the person in one line.",
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
     "- `[coord] <slug> (pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it. Tell the person the pane and window and what it asks (or, when a folder outside its cwd is the cause, close and respawn it with add_dirs).",

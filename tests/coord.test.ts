@@ -49,16 +49,36 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   const ask = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', undefined, undefined, 'coord-sid')
   expect(ask).toContain('--coordinator coord-sid --worker tmc-layout')
   expect(ask).toContain('QUESTION <one line> — <brief path>')
-  expect(ask).toContain('in ~/briefs')
   expect(ask).toContain('Only a yes/no on one small step that is easy to undo goes as a plain QUESTION')
 })
 
 test('coord: a decision brief has a cost cap, the same for the coordinator and its workers', () => {
   // The person asked that a question for them never burns many tokens.
-  for (const cap of ['not the full doc:visual-brief workflow', 'background in at most 5 lines', 'at most 4 options', 'at most one small inline SVG', 'No tabs, no second figure, no re-telling of the research', 'under 8 KB', 'under 100 characters'])
+  // keyolk/briefs#2: `brief ask --new` writes the minimal page; HTML by hand
+  // only when a figure is truly needed, and then still capped.
+  for (const cap of ['`brief ask --new <slug> --context "<background, at most 5 lines>"', 'about 1 KB', 'no HTML written by hand', 'not the full doc:visual-brief workflow', 'At most 4 options', 'under 100 characters', 'only when a figure is truly needed', 'at most one small inline SVG', 'under 8 KB', 'no re-telling of the research'])
     expect(DECISION_BRIEF).toContain(cap)
   expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid')).toContain(DECISION_BRIEF)
   expect(coordSection(emptyLedger('sid', 'n', NOW), NOW)).toContain(DECISION_BRIEF)
+})
+
+test('coord: questions for the person are gathered and asked once; a skill that failed a worker is reported and fixed as its own task', () => {
+  const w = workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid')
+  const c = coordSection(emptyLedger('sid', 'n', NOW), NOW)
+  // The office's 지휘 view shows decisions; a worker never covers it.
+  expect(w).toContain('Never run `brief show`')
+  // One occasion per task: open questions found early, asked together.
+  expect(w).toContain('list every open question the work raises, and go on with what needs no answer')
+  expect(w).toContain('one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path')
+  expect(w).toContain('Ask alone and at once only what stops the work entirely')
+  expect(c).toContain('say once in chat `결정 N건 대기` with the brief paths, not a message per question')
+  expect(c).toContain('Ask alone and at once only what stops a worker entirely')
+  // A skill that failed: reported, not silently worked around, and fixed apart.
+  expect(w).toContain('`SKILL <skill name>: <the problem in one line> — <evidence: the command and its error, or file:line>`')
+  expect(w).toContain('Do not edit the skill here: fixing it is a separate task')
+  expect(c).toContain('A report line `SKILL <name>: <problem> — <evidence>`')
+  expect(c).toContain('use the meta:self-enhancer or meta:skill-creator skill')
+  expect(c).toContain('The worker that hit it does not edit the skill')
 })
 
 test('coord: a worker is split off the coordinator\'s pane, the longer side, a third of it; too small either way, a window', () => {
@@ -216,7 +236,8 @@ test('coord: a ledger from disk keeps sane limits; the prompt names the workers'
   // A decision is shown on a brief by default; chat alone only for a small yes/no.
   expect(text).toContain('the default is a decision brief, not a question in chat alone')
   expect(text).toContain('`--coordinator sid`')
-  expect(text).toContain('`brief show <brief>`')
+  // Live: `brief show` covered the office's pane and its controls.
+  expect(text).toContain('while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`')
   expect(text).toContain('In chat write one line and the brief path')
   expect(text).toContain('Only a yes/no on one small step that is easy to undo')
   expect(text).toContain('do not ask it again')
