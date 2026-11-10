@@ -1907,6 +1907,9 @@ async function refreshExp($: any, paths?: string[]) {
 // worker's coord-report): that one goes in up to a day late, saying how late.
 const INBOX_STALE_S = 120
 const INBOX_KEEP_S = 24 * 3600
+// A submit that failed puts the message back for the next tick; after this
+// many failures it is dropped, so a submit that never works does not loop.
+const INBOX_TRIES = 5
 let officeBusy = false
 async function officeInbox($: any) {
   if (officeBusy || !home) return
@@ -1918,7 +1921,7 @@ async function officeInbox($: any) {
   try {
     const raw = await readText($, file)
     await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
-    let msg: { text?: unknown; at?: unknown; keep?: unknown } = {}
+    let msg: { text?: unknown; at?: unknown; keep?: unknown; tries?: unknown } = {}
     try {
       msg = JSON.parse(raw ?? '{}')
     } catch {
@@ -1929,7 +1932,23 @@ async function officeInbox($: any) {
     if (!text || age > (msg.keep === true ? INBOX_KEEP_S : INBOX_STALE_S)) return
     if (age > INBOX_STALE_S) text = '(' + Math.round(age / 60) + '분 전 office inbox에 들어온 메시지)\n' + text
     $.ui.toast('office: "' + clip(text, 60) + '"')
-    await $.prompt.submit({ text, asUser: true }).catch(() => $.ui.toast('office: could not send the reply; type it here'))
+    try {
+      await $.prompt.submit({ text, asUser: true })
+    } catch {
+      // The file was removed before submitting; put it back (under anything
+      // that arrived meanwhile) so the next tick tries again.
+      const tries = Number(msg.tries ?? 0) + 1
+      if (tries >= INBOX_TRIES) {
+        $.ui.toast('office: could not send the reply; type it here')
+        return
+      }
+      let newer = ''
+      try {
+        newer = String(JSON.parse((await readText($, file)) ?? '{}').text ?? '')
+      } catch {}
+      const back = String(msg.text).trim()
+      await $.fs.write(file, JSON.stringify({ text: newer ? back + '\n\n' + newer : back, at: msg.at, ...(msg.keep === true ? { keep: true } : {}), tries }))
+    }
   } finally {
     officeBusy = false
   }
