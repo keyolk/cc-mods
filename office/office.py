@@ -854,7 +854,8 @@ def detail(sid: str, kind: str | None = None) -> dict:
         return {"error": "no such session"}
     text = last_text(sid)
     return {"id": sid, "name": me["name"], "window": me["window"], "state": me["state"], "doing": me["doing"], "text": text, "dialog": dialog(capture(me["pane"])), "suggestions": suggestions(text),
-            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid, "all", 60), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "brief": command.latest_by_session().get(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind}
+            "grant": proposal(sid, text) if me["doing"] in ("asking", "alert") else None, "related": related(sid, "all", 60), "route": route_of(me["pane"]), "inbox": inbox_waiting(sid), "brief": command.latest_by_session().get(sid), "shelf": related(sid, "all", 120) if kind else None, "shelfKind": kind,
+            "summary": coord.summaries().get(sid)}
 
 
 # ---- the card's other tabs: cc-mods' Chat, Work, Policy and Web -----------

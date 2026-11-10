@@ -54,40 +54,40 @@ canvas.drag { cursor: grabbing; }
 #card .rz.e { right: 0; } #card .rz.w { left: 0; }
 #card .rz.ne, #card .rz.nw, #card .rz.se { width: 14px; height: 14px; }
 #card .rz.ne { top: 0; right: 0; cursor: nesw-resize; } #card .rz.nw { top: 0; left: 0; cursor: nwse-resize; } #card .rz.se { bottom: 0; right: 0; cursor: nwse-resize; }
-#card .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
+:is(#card, .cardv) .said { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; font-size: 12px; line-height: 1.5; background: #f3ecdf; border-radius: 10px; padding: 8px 10px; max-height: min(46vh, 420px); overflow: auto; margin-bottom: 4px; scroll-behavior: smooth; }
 #card .q { font-size: 14px; margin: 6px 0; }
 #card .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 #card button.act { font: inherit; font-size: 13px; border: 2px solid var(--line); border-radius: 10px; padding: 4px 10px; cursor: pointer; background: #fff; box-shadow: 0 2px 0 var(--line); }
 #card button.act:active { transform: translateY(2px); box-shadow: none; }
 #card button.pick { background: #ffe08a; } #card button.go { background: #a8e6b0; } #card button.stop { background: #ffb3b3; } #card button.nav { background: #cfe0ff; }
 #card textarea { width: 100%; min-height: 54px; font: 13px -apple-system, sans-serif; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; resize: vertical; }
-#card .said p { margin: 0 0 6px; }
-#card .said h1, #card .said h2, #card .said h3, #card .said h4 { font-family: Jua, sans-serif; font-weight: 400; margin: 8px 0 4px; font-size: 14px; }
-#card .said h1 { font-size: 16px; } #card .said h2 { font-size: 15px; }
-#card .said ul, #card .said ol { margin: 0 0 6px; padding-left: 18px; }
-#card .said li { margin: 1px 0; }
-#card .said code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; }
-#card .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; margin: 4px 0 6px; white-space: pre; }
-#card .said pre code { background: none; padding: 0; color: inherit; }
-#card .said .tbl { overflow-x: auto; margin: 4px 0 8px; }
-#card .said table { border-collapse: collapse; font-size: 11.5px; }
-#card .said th, #card .said td { border: 1px solid rgba(59,42,53,.25); padding: 3px 7px; vertical-align: top; text-align: left; }
-#card .said th { background: rgba(59,42,53,.08); }
-#card .said tr:nth-child(even) td { background: rgba(255,255,255,.45); }
-#card .said blockquote { margin: 0 0 6px; padding-left: 8px; border-left: 3px solid rgba(59,42,53,.25); color: #5b4a5e; }
-#card .said hr { border: 0; border-top: 1px solid rgba(59,42,53,.2); margin: 8px 0; }
-#card .said a { color: #2f6fd6; text-decoration: underline; cursor: pointer; word-break: break-all; }
+:is(#card, .cardv) .said p { margin: 0 0 6px; }
+:is(#card, .cardv) .said h1, :is(#card, .cardv) .said h2, :is(#card, .cardv) .said h3, :is(#card, .cardv) .said h4 { font-family: Jua, sans-serif; font-weight: 400; margin: 8px 0 4px; font-size: 14px; }
+:is(#card, .cardv) .said h1 { font-size: 16px; } :is(#card, .cardv) .said h2 { font-size: 15px; }
+:is(#card, .cardv) .said ul, :is(#card, .cardv) .said ol { margin: 0 0 6px; padding-left: 18px; }
+:is(#card, .cardv) .said li { margin: 1px 0; }
+:is(#card, .cardv) .said code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; }
+:is(#card, .cardv) .said pre { background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; overflow-x: auto; margin: 4px 0 6px; white-space: pre; }
+:is(#card, .cardv) .said pre code { background: none; padding: 0; color: inherit; }
+:is(#card, .cardv) .said .tbl { overflow-x: auto; margin: 4px 0 8px; }
+:is(#card, .cardv) .said table { border-collapse: collapse; font-size: 11.5px; }
+:is(#card, .cardv) .said th, :is(#card, .cardv) .said td { border: 1px solid rgba(59,42,53,.25); padding: 3px 7px; vertical-align: top; text-align: left; }
+:is(#card, .cardv) .said th { background: rgba(59,42,53,.08); }
+:is(#card, .cardv) .said tr:nth-child(even) td { background: rgba(255,255,255,.45); }
+:is(#card, .cardv) .said blockquote { margin: 0 0 6px; padding-left: 8px; border-left: 3px solid rgba(59,42,53,.25); color: #5b4a5e; }
+:is(#card, .cardv) .said hr { border: 0; border-top: 1px solid rgba(59,42,53,.2); margin: 8px 0; }
+:is(#card, .cardv) .said a { color: #2f6fd6; text-decoration: underline; cursor: pointer; word-break: break-all; }
 #card .grant { background: #fff1c9; border: 2px solid #e0a52e; border-radius: 12px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; }
 #card .mcpdrop { background: #e6eefc; border: 2px solid #6d8fd0; border-radius: 12px; padding: 6px 10px; margin-bottom: 8px; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 #card .mcpdrop .m { color: #4f6290; font: 11.5px -apple-system, sans-serif; flex: 1 1 auto; }
 #mcpchip { font: inherit; color: #2a2033; cursor: pointer; pointer-events: auto; background: #c9d8f7; }
 #card .grant .why { color: #7a6030; font-size: 12px; margin: 3px 0 6px; font-family: -apple-system, sans-serif; }
 #card button.grantb { background: #ffcf5a; }
-#card .rel { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
-#card a.brand, #card .rel a.brand { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; background: var(--bc); color: #fff; text-decoration: none; border: 2px solid var(--line); border-radius: 999px; padding: 1px 9px 1px 6px; margin: 1px 0; font-size: 12px; line-height: 18px; box-shadow: 0 2px 0 var(--line); cursor: pointer; word-break: normal; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-#card a.brand:hover, #card .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
-#card a.brand b { font-weight: 700; opacity: .85; }
-#card a.brand span { overflow: hidden; text-overflow: ellipsis; }
+:is(#card, .cardv) .rel { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+:is(#card, .cardv) a.brand, :is(#card, .cardv) .rel a.brand { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; background: var(--bc); color: #fff; text-decoration: none; border: 2px solid var(--line); border-radius: 999px; padding: 1px 9px 1px 6px; margin: 1px 0; font-size: 12px; line-height: 18px; box-shadow: 0 2px 0 var(--line); cursor: pointer; word-break: normal; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+:is(#card, .cardv) a.brand:hover, :is(#card, .cardv) .rel a.brand:hover { filter: brightness(1.15); transform: translateY(-1px); }
+:is(#card, .cardv) a.brand b { font-weight: 700; opacity: .85; }
+:is(#card, .cardv) a.brand span { overflow: hidden; text-overflow: ellipsis; }
 /* In the header row with the counts, so it never covers the office or the card. */
 #reset { display: none; font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #reset:hover { filter: brightness(1.05); transform: translateY(-1px); }
@@ -100,7 +100,8 @@ canvas.drag { cursor: grabbing; }
 #viewer img { max-width: 100%; display: block; margin: 0 auto; }
 #viewer pre { margin: 0; padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
 #viewer .said { max-height: none; margin: 0; border-radius: 0; font-size: 13px; padding: 12px 16px; }
-#card .rel a.view::after { content: ' 👁'; }
+:is(#card, .cardv) .rel a.view::after { content: ' 👁'; }
+:is(#card, .cardv) .csum { font: 600 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #gear { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #pickchip { font: inherit; color: inherit; cursor: pointer; pointer-events: auto; }
 #res { pointer-events: auto; cursor: help; }
@@ -155,11 +156,11 @@ body.picking #c { cursor: crosshair; }
 #card .busy hr { border: 0; border-top: 1px dashed #e8a23a; margin: 5px 0; }
 #card .busy .m { color: #8a5a1e; font-size: 11.5px; }
 #card.isbusy .act.go { opacity: .55; }
-#card .ctabs { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; }
-#card .ctabs button { font: inherit; font-size: 11px; line-height: 16px; border: 1px solid rgba(59,42,53,.45); border-radius: 999px; background: #fff; padding: 0 7px; cursor: pointer; }
-#card .ctabs button.on { background: #2a2033; color: #fff; }
-#card .ctabs button:focus-visible, #card .rel a:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 2px; }
-#card .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
+:is(#card, .cardv) .ctabs { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0; }
+:is(#card, .cardv) .ctabs button { font: inherit; font-size: 11px; line-height: 16px; border: 1px solid rgba(59,42,53,.45); border-radius: 999px; background: #fff; padding: 0 7px; cursor: pointer; }
+:is(#card, .cardv) .ctabs button.on { background: #2a2033; color: #fff; }
+:is(#card, .cardv) .ctabs button:focus-visible, :is(#card, .cardv) .rel a:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 2px; }
+:is(#card, .cardv) .cpane .rel { max-height: min(46vh, 420px); overflow: auto; }
 #card .cfoot { position: sticky; bottom: -12px; margin: 8px -14px -12px; padding: 8px 14px 10px; background: #fffaf0; border-top: 2px dashed rgba(59,42,53,.18); box-shadow: 0 -6px 10px rgba(255,250,240,.9); }
 #card .cfoot .row:last-of-type { margin-bottom: 4px; }
 /* A session card is a column: title, tabs and the foot take what they need,
@@ -173,17 +174,17 @@ body.picking #c { cursor: crosshair; }
 /* ⌥+ ⌥− ⌥0: the reading panes grow or shrink, the card's frame keeps its
    size (zooming the whole card would push it off the screen). */
 #card .cpane, #card .shelf { zoom: var(--cz, 1); }
-#card .info { font-size: 12.5px; }
-#card .info .h { font-family: Jua, sans-serif; margin: 8px 0 4px; }
-#card .info .h:first-child { margin-top: 2px; }
-#card .info .r { background: #f3ecdf; border-radius: 8px; padding: 4px 8px; margin: 3px 0; overflow-wrap: anywhere; }
-#card .info .m { color: #7a7090; font-size: 11px; }
-#card .info code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; word-break: break-all; }
-#card .info details summary { cursor: pointer; margin: 6px 0; }
-#card .info a { color: #2f6fd6; text-decoration: underline; cursor: pointer; }
-#card .info pre { white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; margin: 3px 0; }
-#card .cap { display: inline-block; min-width: 54px; text-align: center; border: 2px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 11px; margin-right: 6px; }
-#card .cap.allow { background: #a8e6b0; } #card .cap.block { background: #ffb3b3; } #card .cap.inherit { background: #eee; }
+:is(#card, .cardv) .info { font-size: 12.5px; }
+:is(#card, .cardv) .info .h { font-family: Jua, sans-serif; margin: 8px 0 4px; }
+:is(#card, .cardv) .info .h:first-child { margin-top: 2px; }
+:is(#card, .cardv) .info .r { background: #f3ecdf; border-radius: 8px; padding: 4px 8px; margin: 3px 0; overflow-wrap: anywhere; }
+:is(#card, .cardv) .info .m { color: #7a7090; font-size: 11px; }
+:is(#card, .cardv) .info code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; background: rgba(59,42,53,.08); border-radius: 4px; padding: 0 3px; word-break: break-all; }
+:is(#card, .cardv) .info details summary { cursor: pointer; margin: 6px 0; }
+:is(#card, .cardv) .info a { color: #2f6fd6; text-decoration: underline; cursor: pointer; }
+:is(#card, .cardv) .info pre { white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; background: #2a2033; color: #f3ecdf; border-radius: 8px; padding: 6px 8px; margin: 3px 0; }
+:is(#card, .cardv) .cap { display: inline-block; min-width: 54px; text-align: center; border: 2px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 11px; margin-right: 6px; }
+:is(#card, .cardv) .cap.allow { background: #a8e6b0; } :is(#card, .cardv) .cap.block { background: #ffb3b3; } :is(#card, .cardv) .cap.inherit { background: #eee; }
 /* btw is a column at the card's right, from under the title bar to the
    bottom; the card is maximised while it is open (setSideMode), so the
    conversation keeps its width on the left. */
@@ -192,44 +193,44 @@ body.picking #c { cursor: crosshair; }
 #card.panes.btwmode { --sw: min(40vw, 460px); padding-right: calc(var(--sw) + 22px); }
 #card.panes.btwmode > .titlebar { margin-right: calc(-1 * var(--sw) - 36px); }
 #card.panes > .sidebox { position: absolute; top: 38px; right: 12px; bottom: 12px; width: var(--sw, 40vw); display: flex; flex-direction: column; border: 2px solid #c9b88f; border-radius: 12px; background: #fbf5e8; }
-#card .sidebox .sh { flex: 0 0 auto; padding: 4px 10px; font-family: Jua, sans-serif; font-size: 13px; border-bottom: 1px dashed #c9b88f; }
-#card .sidebox .sh .m { font: 11px -apple-system, sans-serif; color: #7a7090; }
-#card .sidebox .btw { flex: 1 1 auto; overflow: auto; padding: 8px 10px; }
+:is(#card, .cardv) .sidebox .sh { flex: 0 0 auto; padding: 4px 10px; font-family: Jua, sans-serif; font-size: 13px; border-bottom: 1px dashed #c9b88f; }
+:is(#card, .cardv) .sidebox .sh .m { font: 11px -apple-system, sans-serif; color: #7a7090; }
+:is(#card, .cardv) .sidebox .btw { flex: 1 1 auto; overflow: auto; padding: 8px 10px; }
 #card .replyline { display: flex; gap: 6px; align-items: flex-end; width: 100%; flex: 1 0 100%; }
 #card .replyline textarea { flex: 1; min-width: 0; }
 #card .replyline .send { flex: 0 0 auto; }
-#card .sidebox .btwin { flex: 0 0 auto; box-sizing: border-box; width: auto; align-self: stretch; margin: 6px; min-height: 30px; max-height: 120px; resize: none; font: 13px -apple-system, sans-serif; border: 2px solid #a8894a; border-radius: 10px; padding: 5px 8px; background: #fffdf5; }
-#card .btw { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 8px; font: 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; }
-#card .btw .me { align-self: flex-end; max-width: 82%; background: #2a2033; color: #fffaf0; border-radius: 12px 12px 3px 12px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-#card .btw .it { align-self: flex-start; max-width: 88%; background: #f3ecdf; border-radius: 12px 12px 12px 3px; padding: 6px 10px; overflow-wrap: anywhere; }
-#card .btw .it p:last-child { margin-bottom: 0; }
-#card .btw .typing { color: #7a7090; font-style: italic; }
-#card .btw .err { background: #ffe1e1; }
-#card .ctabs .turnnav { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; }
-#card .ctabs .turnnav button { padding: 0 6px; }
-#card .ctabs .turnnav button:disabled { opacity: .3; cursor: default; }
-#card .ctabs .turnnav .where { font-size: 11px; color: #7a7090; padding: 0 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-#card .ctabs .turnnav.past .where { color: #6a4c8c; font-weight: 600; }
-#card .pastask { white-space: pre-wrap; max-height: 120px; overflow: auto; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-left: 3px solid #e0a64a; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; }
-#card .pastask .m { color: #6a4c8c; font-weight: 600; margin-right: 4px; }
-#card .said.old { background: #efe9f5; }
-#card .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
-#card .hist details.notice { opacity: .65; }
-#card .hist summary { cursor: pointer; font-size: 12.5px; list-style: none; }
-#card .hist summary::-webkit-details-marker { display: none; }
-#card .hist summary .q, #card .hist summary .g { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#card .hist summary .q b { font-weight: 600; }
-#card .hist summary .g { color: #6b5a6e; font-size: 12px; padding-left: 2px; }
-#card .hist details[open] summary .g { display: none; }
-#card .hist .hbar { position: sticky; top: 0; z-index: 1; display: flex; gap: 6px; align-items: center; background: #fffaf0; padding: 2px 0 6px; }
-#card .hist .hbar input { flex: 1; min-width: 0; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 4px 8px; background: #fff; }
-#card .hist .hbar button { font: 11.5px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 3px 7px; background: #fff; cursor: pointer; white-space: nowrap; }
-#card .hist .hbar button.on { background: #2a2033; color: #fffaf0; }
-#card .hist .day { font-size: 11px; color: #7a7090; margin: 10px 2px 2px; border-bottom: 1px solid rgba(59,42,53,.15); }
-#card .hist mark { background: #ffe58a; border-radius: 2px; padding: 0; }
-#card .hist:not(.notices) details.notice { display: none; }
-#card .hist .ask { white-space: pre-wrap; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-radius: 8px; padding: 6px 8px; margin: 4px 0; max-height: 220px; overflow: auto; }
-#card .hist .said { background: none; padding: 0 2px; margin: 0; }
+:is(#card, .cardv) .sidebox .btwin { flex: 0 0 auto; box-sizing: border-box; width: auto; align-self: stretch; margin: 6px; min-height: 30px; max-height: 120px; resize: none; font: 13px -apple-system, sans-serif; border: 2px solid #a8894a; border-radius: 10px; padding: 5px 8px; background: #fffdf5; }
+:is(#card, .cardv) .btw { display: flex; flex-direction: column; gap: 6px; padding: 2px 2px 8px; font: 12.5px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+:is(#card, .cardv) .btw .me { align-self: flex-end; max-width: 82%; background: #2a2033; color: #fffaf0; border-radius: 12px 12px 3px 12px; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(#card, .cardv) .btw .it { align-self: flex-start; max-width: 88%; background: #f3ecdf; border-radius: 12px 12px 12px 3px; padding: 6px 10px; overflow-wrap: anywhere; }
+:is(#card, .cardv) .btw .it p:last-child { margin-bottom: 0; }
+:is(#card, .cardv) .btw .typing { color: #7a7090; font-style: italic; }
+:is(#card, .cardv) .btw .err { background: #ffe1e1; }
+:is(#card, .cardv) .ctabs .turnnav { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 2px; }
+:is(#card, .cardv) .ctabs .turnnav button { padding: 0 6px; }
+:is(#card, .cardv) .ctabs .turnnav button:disabled { opacity: .3; cursor: default; }
+:is(#card, .cardv) .ctabs .turnnav .where { font-size: 11px; color: #7a7090; padding: 0 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+:is(#card, .cardv) .ctabs .turnnav.past .where { color: #6a4c8c; font-weight: 600; }
+:is(#card, .cardv) .pastask { white-space: pre-wrap; max-height: 120px; overflow: auto; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-left: 3px solid #e0a64a; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; }
+:is(#card, .cardv) .pastask .m { color: #6a4c8c; font-weight: 600; margin-right: 4px; }
+:is(#card, .cardv) .said.old { background: #efe9f5; }
+:is(#card, .cardv) .hist details { background: #f3ecdf; border-radius: 10px; margin: 4px 0; padding: 4px 8px; }
+:is(#card, .cardv) .hist details.notice { opacity: .65; }
+:is(#card, .cardv) .hist summary { cursor: pointer; font-size: 12.5px; list-style: none; }
+:is(#card, .cardv) .hist summary::-webkit-details-marker { display: none; }
+:is(#card, .cardv) .hist summary .q, :is(#card, .cardv) .hist summary .g { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(#card, .cardv) .hist summary .q b { font-weight: 600; }
+:is(#card, .cardv) .hist summary .g { color: #6b5a6e; font-size: 12px; padding-left: 2px; }
+:is(#card, .cardv) .hist details[open] summary .g { display: none; }
+:is(#card, .cardv) .hist .hbar { position: sticky; top: 0; z-index: 1; display: flex; gap: 6px; align-items: center; background: #fffaf0; padding: 2px 0 6px; }
+:is(#card, .cardv) .hist .hbar input { flex: 1; min-width: 0; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 4px 8px; background: #fff; }
+:is(#card, .cardv) .hist .hbar button { font: 11.5px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.25); border-radius: 8px; padding: 3px 7px; background: #fff; cursor: pointer; white-space: nowrap; }
+:is(#card, .cardv) .hist .hbar button.on { background: #2a2033; color: #fffaf0; }
+:is(#card, .cardv) .hist .day { font-size: 11px; color: #7a7090; margin: 10px 2px 2px; border-bottom: 1px solid rgba(59,42,53,.15); }
+:is(#card, .cardv) .hist mark { background: #ffe58a; border-radius: 2px; padding: 0; }
+:is(#card, .cardv) .hist:not(.notices) details.notice { display: none; }
+:is(#card, .cardv) .hist .ask { white-space: pre-wrap; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; background: #fff; border-radius: 8px; padding: 6px 8px; margin: 4px 0; max-height: 220px; overflow: auto; }
+:is(#card, .cardv) .hist .said { background: none; padding: 0 2px; margin: 0; }
 #card.panes > .cpane { flex: 1 1 auto; min-height: 60px; overflow: auto; }
 #card.panes > .cpane .said, #card.panes > .cpane .rel { max-height: none; }
 #card.panes .cfoot { position: static; margin: 6px -14px -12px; box-shadow: none; }
@@ -268,7 +269,7 @@ body.picking #c { cursor: crosshair; }
 #card .shelf { background: #f3ecfb; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; margin: 6px 0 8px; }
 #card .shelf .h { font-size: 14px; margin-bottom: 6px; }
 #card .shelf .rel { max-height: 260px; overflow-y: auto; }
-#card .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#card, .cardv) .rel a { font-size: 12px; text-decoration: none; color: #2a2033; background: #efe7f7; border: 2px solid var(--line); border-radius: 8px; padding: 1px 7px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #card .msg { font-size: 12px; color: #2f7d3a; min-height: 16px; }
 #card .msg.err { color: #c0392b; }
 /* Above the card (z 4) and everything else, sized to the window: columns
@@ -342,7 +343,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
       <dt><kbd>0</kbd> · 더블클릭</dt><dd>전체 보기</dd>
       <dt><kbd>V</kbd> · <kbd>⇧</kbd>클릭·드래그</dt><dd>세션 고르기 → 창 옮기기 · 회의 · 공지 · 미루기</dd>
       <dt><kbd>K</kbd></dt><dd>🔑 인증 상태</dd>
-      <dt><kbd>C</kbd> <kbd>⌥C</kbd></dt><dd>🎖 지휘 화면 열기 ↔ 닫기 (결정이 없어도 열림; <kbd>⌥C</kbd>는 TWeb·입력칸에서도 통함; 대화창이 열렸으면 <kbd>Esc</kbd> 먼저; <kbd>D</kbd>도 됨. 지휘에서: 맨 위 칸에 할 일을 쓰면 coordinator가 맡길 세션을 고름(열어 둔 브리프·세션·검토 항목이 있으면 그것에 대해) · <kbd>I</kbd> <kbd>⌥I</kbd> 지시칸 · <kbd>j</kbd><kbd>k</kbd> <kbd>⌥J</kbd><kbd>⌥K</kbd> 결정·기다리는 세션·검토 고르기 · <kbd>1-9</kbd> 선택지 · <kbd>Enter</kbd> 보내기 · <kbd>M</kbd> 메모·답 칸 · <kbd>G</kbd> 고른 세션의 tmux pane으로(칸 안에서는 <kbd>⌥G</kbd>) · <kbd>Esc</kbd> 브리프·세션 닫기 → 사무실, 입력칸에서는 칸 나가기)</dd>
+      <dt><kbd>C</kbd> <kbd>⌥C</kbd></dt><dd>🎖 지휘 화면 열기 ↔ 닫기 (결정이 없어도 열림; <kbd>⌥C</kbd>는 TWeb·입력칸에서도 통함; 대화창이 열렸으면 <kbd>Esc</kbd> 먼저; <kbd>D</kbd>도 됨. 지휘에서: 맨 위 칸에 할 일을 쓰면 coordinator가 맡길 세션을 고름(열어 둔 브리프·세션·검토 항목이 있으면 그것에 대해) · <kbd>I</kbd> <kbd>⌥I</kbd> 지시칸 · <kbd>j</kbd><kbd>k</kbd> <kbd>⌥J</kbd><kbd>⌥K</kbd> 결정·기다리는 세션·검토 고르기 · <kbd>1-9</kbd> 선택지 · <kbd>Enter</kbd> 보내기 · <kbd>M</kbd> 메모·답 칸 · <kbd>G</kbd> 고른 세션의 tmux pane으로(칸 안에서는 <kbd>⌥G</kbd>) · <kbd>T</kbd> 고른 세션의 마지막 답 ↔ 카드(칸 안에서는 <kbd>⌥T</kbd>; 카드에서 <kbd>[</kbd><kbd>]</kbd> <kbd>⌥1-9</kbd> 탭) · <kbd>Esc</kbd> 브리프·세션 닫기 → 사무실, 입력칸에서는 칸 나가기)</dd>
       <dt><kbd>,</kbd></dt><dd>⚙ 설정</dd>
       <dt><kbd>?</kbd></dt><dd>이 도움말</dd>
     </dl></section>
@@ -1234,23 +1235,23 @@ function makeCardMovable(bar) {
   bar.title = '끌어서 대화창 이동 · ⌥⇧+방향키'
   bar.onmousedown = (e) => { if (e.target.closest('button') || card.classList.contains('max') || e.button !== 0) return; e.preventDefault(); cardMove = { x: e.clientX, y: e.clientY, left: card.offsetLeft, top: card.offsetTop } }
 }
-function resourceKeys(list, focus = false) {
+function resourceKeys(list, focus = false, host = card) {
   const links = [...list.querySelectorAll('a')]
   links.forEach((a) => { a.tabIndex = -1 })
-  card.resourceLinks = links; card.resourceIndex = links.length ? 0 : -1
-  card.openCurrent = links.length ? () => links[card.resourceIndex].click() : null
-  card.moveResource = links.length ? (dir) => { card.resourceIndex = (card.resourceIndex + dir + links.length) % links.length; links[card.resourceIndex].focus({ preventScroll: false }) } : null
+  host.resourceLinks = links; host.resourceIndex = links.length ? 0 : -1
+  host.openCurrent = links.length ? () => links[host.resourceIndex].click() : null
+  host.moveResource = links.length ? (dir) => { host.resourceIndex = (host.resourceIndex + dir + links.length) % links.length; links[host.resourceIndex].focus({ preventScroll: false }) } : null
   if (focus && links.length) links[0].focus({ preventScroll: false })
 }
 restoreCardLayout()
 let cardSid = null
 // One related item: a brand badge for a well-known place, else an icon chip.
 const CHIP_ICON = { pr: '⇄', slack: '#', ticket: '◇', link: '↗', artifact: '◰', scratch: '✎', file: '✎', exp: '▣' }
-function chip(o) {
+function chip(o, sid = cardSid) {
   const a = document.createElement('a'), b = o.url && brandOf(o.url)
   if (b) { a.className = 'brand'; a.style.setProperty('--bc', BRAND_ICON[b.icon][0]); a.innerHTML = brandSvg(b.icon) + '<b>' + b.label + '</b><span>' + esc(o.title && o.title !== o.url ? o.title : b.short) + '</span>' }
   else a.textContent = (CHIP_ICON[o.kind] || '•') + ' ' + o.title
-  a.title = (o.url || o.path) + ' — 우클릭: 어디서 열지 고르기'; a.onclick = (ev) => (ev.altKey ? showPlaces(o.url || o.path, a) : o.path && canView(o.path) && viewInside() ? viewFile(o.path) : openLink(o.url || o.path))
+  a.title = (o.url || o.path) + ' — 우클릭: 어디서 열지 고르기'; a.onclick = (ev) => (ev.altKey ? showPlaces(o.url || o.path, a) : o.path && canView(o.path) && viewInside() ? viewFile(o.path, sid) : openLink(o.url || o.path))
   a.oncontextmenu = (ev) => { ev.preventDefault(); showPlaces(o.url || o.path, a) }
   if (o.path && canView(o.path) && viewInside()) a.classList.add('view')
   return a
@@ -1279,12 +1280,12 @@ function clock(at) {
 }
 function firstLine(s) { return String(s).split('\n').find((l) => l.trim()) || '' }
 // A link in these tabs opens like one in the answer (data-open).
-function infoClick(ev) {
+function infoClick(ev, sid = cardSid) {
   const a = ev.target.closest('a[data-open]')
   if (!a) return
   ev.preventDefault()
   const v = a.dataset.open
-  if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v)
+  if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v, sid); else openLink(v)
 }
 // Past turns, newest last. Each row shows the ask and, under it, the first
 // line of the answer, so a scroll down the list reads like a log of what
@@ -1335,14 +1336,14 @@ function wireHistory(box) {
 // (or < > out of the reply box) or the ‹ › buttons swap the answer for an earlier turn's, with
 // what was asked above it. The newest position is the live answer, so the
 // card is never left showing an old one as if it were current.
-function turnNav(pane, said, live, turns) {
+function turnNav(pane, said, live, turns, host = card) {
   const past = turns.filter((t) => !t.notice && t.said)
   // The last turn is usually the live answer itself; don't list it twice.
   if (live && past.length && past[past.length - 1].said.trim() === String(live).trim().slice(-8000)) past.pop()
-  card.turnStep = card.turnNavEl = null
+  host.turnStep = host.turnNavEl = null
   if (!past.length) return
   // The tab row carries it (see showTab), so it costs the answer no height.
-  const bar = document.createElement('span'); bar.className = 'turnnav'; card.turnNavEl = bar
+  const bar = document.createElement('span'); bar.className = 'turnnav'; host.turnNavEl = bar
   const ask = document.createElement('div'); ask.className = 'pastask'; ask.style.display = 'none'
   pane.insertBefore(ask, said)
   let at = past.length
@@ -1368,7 +1369,7 @@ function turnNav(pane, said, live, turns) {
     for (const x of [said, el]) x.scrollTop = t ? 0 : x.scrollHeight
   }
   const go = (dir) => { const to = Math.max(0, Math.min(past.length, at + dir)); if (to !== at) { at = to; show() } }
-  card.turnStep = go
+  host.turnStep = go
   show()
 }
 function turnKey(dir) { if (card.selectTab) card.selectTab(0); card.turnStep(dir) }
@@ -1453,9 +1454,12 @@ function sideHtml(t) {
 // The btw strip: between whatever tab is open (the answer, past turns…) and
 // the foot, so one reads the work and talks about it at once. Shown while
 // the reply box is in btw mode; its own height, the newest bubble in view.
-function sideBox(sid, t) {
+// opts.alive: whether the box is still on screen, for its poll (the floor
+// card: while it shows this session); elsewhere PgUp/PgDn are not the card's.
+function sideBox(sid, t, opts = {}) {
+  const alive = opts.alive || (() => cardSid === sid), onCard = !opts.alive
   const box = document.createElement('div'); box.className = 'sidebox'
-  box.innerHTML = '<div class="sh">☕ btw <span class="m">작업에 끼어들지 않는 곁대화 · 메인 기록에 안 남음 · <kbd>⇧PgUp</kbd><kbd>⇧PgDn</kbd> · <kbd>⌥B</kbd> 닫기</span></div>'
+  box.innerHTML = '<div class="sh">☕ btw <span class="m">작업에 끼어들지 않는 곁대화 · 메인 기록에 안 남음' + (onCard ? ' · <kbd>⇧PgUp</kbd><kbd>⇧PgDn</kbd> · <kbd>⌥B</kbd> 닫기' : '') + '</span></div>'
   const log = document.createElement('div'); log.className = 'btw'; box.appendChild(log)
   let timer = null
   box.draw = (th) => {
@@ -1463,7 +1467,7 @@ function sideBox(sid, t) {
     log.scrollTop = log.scrollHeight
     clearTimeout(timer)
     // Poll only while an answer is on its way, and only for this card.
-    if (th.waiting.length || th.items.some((i) => i.pending)) timer = setTimeout(async () => { if (cardSid !== sid) return; try { box.draw(await (await fetch('/side?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()) } catch (_) {} }, 1500)
+    if (th.waiting.length || th.items.some((i) => i.pending)) timer = setTimeout(async () => { if (!alive()) return; try { box.draw(await (await fetch('/side?sid=' + encodeURIComponent(sid), { cache: 'no-store' })).json()) } catch (_) {} }, 1500)
   }
   box.draw(t || { items: [], waiting: [] })
   // Its own box at its foot: the left one stays the session's prompt.
@@ -1472,8 +1476,8 @@ function sideBox(sid, t) {
   ta.onkeydown = async (e) => {
     if (e.isComposing || e.keyCode === 229) return
     if (e.altKey) return // ⌥B, ⌥M… are the card's
-    if ((e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey) { e.preventDefault(); scrollSide(e.key === 'PageUp' ? -1 : 1); return }
-    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); pageKey(e.key === 'PageUp' ? -1 : 1); return }
+    if (onCard && (e.key === 'PageUp' || e.key === 'PageDown') && e.shiftKey) { e.preventDefault(); scrollSide(e.key === 'PageUp' ? -1 : 1); return }
+    if (onCard && (e.key === 'PageUp' || e.key === 'PageDown')) { e.preventDefault(); pageKey(e.key === 'PageUp' ? -1 : 1); return }
     if (e.key === 'Escape') { e.preventDefault(); ta.blur(); return }
     if (e.key !== 'Enter' || e.shiftKey) return
     e.preventDefault()
@@ -1506,6 +1510,67 @@ function setSideMode(on) {
   if (to) to.focus({ preventScroll: true })
   if (on && card.side) { const log = card.side.querySelector('.btw'); log.scrollTop = log.scrollHeight }
 }
+// The card's reading panes, built into `host`: the floor card, or the
+// command view's left pane (command.js), which opens a session's card there
+// without leaving the view. Tabs: the answer, and what it was handed, sent
+// and wrote (from its outputs), so the answer is not pushed down by a wall of
+// chips. [ ] switch. Then what cc-mods shows in that session's own pane:
+// Chat (past turns), Work, Policy and Web, each only when there is something
+// in it; opts.btw adds the side chat as a last tab (the floor card keeps it
+// as the strip ⌥B opens). What the keys work on is left on host: selectTab,
+// shelfTab, curPane, said, turnStep, turnNavEl, resourceLinks.
+function cardPanes(host, d, pn, opts = {}) {
+  const sid = opts.sid || cardSid
+  const wk = pn.work || {}, workN = (wk.subagents || []).length + (wk.bg || []).length
+  const groups = [['said', '💬 답변', null], ['hist', '📜 지난 대화', null, pn.history || [], historyHtml], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)],
+    ['work', '🛠 작업', null, workN ? Array(workN) : [], () => workHtml(wk)], ['policy', '🔐 정책', null, pn.policy ? [pn.policy] : [], () => policyHtml(pn.policy)], ['web', '🌐 웹', null, pn.web || [], webHtml]]
+    .map(([k, label, f, own, render]) => [k, label, f ? (d.related || []).filter(f) : own, render]).filter(([k, , items]) => k === 'said' || items.length)
+  if (opts.btw) groups.push(['btw', '☕ btw', null])
+  const tabbar = document.createElement('div'), panes = {}
+  tabbar.className = 'ctabs'; host.appendChild(tabbar)
+  for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; host.appendChild(panes[k]) }
+  let curTab = 0
+  const showTab = (i, focus = false) => {
+    curTab = (i + groups.length) % groups.length
+    tabbar.innerHTML = ''
+    // Icon and count; the open tab also says its name. The full label and
+    // its key are the tooltip, so the row fits without scrolling.
+    groups.forEach(([k, label, items], j) => {
+      const b = document.createElement('button'), [icon, ...name] = label.split(' '), n = items && items.length && k !== 'policy' ? items.length : ''
+      b.className = j === curTab ? 'on' : ''; b.textContent = icon + (j === curTab ? ' ' + name.join(' ') : '') + (n ? ' ' + n : ''); b.title = label + (n ? ' ' + n : '') + ' (⌥' + (j + 1) + ')'
+      b.onclick = () => showTab(j); tabbar.appendChild(b)
+    })
+    if (host.turnNavEl && groups[curTab][0] === 'said') tabbar.appendChild(host.turnNavEl)
+    groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
+    host.curPane = panes[groups[curTab][0]]
+    // Past turns read like a chat: the newest at the bottom, where it opens.
+    if (groups[curTab][0] === 'hist') host.curPane.scrollTop = host.curPane.scrollHeight
+    if (groups[curTab][0] === 'btw' && focus && host.side) host.side.input.focus({ preventScroll: true })
+    const rel = panes[groups[curTab][0]].querySelector('.rel')
+    if (rel) resourceKeys(rel, focus, host); else { host.resourceLinks = []; host.openCurrent = host.moveResource = null }
+  }
+  host.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
+  host.shelfTab = groups.length > 1 ? (dir) => showTab(curTab + dir, true) : null
+  for (const [k, , items, render] of groups) {
+    if (render) { const box = document.createElement('div'); box.className = k === 'hist' ? 'hist' : 'info'; box.innerHTML = render(items); box.onclick = (ev) => infoClick(ev, sid); panes[k].appendChild(box); if (k === 'hist') wireHistory(box) }
+    else if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o, sid)); panes[k].appendChild(rel) }
+  }
+  if (opts.btw) { host.side = sideBox(sid, pn.side, { alive: opts.alive }); panes.btw.appendChild(host.side) }
+  host.said = null
+  if (d.text) {
+    const said = document.createElement('div'); said.className = 'said'; said.innerHTML = md(d.text); panes.said.appendChild(said)
+    said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v, sid); else openLink(v) } }
+    // Opens at the end, where the question usually is; the keys scroll it.
+    host.said = said
+    turnNav(panes.said, said, d.text, pn.history || [], host)
+  } else if ((pn.history || []).some((t) => !t.notice && t.said)) {
+    // Mid-work there is no answer yet, but the past ones are still worth a look.
+    const said = document.createElement('div'); said.className = 'said'; panes.said.appendChild(said); host.said = said
+    turnNav(panes.said, said, '', pn.history, host)
+  } else host.turnStep = host.turnNavEl = null
+  showTab(0)
+  if (groups.length < 2) tabbar.style.display = 'none'
+}
 async function openCard(sid, kind = null) {
   cardSid = sid
   card.style.display = 'block'
@@ -1532,6 +1597,8 @@ async function openCard(sid, kind = null) {
   let into = card
   const add = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; into.appendChild(e); return e }
   cardChrome(add, esc(d.window + ' ' + d.name))
+  // What it was doing, in one line (coordsum), when it says more than the name.
+  if (d.summary && d.summary !== d.name) add('div', 'csum', '📝 ' + esc(d.summary)).title = d.summary
   card.keys = []
   // One line: what it is doing now first, the persona after (full in the tooltip).
   const sub = add('div', 'sub', (DOING[me.doing || d.doing] || esc(d.state)) + ' · ' + persona(me).replace(/<br>/g, ' · ')); sub.title = sub.textContent
@@ -1578,55 +1645,7 @@ async function openCard(sid, kind = null) {
     card.khint = add('div', 'khint'); drawHints()
     return
   } else card.shelfTab = null
-  // Tabs: the answer, and what it was handed, sent and wrote (from its
-  // outputs), so the answer is not pushed down by a wall of chips. [ ] switch.
-  // Then what cc-mods shows in that session's own pane: Chat (past turns),
-  // Work, Policy and Web, each only when there is something in it.
-  const wk = pn.work || {}, workN = (wk.subagents || []).length + (wk.bg || []).length
-  const groups = [['said', '💬 답변', null], ['hist', '📜 지난 대화', null, pn.history || [], historyHtml], ['in', '📥 받은 것', (o) => o.bucket === 'in'], ['out', '📤 보낸 것', (o) => ['pr', 'slack', 'ticket'].includes(o.bucket)], ['files', '📎 파일', (o) => ['scratch', 'file', 'exp', 'artifact'].includes(o.bucket)],
-    ['work', '🛠 작업', null, workN ? Array(workN) : [], () => workHtml(wk)], ['policy', '🔐 정책', null, pn.policy ? [pn.policy] : [], () => policyHtml(pn.policy)], ['web', '🌐 웹', null, pn.web || [], webHtml]]
-    .map(([k, label, f, own, render]) => [k, label, f ? (d.related || []).filter(f) : own, render]).filter(([k, , items]) => k === 'said' || items.length)
-  const tabbar = add('div', 'ctabs'), panes = {}
-  for (const [k] of groups) { panes[k] = document.createElement('div'); panes[k].className = 'cpane'; card.appendChild(panes[k]) }
-  let curTab = 0
-  const showTab = (i, focus = false) => {
-    curTab = (i + groups.length) % groups.length
-    tabbar.innerHTML = ''
-    // Icon and count; the open tab also says its name. The full label and
-    // its key are the tooltip, so the row fits without scrolling.
-    groups.forEach(([k, label, items], j) => {
-      const b = document.createElement('button'), [icon, ...name] = label.split(' '), n = items && items.length && k !== 'policy' ? items.length : ''
-      b.className = j === curTab ? 'on' : ''; b.textContent = icon + (j === curTab ? ' ' + name.join(' ') : '') + (n ? ' ' + n : ''); b.title = label + (n ? ' ' + n : '') + ' (⌥' + (j + 1) + ')'
-      b.onclick = () => showTab(j); tabbar.appendChild(b)
-    })
-    if (card.turnNavEl && groups[curTab][0] === 'said') tabbar.appendChild(card.turnNavEl)
-    groups.forEach(([k], j) => { panes[k].style.display = j === curTab ? 'block' : 'none' })
-    card.curPane = panes[groups[curTab][0]]
-    // Past turns read like a chat: the newest at the bottom, where it opens.
-    if (groups[curTab][0] === 'hist') card.curPane.scrollTop = card.curPane.scrollHeight
-    const rel = panes[groups[curTab][0]].querySelector('.rel')
-    if (rel) resourceKeys(rel, focus); else { card.resourceLinks = []; card.openCurrent = card.moveResource = null }
-  }
-  card.selectTab = (i) => { if (i < groups.length) showTab(i, true) }
-  if (groups.length > 1) card.shelfTab = (dir) => showTab(curTab + dir, true)
-  for (const [k, , items, render] of groups) {
-    if (render) { const box = document.createElement('div'); box.className = k === 'hist' ? 'hist' : 'info'; box.innerHTML = render(items); box.onclick = infoClick; panes[k].appendChild(box); if (k === 'hist') wireHistory(box) }
-    else if (items) { const rel = document.createElement('div'); rel.className = 'rel'; for (const o of items) rel.appendChild(chip(o)); panes[k].appendChild(rel) }
-  }
-  into = panes.said
-  card.said = null
-  if (d.text) {
-    const said = add('div', 'said', md(d.text)); said.onclick = (ev) => { const a = ev.target.closest('a[data-open]'); if (a) { ev.preventDefault(); const v = a.dataset.open; if (!/^https?:/.test(v) && canView(v) && viewInside()) viewFile(v); else openLink(v) } }
-    // Opens at the end, where the question usually is; the keys scroll it.
-    card.said = said
-    turnNav(panes.said, said, d.text, pn.history || [])
-  } else if ((pn.history || []).some((t) => !t.notice && t.said)) {
-    // Mid-work there is no answer yet, but the past ones are still worth a look.
-    const said = add('div', 'said'); card.said = said
-    turnNav(panes.said, said, '', pn.history)
-  } else card.turnStep = card.turnNavEl = null
-  showTab(0)
-  if (groups.length < 2) tabbar.style.display = 'none'
+  cardPanes(card, d, pn, { sid })
   // The foot: everything to press stays in view at the card's bottom.
   card.side = sideBox(sid, pn.side)
   card.side.style.display = 'none'; card.classList.remove('btwmode'); sideMode = false

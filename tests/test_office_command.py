@@ -434,6 +434,18 @@ class AskingTest(BriefsCase):
         with mock.patch.object(office, "pane_of", return_value=None):
             self.assertEqual(office.asking(WORKER), {"error": "no such session"})
 
+    def test_the_card_carries_what_the_session_was_doing(self):
+        # The card's head (the floor's and the command view's) says it in one line.
+        self.sums.write_text(json.dumps({WORKER: {"text": "office 카드 왼쪽에", "src": "model", "key": "k", "at": 1}}))
+        me = {"id": WORKER, "name": "w", "window": "cc:3", "state": "idle", "doing": "idle", "pane": "%9"}
+        with mock.patch.object(office, "snapshot", return_value=[me]), mock.patch.object(office, "last_text", return_value="끝"), mock.patch.object(office, "capture", return_value=[]), \
+                mock.patch.object(office, "related", return_value=[]), mock.patch.object(office, "route_of", return_value="default"), mock.patch.object(office, "inbox_waiting", return_value=None):
+            d = office.detail(WORKER)
+            coord._sums.update(at=0.0, sums={})
+            self.sums.write_text("{}")
+            bare = office.detail(WORKER)
+        self.assertEqual((d["summary"], d["text"], bare["summary"]), ("office 카드 왼쪽에", "끝", None))
+
     def test_an_answer_from_the_office_goes_to_the_session_not_its_coordinator(self):
         # Not coord_say: coord_send's hold on a worker the person typed in never stops it.
         self.ledger([{"slug": "w", "sid": WORKER}])
@@ -664,7 +676,7 @@ class CommandKeysTest(unittest.TestCase):
         self.assertEqual(got, [False, False, False, False, True])
 
     def test_the_floor_keys_pass_through_while_the_view_is_shut_and_open(self):
-        floor = ["j", "k", "i", "n", "p", "v", "f", "0", "Tab", "ArrowUp", "?", ","]
+        floor = ["j", "k", "i", "n", "p", "v", "f", "0", "Tab", "ArrowUp", "?", ",", "t", "[", "]"]
         got = self.run_js("const keys = " + json.dumps(floor) + "; const shut = keys.filter((k) => press(k)); press('c'); const open = keys.filter((k) => press(k)); return [shut, open]")
         # Open, the view takes i (its box) and j/k only when a decision waits; none does here.
         self.assertEqual(got, [[], ["i"]])
@@ -924,6 +936,46 @@ class CommandKeysTest(unittest.TestCase):
             return [opened, g, i, cmd.sel.sid, 'worker' in cmd]
         """)
         self.assertEqual(got, [["w1", "fix", None, "c1"], True, True, "w1", False])
+
+    def test_t_turns_a_picked_session_between_its_last_answer_and_its_card(self):
+        got = self.run_js("""
+            crew(); cmd.sel = null
+            const none = press('t')
+            cmdClick(row('w1'))
+            const t1 = press('t'), v1 = cmd.view, t2 = press('t'), v2 = cmd.view
+            // In a box bare t is typing; ⌥T works there, as ⌥G does.
+            const typed = press('t', true), v3 = cmd.view, alt = press('t', true, true), v4 = cmd.view
+            // On the card the box still speaks straight to that session.
+            const about = cmdAbout().label
+            cmdSay('카드 보고 하는 말')
+            // An open floor card or file viewer keeps t; a brief or a review item is no session.
+            card.style.display = 'block'; const cardT = press('t'); card.style.display = 'none'
+            viewer.path = '/x.md'; const viewT = press('t'); viewer.path = ''
+            const keep = cmd.sel; cmd.sel = { file: 'a.html' }; const briefT = press('t'); cmd.sel = { review: 'cc-mods#85', coord: 'c1' }; const revT = press('t'); cmd.sel = keep
+            // Another session opens in the same look; a close goes back to the answer.
+            cmdClick(row('w4')); const v5 = cmd.view
+            press('Escape')
+            return [none, t1, v1, t2, v2, typed, v3, alt, v4, about, replies, cardT, viewT, briefT, revT, v5, cmd.sel, cmd.view]
+        """)
+        self.assertEqual(got, [False, True, "card", True, "said", False, "said", True, "card", "👷 fix 에게",
+                               [["w1", {"kind": "reply", "value": "카드 보고 하는 말"}, "지시"]], False, False, False, False, "card", None, "said"])
+
+    def test_the_cards_tabs_take_brackets_and_alt_digits_only_while_it_shows(self):
+        got = self.run_js("""
+            crew(); cmdClick(row('w1'))
+            const tabs = []
+            cmd.card = { dataset: { sid: 'w1' }, selectTab: (i) => tabs.push(i), shelfTab: (d) => tabs.push('s' + d) }
+            // The last answer showing: [ ] and ⌥2 are not the view's.
+            const onSaid = [press(']'), press('2', false, true)]
+            press('t')
+            const onCard = [press(']'), press('['), press('2', false, true), press('9', true, true)]
+            // A bare digit still arms the session's choice (none here), never a tab.
+            const bare = press('2')
+            // A card still on screen from another session is not this one's.
+            cmd.card.dataset.sid = 'w4'; const stale = [press(']'), press('3', false, true)]
+            return [onSaid, onCard, bare, stale, tabs]
+        """)
+        self.assertEqual(got, [[False, False], [True, True, True, True], False, [False, False], ["s1", "s-1", 1, 8]])
 
     def test_the_table_is_folded_to_one_line_and_hides_the_quiet_adopted_ones_until_asked(self):
         got = self.run_js("""
