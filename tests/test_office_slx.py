@@ -69,13 +69,15 @@ class FakeSlx(BriefsCase):
         slx._knows.clear()
         slx._cache.update(at=0.0, out=None)
 
-    def make(self, knows: bool = True, answer: str = 'echo "$2: opening a session"', rc: int = 0) -> None:
+    def make(self, knows: bool = True, answer: str = 'echo "$2: opening a session"', rc: int = 0, up: str | None = None) -> None:
+        """up: the shell `slx up` runs (None: this slx has no up)."""
         self.bin.write_text(textwrap.dedent(f"""\
             #!/bin/sh
             echo "$@" >> {self.log}
             case "$1" in
-              -h) echo "usage: slx [flags]{' / slx list [-all]' if knows else ''}" >&2; exit 0 ;;
+              -h) echo "usage: slx [flags]{' / slx list [-all]' if knows else ''}{' / slx up [-replace]' if up is not None else ''}" >&2; exit 0 ;;
               list) cat {self.inbox} ;;
+              up) {up or 'exit 9'} ;;
               *) {answer}; exit {rc} ;;
             esac
             """))
@@ -236,6 +238,66 @@ class ActTest(FakeSlx):
         for bad in ("C1/nope", "-rf"):
             self.assertEqual(command.act({"kind": "coord_say", "coord": COORD, "value": "x", "re": {"slx": bad}}, self.put)[0], 400, bad)
 
+class UpTest(FakeSlx):
+    """[slx 켜기]: slx up, then the 세션 만들기 pressed."""
+
+    def acts(self) -> list[str]:
+        return [c for c in self.calls() if c.split()[0] in ("up", "open")]
+
+    def test_up_then_open_is_one_press(self):
+        self.make(up='echo "up: started in %9"')
+        code, j = command.act({"kind": "slx_up", "then": "C1/2.0"}, self.put)
+        self.assertEqual((code, j), (200, {"ok": True, "sent": "slx를 켰습니다 · 세션을 엽니다"}))
+        self.assertEqual(self.acts(), ["up", "open C1/2.0"])
+        # Alone, from the slx line: up only.
+        self.assertEqual(command.act({"kind": "slx_up"}, self.put), (200, {"ok": True, "sent": "slx를 켰습니다"}))
+        self.make(up='echo "up: already running (%9)"')
+        self.assertEqual(command.act({"kind": "slx_up"}, self.put)[1]["sent"], "slx가 이미 켜져 있습니다")
+
+    def test_replace_asks_slx_to_quit_the_older_one(self):
+        self.make(up='echo "up: quit the older TUI in %52"; echo "up: started in %9"')
+        code, j = command.act({"kind": "slx_up", "replace": True, "then": "C1/2.0"}, self.put)
+        self.assertEqual((code, j["sent"]), (200, "slx를 다시 시작했습니다 · 세션을 엽니다"))
+        self.assertEqual(self.acts(), ["up -replace", "open C1/2.0"])
+
+    def test_an_older_tui_that_stays_is_said_where_and_nothing_opens(self):
+        self.make(up='echo "slx: up: the older slx TUI in %52 (0:2 slx) did not quit within 5s; quit it there (q) and run slx up again" >&2; exit 1')
+        code, j = command.act({"kind": "slx_up", "replace": True, "then": "C1/2.0"}, self.put)
+        self.assertEqual(code, 409)
+        self.assertIn("%52 · 0:2 slx", j["error"])
+        self.assertIn("강제로 끄지 않았습니다", j["error"])
+        self.make(up='echo "slx: an older slx TUI is running in %52 (0:2 slx): slx up -replace quits it and starts this one" >&2; exit 1')
+        self.assertIn("다시 시작", command.act({"kind": "slx_up", "then": "C1/2.0"}, self.put)[1]["error"])
+        self.make(up='echo "slx: up: slx exited at start: slx: profiles: bad" >&2; exit 1')
+        self.assertEqual(command.act({"kind": "slx_up"}, self.put), (409, {"error": "slx가 켜지자마자 꺼졌습니다: slx: profiles: bad"}))
+        self.assertEqual([c for c in self.acts() if c.startswith("open")], [])
+
+    def test_open_failing_after_up_says_slx_is_on(self):
+        self.make(up='echo "up: started in %9"', answer='echo "$2: slx did not take the request in time (withdrawn)"', rc=1)
+        with mock.patch.object(slx.time, "sleep"):
+            code, j = command.act({"kind": "slx_up", "then": "C1/2.0"}, self.put)
+        self.assertEqual(code, 409)
+        self.assertTrue(j["error"].startswith("slx를 켰습니다만 세션은 못 열었습니다"), j)
+        self.assertEqual(self.acts(), ["up"] + ["open C1/2.0"] * slx.OPEN_TRIES)
+
+    def test_a_slx_without_up_and_a_bad_then_run_nothing(self):
+        self.make()
+        self.assertEqual(command.act({"kind": "slx_up", "then": "C1/2.0"}, self.put)[0], 503)
+        self.make(up='echo "up: started in %9"')
+        self.assertEqual(command.act({"kind": "slx_up", "then": "-rf"}, self.put)[0], 400)
+        self.assertEqual(command.act({"kind": "slx_up", "then": "C1/nope"}, self.put)[0], 404)
+        self.assertEqual(self.acts(), [])
+
+    def test_the_view_says_whether_slx_can_start_and_names_an_older_tui(self):
+        inbox = {**INBOX, "tui": False, "stale_tui": [{"pane": "%52", "window": "0:2 slx", "pid": 64223}, {"pane": "x;rm", "window": "bad"}]}
+        self.inbox.write_text(json.dumps(inbox, ensure_ascii=False))
+        v = self.view()
+        self.assertEqual((v["tui"], v["stale"], v["canUp"]), (False, [{"pane": "%52", "window": "0:2 slx"}], False))
+        self.make(up="true")
+        slx._cache.update(at=0.0, out=None)
+        self.assertTrue(self.view()["canUp"])
+
+
 SLX_JS = textwrap.dedent(r"""
     var did = [], slxDoReal = slxDo
     slxDo = (s, act, extra) => { did.push([s.slx, act, extra || {}]); cmd.armed = null }
@@ -362,6 +424,33 @@ class SlxKeysTest(unittest.TestCase):
         self.assertEqual(got[0], ["%5"])
         self.assertEqual(got[1], [])
         self.assertIn("pane이 없습니다", got[2])
+
+    def test_off_1_starts_slx_then_opens_and_an_older_one_is_restarted(self):
+        got = self.run_js("""
+            return (async () => {
+              inbox(); slxDo = slxDoReal
+              // The harness's timers never fire: let the posts' promises settle.
+              const tick = async () => { for (let i = 0; i < 20; i++) await null }
+              const posts = []; cmdPost = async (b) => { posts.push(b); return { sent: 'ok' } }
+              cmd.data.slx.tui = false; cmd.data.slx.canUp = true
+              cmd.sel = { slx: 'a', title: 'Alice' }
+              const foot = slxFoot()
+              press('1'); press('Enter'); await tick()
+              cmd.data.slx.tui = false; cmd.data.slx.stale = [{ pane: '%52', window: '0:2 slx' }]
+              const footStale = slxFoot()
+              press('1'); press('Enter'); await tick()
+              cmd.data.slx.tui = false; cmd.data.slx.stale = []; cmd.data.slx.canUp = false
+              press('1'); press('Enter'); await tick()
+              const cannot = toasts.slice(-1)[0]
+              cmd.data.slx.tui = false; cmd.data.slx.canUp = true
+              await slxFootDo('up')
+              return [foot.includes('⏻ slx 켜기'), footStale.includes('↻ slx 다시 시작'), footStale.includes('%52'), posts, cannot]
+            })()
+        """)
+        foot, foot_stale, names, posts, cannot = got
+        self.assertTrue(foot and foot_stale and names)
+        self.assertEqual(posts, [{"kind": "slx_up", "then": "a"}, {"kind": "slx_up", "replace": True, "then": "a"}, {"kind": "slx_up"}])
+        self.assertIn("스스로 켜지 못합니다", cannot)
 
     def test_the_row_the_badge_and_the_rules(self):
         got = self.run_js("""
