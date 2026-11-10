@@ -130,17 +130,66 @@ test('coord: a worker whose pane names another session is not gone while its own
   expect(kept.changes).toEqual([])
   expect(kept.ledger.workers[0]!.endedAt).toBeUndefined()
   expect(kept.ledger.workers[0]!.pane).toBe('%386')
-  // Its session really ended: gone, once.
-  const gone = observe(l, seen, NOW, new Set())
+  // Its session really ended: gone, once, on the second tick that misses it.
+  const once = observe(l, seen, NOW, new Set())
+  expect(once.changes).toEqual([])
+  const gone = observe(once.ledger, seen, NOW + 10_000, new Set())
   expect(gone.changes.map((c) => c.text)).toEqual(['coord-route: its session is gone (pane closed or claude exited)'])
   // Just started, or already ended: not asked about.
   expect(unseen(on({ workers: [worker({ at: NOW - 5_000 }), worker({ slug: 'b', sid: 'w2', endedAt: NOW })] }), [], NOW)).toEqual([])
 })
 
+test('coord: one tick that sees no worker is not gone; two in a row are', () => {
+  // Live (2026-11-10 20:16): after a reload, one tick found no pane and no
+  // live claude for all 22 workers, every one alive. The owned ones came
+  // back as adopted (auto), so coord_close handed them back instead of
+  // closing their panes and worktrees.
+  const l = on({ workers: [worker(), worker({ slug: 'b', sid: 'w2', relation: 'adopted', auto: true })] })
+  const both = parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t\n%2\t@2\tw2\tworking\tnone\t/w/b\t')
+  const miss = observe(l, [], NOW)
+  expect(miss.changes).toEqual([])
+  expect(miss.ledger.workers.map((w) => [w.endedAt, w.missed])).toEqual([[undefined, 1], [undefined, 1]])
+  // Seen again: the miss is forgotten.
+  const seen = observe(miss.ledger, both, NOW + 10_000)
+  expect(seen.ledger.workers.map((w) => w.missed)).toEqual([undefined, undefined])
+  expect(observe(seen.ledger, [], NOW + 20_000).changes).toEqual([])
+  // A live claude found for it also forgets the miss.
+  expect(observe(miss.ledger, [], NOW + 10_000, new Set(['w1', 'w2'])).ledger.workers.map((w) => w.missed)).toEqual([undefined, undefined])
+  // Two misses in a row: gone.
+  const gone = observe(miss.ledger, [], NOW + 10_000)
+  expect(gone.changes.map((c) => c.kind)).toEqual(['gone', 'gone'])
+  expect(gone.ledger.workers.every((w) => w.endedAt === NOW + 10_000 && w.goneAt === NOW + 10_000)).toBe(true)
+})
+
+test('coord: a worker taken for gone whose session a pane names again is taken back as it was, owned stays owned', () => {
+  const made = { kind: 'pane' as const, pane: '%9', window: '@3' }
+  const gone = on({ workers: [worker({ made, worktree: '/w/tmc-layout', endedAt: NOW - 5_000, goneAt: NOW - 5_000 })] })
+  const seen = parsePanes('%9\t@3\tw1\tworking\tnone\t/w/tmc-layout\t')
+  // autoAdopt leaves it to observe: no second record, no adoption.
+  expect(autoAdopt(gone, seen, new Map(), new Set(), NOW).adopted).toEqual([])
+  const r = observe(gone, seen, NOW)
+  expect(r.changes.map((c) => c.text)).toEqual(['tmc-layout: its session is back (taken for gone, it was alive)'])
+  const w = r.ledger.workers[0]!
+  expect([w.relation, w.endedAt, w.goneAt, w.worktree, w.made]).toEqual(['owned', undefined, undefined, '/w/tmc-layout', made])
+  // The gone wake still queued is no longer true; the back one is.
+  const gc = { slug: 'tmc-layout', sid: 'w1', kind: 'gone' as const, text: 'tmc-layout: its session is gone (pane closed or claude exited)', wake: true }
+  expect(current(gc, gone, NOW)).toBe(true)
+  expect(current(gc, r.ledger, NOW)).toBe(false)
+  expect(current({ ...gc, kind: 'back' }, r.ledger, NOW)).toBe(true)
+  expect(recheck('[coord] ' + gc.text, r.ledger, NOW, new Map())).toBeUndefined()
+  // Closed (coord_close) or released: no goneAt, never taken back.
+  const closed = on({ workers: [worker({ endedAt: NOW - 5_000 })] })
+  expect(observe(closed, seen, NOW).changes).toEqual([])
+  // A newer record for the same session is live: the old one stays ended.
+  const twice = on({ workers: [worker({ endedAt: NOW - 5_000, goneAt: NOW - 5_000 }), worker({ slug: 'w1-again', relation: 'adopted', auto: true })] })
+  expect(observe(twice, seen, NOW).ledger.workers.map((x) => !!x.endedAt)).toEqual([true, false])
+})
+
 test('coord: the watch wakes the coordinator for a question, a finished turn and an exit; the person typing is recorded, not told', () => {
   const l = on({ workers: [worker(), worker({ slug: 'b', sid: 'w2' }), worker({ slug: 'c', sid: 'w3' }), worker({ slug: 'fresh', sid: 'w4', at: NOW - 5_000 })] })
   const seen = parsePanes(['%1\t@1\tw1\tworking\task\t/w/tmc-layout\t', '%2\t@2\tw2\tdone\tnone\t/w/b\t' + Math.floor((NOW - 1000) / 1000), ''].join('\n'))
-  const { ledger, changes } = observe(l, seen, NOW)
+  // c is missed once already: this tick is its second.
+  const { ledger, changes } = observe({ ...l, workers: l.workers.map((w) => (w.sid === 'w3' ? { ...w, missed: 1 } : w)) }, seen, NOW)
   expect(changes.map((c) => c.slug)).toEqual(['tmc-layout', 'b', 'c'])
   expect(changes[0]!.text).toContain('waiting on an answer')
   expect(changes[1]!.text).toContain('finished its turn')
@@ -566,7 +615,7 @@ test('coord: the person typing in an auto-adopted session is only noted; its own
   const busy = on({ workers: [{ ...a!, state: 'working', typedAt: undefined }] })
   expect(observe(busy, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([])
   expect(observe(busy, parsePanes('%7\t@1\tops\twaiting\task\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'ask', wake: false })])
-  expect(observe(busy, [], NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'gone', wake: false })])
+  expect(observe(observe(busy, [], NOW + 600_000).ledger, [], NOW + 610_000).changes).toEqual([expect.objectContaining({ kind: 'gone', wake: false })])
   // Instructed once: its turns are news.
   const told = on({ workers: [{ ...a!, state: 'working', typedAt: undefined, instructed: NOW + 1 }] })
   expect(observe(told, parsePanes('%7\t@1\tops\tdone\tnone\t/src/ops\t'), NOW + 600_000).changes).toEqual([expect.objectContaining({ kind: 'turn', wake: true })])

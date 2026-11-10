@@ -68,6 +68,13 @@ export type Worker = {
   auto?: boolean
   instructed?: number
   endedAt?: number
+  // Ticks in a row no pane named it and no live claude was found for it: one
+  // such tick is not gone (MISSES_FOR_GONE).
+  missed?: number
+  // When observe took it for gone (endedAt then too). Seen in a pane again,
+  // it was alive all along: observe takes it back as it was, owned or
+  // adopted, and autoAdopt does not adopt its session anew.
+  goneAt?: number
 }
 
 export type LogEntry = { at: number; kind: 'order' | 'spawn' | 'adopt' | 'release' | 'close' | 'send' | 'event' | 'limits'; text: string }
@@ -94,6 +101,10 @@ export const LOG_MAX = 200
 // their composer stays where it is.
 export const TYPED_MS = 10 * 60_000
 export const SPAWN_GRACE_MS = 60_000
+// Live (2026-11-10 20:16): one tick found no pane and no live claude for all
+// 22 workers at once, all alive; the owned ones came back as adopted. Gone
+// takes two ticks in a row (10 s apart) that both miss it.
+export const MISSES_FOR_GONE = 2
 export const RELEASED_MAX = 200
 
 export function emptyLedger(sid: string, name: string, now: number): Ledger {
@@ -225,9 +236,12 @@ export function quiet(w: Worker): boolean {
 // came and went.
 export function autoAdopt(l: Ledger, seen: readonly PaneSeen[], names: ReadonlyMap<string, string>, skip: ReadonlySet<string>, now: number): { ledger: Ledger; adopted: Worker[] } {
   if (!l.on || !l.limits.autoAdopt) return { ledger: l, adopted: [] }
-  const kept = l.workers.filter((w) => !(quiet(w) && (w.endedAt || skip.has(w.sid))))
-  const mine = new Set(kept.filter((w) => !w.endedAt).map((w) => w.sid))
-  const taken = new Set(kept.filter((w) => !w.endedAt).map((w) => w.slug))
+  const shown = new Set(seen.map((s) => s.sid))
+  // Taken for gone and seen again: observe takes that record back.
+  const revived = (w: Worker) => !!w.goneAt && shown.has(w.sid)
+  const kept = l.workers.filter((w) => !(quiet(w) && ((w.endedAt && !revived(w)) || skip.has(w.sid))))
+  const mine = new Set(kept.filter((w) => !w.endedAt || revived(w)).map((w) => w.sid))
+  const taken = new Set(kept.filter((w) => !w.endedAt || revived(w)).map((w) => w.slug))
   const back = new Set(l.released)
   const adopted: Worker[] = []
   for (const s of seen) {
@@ -402,8 +416,9 @@ export function parsePanes(out: string): PaneSeen[] {
 // call a permission ask waits on (lib/asks.ts).
 export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}\t#{@cc_pane_asks}'
 
-export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone'; text: string; wake: boolean }
+export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone' | 'back'; text: string; wake: boolean }
 const GONE = 'its session is gone'
+const BACK = 'its session is back (taken for gone, it was alive)'
 
 // Workers no pane names past their first minute: the ones observe would call
 // gone, so the mod looks whether they are still alive first.
@@ -420,20 +435,37 @@ export function unseen(l: Ledger, seen: PaneSeen[], now: number): Worker[] {
 // pane names it (a session that took its pane's name over it, such as a
 // `claude -p` from an older cc-mods). `sums`: what each session was doing
 // (lib/coordsum.ts), so a wake names the worker as the person knows it.
+// The caller passes what it read: a tmux or alive read that failed is no
+// news, so it does not call this at all, or counts every worker it asked
+// about alive. A worker taken for gone whose session a pane names again is
+// taken back (`back`), with its relation, worktree and spawn record as they
+// were.
 export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
   const bySid = new Map(seen.map((s) => [s.sid, s]))
   const changes: Change[] = []
-  const workers = l.workers.map((w) => {
-    if (w.endedAt) return w
+  const live = new Set(active(l).map((w) => w.sid))
+  // The newest record taken for gone, per session, when no live record has it.
+  const lastGone = new Map<string, number>()
+  l.workers.forEach((w, i) => w.endedAt && w.goneAt && !live.has(w.sid) && lastGone.set(w.sid, i))
+  const workers = l.workers.map((w0, i) => {
+    let w = w0
+    if (w.endedAt) {
+      if (!w.goneAt || lastGone.get(w.sid) !== i || !bySid.has(w.sid)) return w
+      w = { ...w, endedAt: undefined, goneAt: undefined, missed: undefined }
+      changes.push({ slug: w.slug, sid: w.sid, kind: 'back', text: who(w.slug, sums.get(w.sid)) + ': ' + BACK, wake: !quiet(w) })
+    }
     const s = bySid.get(w.sid)
     if (!s) {
       // Not yet published: a worker just started has no @cc_pane_session for
       // its first seconds.
-      if (now - w.at < SPAWN_GRACE_MS || alive.has(w.sid)) return w
+      if (now - w.at < SPAWN_GRACE_MS) return w
+      if (alive.has(w.sid)) return w.missed ? { ...w, missed: undefined } : w
+      const missed = (w.missed ?? 0) + 1
+      if (missed < MISSES_FOR_GONE) return { ...w, missed }
       changes.push({ slug: w.slug, sid: w.sid, kind: 'gone', text: who(w.slug, sums.get(w.sid)) + ': ' + GONE + ' (pane closed or claude exited)', wake: !quiet(w) })
-      return { ...w, endedAt: now }
+      return { ...w, missed: undefined, endedAt: now, goneAt: now }
     }
-    const next: Worker = { ...w, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
+    const next: Worker = { ...w, missed: undefined, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
     // The brief itself arrives as an owned worker's first composer prompt
     // (it is claude's command-line argument), so a mark from the spawn's
     // first minute is that, not the person. An adopted one was given no
@@ -516,12 +548,15 @@ export function typedNote(w: Worker, now: number): string {
 
 // Whether a wake held while the coordinator's turn ran still says something
 // true now that it can be delivered: the worker still asks, is still idle
-// after its turn. A gone worker stays gone.
+// after its turn. A gone worker stays news unless its session was seen again
+// (taken back); a worker back stays news while it is not gone again.
 export function current(c: Change, l: Ledger, now: number): boolean {
-  const w = l.workers.find((x) => x.sid === c.sid)
+  const ws = l.workers.filter((x) => x.sid === c.sid)
+  const w = ws.find((x) => !x.endedAt) ?? ws[0]
   if (!w) return false
-  if (c.kind === 'gone') return true
+  if (c.kind === 'gone') return !!w.endedAt
   if (w.endedAt) return false
+  if (c.kind === 'back') return true
   if (c.kind === 'ask') return w.attention === 'ask' || w.attention === 'action'
   return rested(w)
 }
@@ -543,7 +578,7 @@ export function recheck(text: string, l: Ledger, now: number, sent: ReadonlyMap<
     const c = sent.get(body)
     if (c) return current(c, l, now)
     const w = wakeWorker(body, l)
-    return !w?.endedAt || body.includes(GONE)
+    return body.includes(GONE) ? !w || !!w.endedAt : !w?.endedAt
   })
   return kept.length ? kept.join('\n') : undefined
 }
