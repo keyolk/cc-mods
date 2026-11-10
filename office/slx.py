@@ -20,7 +20,7 @@ policy.
 /command's `slx` is {"items", "old", "tui", "error", "mutes", "muted", "snoozed"}:
 - items: the open items received within WINDOW_H hours, and any whose
   session is up however old: the ones waiting on the person (no session, or
-  an ended one) the longest waiting first, then those whose session is up. `merged` marks one
+  an ended one) the most recent first, then those whose session is up. `merged` marks one
   whose session already has a row in the view (it waits on the person, or a
   coordinator works it): that row carries 📨 and the item gets no row of its own.
 - old: the open items left out as older, counted only.
@@ -49,7 +49,8 @@ MUTE_ID = re.compile(r"^m[0-9a-f]{1,16}$")
 UNTIL = re.compile(r"^(\d{1,4}[mh]|\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d))$")
 MANY = 200  # ids in one bulk action
 CACHE_S = 5
-WINDOW_H = float(os.environ.get("SLX_WINDOW_H") or 72)
+# A trigger older than this with no live session is left out of the view (counted only).
+WINDOW_H = float(os.environ.get("SLX_WINDOW_H") or 24)
 ID = re.compile(r"^[\w][\w:./-]{0,127}$")
 ICON = {"slack": "📨", "meerkat": "🚨"}
 TEXT_MAX = 4000
@@ -188,9 +189,10 @@ def view(rows: set[str], now: float | None = None) -> dict:
             old += 1
             continue
         items.append(r)
-    # What waits on the person (no session, or an ended one) first, the
-    # longest waiting first; then the items whose session is at work.
-    items.sort(key=lambda r: (r["alive"], _epoch(r["at"])))
+    # What waits on the person (no session, or an ended one) first, the most
+    # recent first (an old trigger is the least likely to still matter); then
+    # the items whose session is at work.
+    items.sort(key=lambda r: (r["alive"], -_epoch(r["at"])))
     mutes = [
         {"id": str(m.get("id")), "label": str(m.get("label") or m.get("text") or m.get("id"))[:120], "trigger": m.get("trigger") or "", "hides": int(m.get("hides") or 0)}
         for m in d.get("mutes") or []

@@ -91,11 +91,11 @@ class FakeSlx(BriefsCase):
 
 
 class ViewTest(FakeSlx):
-    def test_recent_open_items_longest_waiting_first_then_the_ones_at_work(self):
+    def test_recent_open_items_most_recent_first_then_the_ones_at_work(self):
         v = self.view()
-        self.assertEqual([r["id"] for r in v["items"]], ["C1/1.0", "D9", "C1/2.0", "C1/0.6", "meerkat:inc-1"])
-        # Older than 72 h with no live session: counted, not listed; done and a bad id: gone.
-        self.assertEqual(v["old"], 1)
+        self.assertEqual([r["id"] for r in v["items"]], ["C1/2.0", "D9", "meerkat:inc-1", "C1/0.6"])
+        # Older than 24 h with no live session: counted, not listed (a live one stays, whatever its age); done and a bad id: gone.
+        self.assertEqual((v["old"], v["windowH"]), (2, 24))
         # Muted and snoozed items are left out (an slx without -all leaves
         # them out anyway); the rules come with valid ids only.
         self.assertEqual((v["muted"], v["snoozed"], v["mutes"]), (3, 1, [{"id": "m1a2b", "label": "#noise", "trigger": "slack", "hides": 3}]))
@@ -106,11 +106,24 @@ class ViewTest(FakeSlx):
         self.assertEqual(next(r for r in v["items"] if r["id"] == "C1/2.0")["icon"], "📨")
         self.assertFalse(next(r for r in v["items"] if r["id"] == "D9")["alive"])
 
+    def test_the_window_edge_is_24_hours_and_a_live_session_is_the_exception(self):
+        self.inbox.write_text(json.dumps({**INBOX, "items": [
+            item("in", 23.9), item("out", 24.1), item("older-first", 12),
+            item("live-old", 100, status="opened", session=session(WORKER, True)),
+            item("ended-old", 100, status="opened", session=session(ENDED, False)),
+        ]}))
+        v = self.view({WORKER})
+        # Most recent first among those waiting on the person; the live one is kept, and its badge matches (merged, no row of its own).
+        self.assertEqual([r["id"] for r in v["items"]], ["older-first", "in", "live-old"])
+        self.assertEqual(v["old"], 2)
+        self.assertTrue(next(r for r in v["items"] if r["id"] == "live-old")["merged"])
+        self.assertEqual(slx.by_sid(v)[WORKER]["id"], "live-old")
+
     def test_an_item_whose_session_has_a_row_rides_on_it(self):
         v = self.view({WORKER, ENDED})
         merged = {r["id"]: r["merged"] for r in v["items"]}
         # ENDED's session is not up: its item keeps a row even if the sid is listed.
-        self.assertEqual(merged, {"C1/0.6": True, "C1/1.0": False, "meerkat:inc-1": False, "D9": False, "C1/2.0": False})
+        self.assertEqual(merged, {"C1/0.6": True, "meerkat:inc-1": False, "D9": False, "C1/2.0": False})
         self.assertEqual(slx.by_sid(v)[WORKER]["icon"], "📨")
 
     def test_the_command_view_puts_the_badge_on_the_sessions_row(self):
@@ -229,7 +242,7 @@ SLX_JS = textwrap.dedent(r"""
     function inbox() {
       cmd.data = { pending: [], coordinators: [], calls: [{ sid: 's1', name: 'one', window: 'w:1', pane: '%1', slx: { id: 'm', icon: '🚨', from: '#1', text: 'x' } }],
         reviews: [{ coord: 'c1', coordName: 'd9', id: 'r1', title: 'R1', links: [] }],
-        slx: { tui: true, old: 2, windowH: 72, muted: 3, mutes: [{ id: 'm1', label: '#noise', hides: 3 }], items: [
+        slx: { tui: true, old: 2, windowH: 24, muted: 3, mutes: [{ id: 'm1', label: '#noise', hides: 3 }], items: [
           { id: 'm', icon: '🚨', from: '#1', text: 'x', merged: true, sid: 's1', alive: true },
           { id: 'a', icon: '📨', from: 'Alice', text: 'hi', where: '#t', at: '2026-11-10T00:00:00Z' },
           { id: 'b', icon: '📨', from: 'Bob', text: 'yo', alive: true, pane: '%5', sid: 's5' }] } }
@@ -334,7 +347,7 @@ class SlxKeysTest(unittest.TestCase):
             const before = slxFoot()
             press('x'); const marked = Object.keys(slxUi.marks), foot = slxFoot()
             cmd.sel = { slx: 'b', title: 'Bob' }; const running = press('x')
-            return [before.includes('고른'), marked, foot.includes('고른 1건'), running, foot.includes('⚙ 진행 중 1'), foot.includes('72시간 넘은 2건'), foot.includes('숨김 규칙 1 · 가린 3')]
+            return [before.includes('고른'), marked, foot.includes('고른 1건'), running, foot.includes('⚙ 진행 중 1'), foot.includes('24시간 넘은 2건'), foot.includes('숨김 규칙 1 · 가린 3')]
         """)
         self.assertEqual(got, [False, ["a"], True, False, True, True, True])
 
@@ -375,8 +388,8 @@ class TurnTest(unittest.TestCase):
         xs[3]["sid"] = WORKER
         rows = turn.table([], calls, [], [], xs, now=NOW.timestamp())
         # A session that waited less still comes before the triggers' own
-        # rows; a merged one rides on its session's row; a running one has none.
-        self.assertEqual([(r["key"], r["slx"], r["needs"]) for r in rows], [("s:" + WORKER, ["merged"], True), ("x:ended", ["ended"], True), ("x:new", ["new"], True)])
+        # rows, and go most recent first; a merged one rides on its session's row; a running one has none.
+        self.assertEqual([(r["key"], r["slx"], r["needs"]) for r in rows], [("s:" + WORKER, ["merged"], True), ("x:new", ["new"], True), ("x:ended", ["ended"], True)])
         self.assertEqual(turn.table([], calls, [], [], now=NOW.timestamp())[0]["key"], "s:" + WORKER)
 
     def test_several_items_on_one_session_are_counted(self):

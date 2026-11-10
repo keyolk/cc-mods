@@ -68,6 +68,13 @@ class TurnTest(unittest.TestCase):
         self.assertEqual(by["s:" + ADOPTED]["relation"], "adopted")
         self.assertEqual(turn.table([], [], [], []), [])
 
+    def test_trigger_rows_go_most_recent_first_after_the_rows_that_need_the_person(self):
+        now = turn.epoch("2026-11-10T10:00Z")
+        calls = [{"sid": STRAY, "since": turn.epoch("2026-11-10T01:00Z"), "name": "s"}]
+        trig = [{"id": "old", "alive": False, "at": "2026-11-10T02:00Z"}, {"id": "new", "alive": False, "at": "2026-11-10T09:00Z"}, {"id": "mid", "alive": False, "at": "2026-11-10T05:00Z"}]
+        rows = turn.table([], calls, [], [], trig, now=now)
+        self.assertEqual([r["key"] for r in rows], ["s:" + STRAY, "x:new", "x:mid", "x:old"])
+
     def test_the_rows_waiting_on_nobody_go_by_name(self):
         coords = [{"sid": COORD, "name": "d9", "workers": [{"slug": "zz", "sid": OWNED}, {"slug": "aa", "sid": ADOPTED, "relation": "adopted"}]}]
         self.assertEqual([r["name"] for r in turn.table([], [], [], coords)], ["aa", "d9", "zz"])

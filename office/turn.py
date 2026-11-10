@@ -22,8 +22,9 @@ Whose is what:
   session runs with no row stays in the slx line under the table.
 
 Rows that need the person come first, the one that has waited longest on
-top; a trigger's own row follows them (a trigger is a candidate, and a day of
-Slack mentions would otherwise push every decision down); the rest follow by
+top; a trigger's own rows follow them, the most recent first (a trigger is a
+candidate, and a day of Slack mentions would otherwise push every decision
+down; an old one is the least likely to matter); the rest follow by
 name. A row only names what it holds (brief files, a
 session id, review ids): the view draws the details from /command's
 `pending`, `calls` and `reviews`, so an answer that takes one out is seen at
@@ -106,5 +107,6 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
         own = r["key"].startswith("x:")
         r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own)
         r["name"] = r["name"] or (r["sid"] or "")[:8]
-    out.sort(key=lambda r: (not r["needs"], r["key"].startswith("x:"), r["at"] if r["needs"] else 0, "" if r["needs"] else r["name"]))
+    # Among triggers' own rows the latest receipt is on top; the other rows keep the longest wait on top.
+    out.sort(key=lambda r: (not r["needs"], r["key"].startswith("x:"), -r["at"] if r["key"].startswith("x:") else r["at"] if r["needs"] else 0, "" if r["needs"] else r["name"]))
     return out
