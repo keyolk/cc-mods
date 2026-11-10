@@ -206,7 +206,8 @@ test('coord: a worker goes where coord_route placed it, a window that holds this
 })
 
 test('coord_route: one cheap model call over the live sessions; its answer is checked and handed back, never acted on; a failed or bad answer is an error', async ($, on) => {
-  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  // Auto-adopt off (/coord limits adopt off), so the session in autoreview stays observed.
+  const files: Record<string, string> = { [LEDGER]: JSON.stringify({ ...JSON.parse(ledgerJson()), limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 4, autoAdopt: false } }) }
   const runs: string[][] = []
   // The coordinator, its worker brief-decision-4 at work, and an observed session in autoreview.
   const panes = ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%365\t@134\tw4\tworking\tnone\t/r/bd\t\t', '%7\t@7\tobs\tdone\tnone\t/src/autoreview\t\t'].join('\n')
@@ -316,4 +317,67 @@ test('coord: coord_send writes the instruction to the inbox marked keep, and mer
   expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first', keep: true })
   await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'second' } as any)
   expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first\n\n[coordinator] second', keep: true })
+})
+
+test('coord: with the mode on every live session is adopted but another coordinator and its owned workers; coord_send reaches one; coord_close hands it back for good', async ($, on) => {
+  const OTHER = '/home/u/.claude/state/office/coord/c2.json'
+  const other = { on: true, sid: 'c2', name: 'other', workers: [{ slug: 'x', sid: 'c2w', relation: 'owned' }] }
+  const files: Record<string, string> = { [LEDGER]: ledgerJson(), [OTHER]: JSON.stringify(other) }
+  // The coordinator, its worker, the person's ops-k8s session (typed in 20 minutes ago), another coordinator and its worker.
+  const typed = String(Math.floor((Date.now() - 20 * 60_000) / 1000))
+  let rows = ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%365\t@134\tw4\tworking\tnone\t/r/bd\t\t', '%7\t@7\tops\tdone\tnone\t/src/ops-k8s\t' + typed + '\t', '%8\t@8\tc2\tdone\tnone\t/src/c2\t\t', '%9\t@8\tc2w\tworking\tnone\t/src/c2w\t\t']
+  const runs: string[][] = []
+  stubs(on, {
+    files,
+    submitted: [],
+    panes: () => rows.join('\n'),
+    runs,
+    run: (argv) => {
+      const cmd = String(argv[2] ?? '')
+      if (argv[0] === 'sh' && cmd.includes('.claude/sessions') && !cmd.includes('ps -o')) return '{"s":"ops","n":"ops-k8s"}\n{"s":"sid-1","n":"cc-mods-d9"}'
+      // The other ledgers, one compact JSON each, this one left out.
+      if (argv[0] === 'sh' && cmd.startsWith('for f in')) return argv[4] === LEDGER ? JSON.stringify(other) : '!'
+      return undefined
+    },
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const before: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_roster' } as any)
+  expect(before.result).toContain('| ops-k8s | adopted (auto) ops-k8s | %7 |')
+  expect(before.result).toContain('| c2 | observed | %8 |')
+  expect(before.result).toContain('| c2w | observed | %9 |')
+  const w = () => JSON.parse(files[LEDGER]!).workers.find((x: any) => x.sid === 'ops')
+  expect(w()).toMatchObject({ slug: 'ops-k8s', relation: 'adopted', auto: true })
+  expect(w().endedAt).toBeUndefined()
+  // Typed in 20 minutes ago: past the hold, so it takes an instruction.
+  const sent: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'ops-k8s', text: 'the person says: keep the alert' } as any)
+  expect(sent.result).toBe('Sent to ops-k8s (%7).')
+  expect(JSON.parse(files['/home/u/.claude/state/office/inbox/ops.json']!).text).toBe('[coordinator] the person says: keep the alert')
+  expect(w().instructed).toBeGreaterThan(0)
+  const closed: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'ops-k8s' } as any)
+  expect(closed.result).toContain('Handed ops-k8s back to the person')
+  // Its pane is not touched.
+  expect(runs.some((a) => a[0] === 'tmux' && String(a[1]).startsWith('kill'))).toBe(false)
+  expect(JSON.parse(files[LEDGER]!).released).toEqual(['ops'])
+  await clock.advance(10_000)
+  const after: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_roster' } as any)
+  expect(after.result).toContain('| ops-k8s | observed | %7 |')
+  expect(JSON.stringify(await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'ops-k8s', text: 'x' } as any))).toContain('/coord adopt')
+  // A session that appears later is adopted by the watch, without a roster call.
+  rows = [...rows, '%10\t@1\tnew1abcd\tworking\tnone\t/src/n\t\t']
+  await clock.advance(10_000)
+  expect(JSON.parse(files[LEDGER]!).workers.find((x: any) => x.sid === 'new1abcd')).toMatchObject({ slug: 'new1abcd', relation: 'adopted', auto: true })
+})
+
+test('coord: an auto-adopted session the person just typed in is held: coord_send refuses it', async ($, on) => {
+  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  const typed = String(Math.floor((Date.now() - 60_000) / 1000))
+  stubs(on, { files, submitted: [], panes: () => ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%7\t@7\tops\tdone\tnone\t/src/ops-k8s\t' + typed + '\t'].join('\n'), run: (argv) => (argv[0] === 'sh' && String(argv[2]).includes('.claude/sessions') && !String(argv[2]).includes('ps -o') ? '{"s":"ops","n":"ops-k8s"}' : undefined) })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_roster' } as any)
+  expect(r.result).toContain('| ops-k8s | adopted (auto) ops-k8s | %7 | done HELD |')
+  const s: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'ops-k8s', text: 'x' } as any)
+  expect(s.deny).toContain('the person is working in ops-k8s')
+  expect(files['/home/u/.claude/state/office/inbox/ops.json']).toBeUndefined()
 })

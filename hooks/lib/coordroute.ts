@@ -11,6 +11,7 @@ export type Candidate = {
   name: string // SendMessage name
   slug?: string // the ledger's name, for coord_send
   relation: 'owned' | 'adopted' | 'observed'
+  auto?: boolean // adopted automatically: a session the person runs, not one handed over
   pane: string
   state: string
   attention: string
@@ -38,6 +39,7 @@ export function candidates(seen: PaneSeen[], l: Ledger, names: Map<string, strin
       name: names.get(s.sid) ?? s.sid.slice(0, 8),
       ...(w ? { slug: w.slug } : {}),
       relation: w?.relation ?? 'observed',
+      ...(w?.auto ? { auto: true } : {}),
       pane: s.pane,
       state: s.state || '?',
       attention: s.attention || 'none',
@@ -80,15 +82,15 @@ export const ROUTER_MODEL = 'haiku'
 const SYSTEM = [
   'You route one task for a coordinator of Claude Code sessions. Pick where the task goes. Answer with one JSON object and nothing else.',
   'Actions:',
-  '- "send": give it to an owned or adopted session already working in the right repository or directory. target: its slug.',
-  '- "adopt": an observed session fits (same repository or directory, its recent prompts are on the same work). target: its name. The person hands it over, then it gets the task.',
+  '- "send": give it to an owned or adopted session already working in the right repository or directory. target: its slug. Every live session is adopted by default; one with "auto": true is a session the person runs themselves, adopted automatically: send to it only when its directory and recent prompts are on the same work.',
+  '- "adopt": an observed session (one handed back, or with automatic adoption off) fits (same repository or directory, its recent prompts are on the same work). target: its name. The person hands it over, then it gets the task.',
   '- "spawn": start a new worker. Give repo_dir (a git checkout from the candidates\' repo or cwd values, or a path the task names) to work on a fresh worktree, or cwd to run in a directory as is; and model and effort, the smallest that fits the task, within the limits.',
   '- "unsure": the task does not say where it belongs and no candidate makes it clear. Say in reason what you would need to know.',
   'Rules:',
   '- Prefer a session already working in the right repository or directory, on related work.',
   '- Choose spawn only when no live session fits, or the one that fits is working (busy) or held by the person.',
   '- Never "send" to an observed session; for those the action is "adopt". Never pick a held session.',
-  '- spawn is not possible when the owned workers are at maxWorkers: then pick a fitting session, or "unsure".',
+  '- spawn is not possible when the owned workers are at maxWorkers: then pick a fitting session, or "unsure". Adopted sessions never count toward maxWorkers.',
   '- With spawn, also pick "window" from places: a window whose workers (by slug) work on the same repository or task; else the coordinator\'s window; "new" when no listed window fits or the work is unrelated to all of them.',
   'Shape: {"action":"send"|"adopt"|"spawn"|"unsure","target":"<slug or name>","repo_dir":"<path>","cwd":"<path>","model":"haiku|sonnet|opus","effort":"low|medium|high|xhigh|max","window":"<a places window id>|new","reason":"<one sentence>"}. Leave out keys that do not apply.',
 ].join('\n')
@@ -169,7 +171,7 @@ export function checkRoute(raw: Raw, cands: Candidate[], limits: Limits, owned: 
 export function routeText(d: Decision): string {
   const who = (c: Candidate) => (c.slug ?? c.name) + ' (pane ' + c.pane + ', ' + c.state + (c.attention !== 'none' ? '/' + c.attention : '') + ', ' + c.cwd + ')'
   if (d.action === 'send') return 'Route: send to ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: coord_send slug=' + d.target.slug + ' with the task' + (d.target.state === 'working' ? ' (it is mid-turn: the instruction waits for its turn to end)' : '') + '.'
-  if (d.action === 'adopt') return 'Route: adopt ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: it is observed, so only the person can hand it over: ask them to run `/coord adopt ' + d.target.pane + '`, then coord_send it the task. If they say no, coord_spawn instead.'
+  if (d.action === 'adopt') return 'Route: adopt ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: it is observed (handed back, or auto-adopt is off), so only the person can hand it over: ask them to run `/coord adopt ' + d.target.pane + '`, then coord_send it the task. If they say no, coord_spawn instead.'
   if (d.action === 'spawn') return 'Route: spawn a new worker ' + (d.repoDir ? 'on a worktree of ' + d.repoDir : 'in ' + d.cwd) + ', ' + d.model + '/' + d.effort + (d.window ? ', ' + (d.window === 'new' ? 'in a new window' : 'in window ' + d.window) : '') + '.\nReason: ' + d.reason + (d.placeNote ? '\nPlace: ' + d.placeNote + '.' : '') + '\nNext: coord_spawn ' + (d.repoDir ? 'repo_dir=' + d.repoDir : 'cwd=' + d.cwd) + ' model=' + d.model + ' effort=' + d.effort + (d.window ? ' window=' + d.window : '') + ', a slug for the task, and a brief with the person\'s words verbatim.'
   return 'Route: the router cannot tell.\nReason: ' + d.reason + '\nNext: ask the person where this goes (the recommended guess first).'
 }

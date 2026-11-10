@@ -3,7 +3,9 @@
 cc-mods writes one ledger per coordinator session
 (~/.claude/state/office/coord/<sid>.json, hooks/lib/coord.ts). The office
 reads them to draw who works for whom: each live session is the coordinator
-itself, an owned or adopted worker of one, or observed (no entry).
+itself, an owned or adopted worker of one, or observed (no entry). While a
+coordinator is on it adopts every live session by itself (`auto`), so observed
+is left for another coordinator's own and the sessions handed back.
 """
 
 import glob
@@ -43,9 +45,10 @@ def relations() -> dict[str, dict]:
         for w in d.get("workers") or []:
             if w.get("endedAt"):
                 continue
-            crew.append({"sid": w.get("sid"), "slug": w.get("slug"), "relation": w.get("relation") or "owned", "model": w.get("model"), "effort": w.get("effort")})
+            auto = {"auto": True} if w.get("auto") else {}
+            crew.append({"sid": w.get("sid"), "slug": w.get("slug"), "relation": w.get("relation") or "owned", "model": w.get("model"), "effort": w.get("effort"), **auto})
             if w.get("sid"):
-                rel.setdefault(w["sid"], {})["boss"] = {"sid": d["sid"], "name": name, "relation": w.get("relation") or "owned", "slug": w.get("slug"), "model": w.get("model"), "effort": w.get("effort")}
+                rel.setdefault(w["sid"], {})["boss"] = {"sid": d["sid"], "name": name, "relation": w.get("relation") or "owned", "slug": w.get("slug"), "model": w.get("model"), "effort": w.get("effort"), **auto}
         rel.setdefault(d["sid"], {}).update(name=name, crew=crew)
     return rel
 

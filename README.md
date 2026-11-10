@@ -156,16 +156,37 @@ decision rides on. You keep both ways of working: type in any worker's pane
 | You run | It does |
 |---|---|
 | `/coord on` / `off` | turn this session into the coordinator (only you can) |
-| `/coord limits models opus,sonnet` / `effort high` / `workers 4` | what it may hand out (default: all three models, effort up to high, 4 workers) |
-| `/coord adopt <pane\|name>` | hand it a session that was already running |
-| `/coord release <slug>` | take a worker back; it keeps running, observed only |
+| `/coord limits models opus,sonnet` / `effort high` / `workers 4` | what it may hand out (default: all three models, effort up to high, 4 owned workers) |
+| `/coord limits adopt on` / `off` | adopt every live session by itself (default on) |
+| `/coord adopt <pane\|name>` | hand it a session: one you released, or any with auto-adopt off |
+| `/coord release <slug>` | take a worker back; it keeps running, observed only, and is not adopted again |
 | `/coord` | the workers and their state |
 
 While it is on, the coordinator's Claude gets four tools (it never starts
 sessions from Bash, which the tmux guard keeps in its own window):
 
 - `coord_roster`: every live session with its relation: **owned** (started
-  by it), **adopted** (handed over by you) or **observed** (read only).
+  by it), **adopted** or **observed** (read only).
+
+  **Every live session is adopted.** While the mode is on, each Claude
+  session in tmux becomes an adopted worker (`adopted (auto)`) when the
+  coordinator reads the roster or routes a task, and within 10 s of appearing
+  (the watch). So the coordinator can hand any of them a task with
+  `coord_send` without asking you to `/coord adopt` it first. Left observed:
+  the coordinator itself, another coordinator that is on and its owned
+  workers, and a session you released (`/coord release`, or `coord_close` on
+  an adopted one), which the ledger records (`released`) and never adopts
+  again; `/coord adopt` takes it back. Rules that still hold:
+
+  | Rule | For an adopted session |
+  |---|---|
+  | held | you typed in its pane in the last 10 minutes (a prompt from before its adoption counts): `coord_send` is refused |
+  | quiet | until the coordinator first instructs it, it is yours: its turns, asks and holds wake nobody and stay out of the log |
+  | close | `coord_close` hands it back; its pane is never killed |
+  | limit | `workers <n>` counts owned workers only; adopted ones never take a slot |
+
+  `/coord limits adopt off` turns it off: the quiet ones go back to
+  observed, an instructed one stays until it is closed.
 - `coord_spawn`: a worktree off origin at `~/worktrees/<repo>/<slug>`, the
   brief in `~/research/<slug>/prompt.txt`, and `claude --model --effort
   --permission-mode auto --disallowedTools AskUserQuestion --session-id` in a
@@ -211,7 +232,7 @@ sessions from Bash, which the tmux guard keeps in its own window):
 - `coord_close`: kills the pane `coord_spawn` made for an owned worker (or
   its fallback window), never the coordinator's own pane or window or any pane
   it did not make, and removes its worktree (refused with uncommitted
-  changes); an adopted one is handed back.
+  changes); an adopted one is handed back and not adopted again.
 
 Each side gets its own session policy. `/coord on` saves this session's
 policy and sets the coordinator's: merge only in the repositories its live

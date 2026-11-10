@@ -204,7 +204,7 @@ function cmdRender() {
     for (const w of c.workers) {
       const sel = cmd.worker && cmd.worker.coord === c.sid && cmd.worker.slug === w.slug
       const st = !w.live ? 'gone' : w.doing === 'asking' || w.doing === 'alert' ? w.doing : w.state
-      out.push('<tr class="w' + (sel ? ' sel' : '') + '" data-coord="' + cmdEsc(c.sid) + '" data-slug="' + cmdEsc(w.slug) + '"><td>' + cmdEsc(w.slug) + (w.relation === 'adopted' ? ' <span class="m">입양</span>' : '') + '</td><td>' + cmdEsc((w.model || '-') + '/' + (w.effort || '-')) + '</td>'
+      out.push('<tr class="w' + (sel ? ' sel' : '') + '" data-coord="' + cmdEsc(c.sid) + '" data-slug="' + cmdEsc(w.slug) + '"><td>' + cmdEsc(w.slug) + (w.relation === 'adopted' ? ' <span class="m">' + (w.auto ? '자동 입양' : '입양') + '</span>' : '') + '</td><td>' + cmdEsc((w.model || '-') + '/' + (w.effort || '-')) + '</td>'
         + '<td class="st-' + cmdEsc(st) + '">' + cmdEsc(w.live ? STATE_KO[w.state] || w.state || '?' : '창 없음') + (ATTN_KO[w.attention] ? ' ' + ATTN_KO[w.attention] : '') + '</td>'
         + '<td>' + (w.brief ? '<a href="#" data-brief="' + cmdEsc(w.brief.path) + '" data-title="' + cmdEsc(w.brief.title) + '">' + (w.brief.pending ? '⏳ ' : '📄 ') + cmdEsc(w.brief.title.slice(0, 24)) + '</a>' : '<span class="m">—</span>') + '</td></tr>')
     }

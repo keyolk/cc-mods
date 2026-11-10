@@ -6,7 +6,7 @@ import { emptyLedger, type Ledger, type Limits, type PaneSeen, type Worker } fro
 import { candidates, checkRoute, parsePrompts, parseRoute, routeRequest, routeText, type Candidate } from '../hooks/lib/coordroute'
 
 const NOW = 1_800_000_000_000
-const LIMITS: Limits = { models: ['haiku', 'sonnet'], maxEffort: 'high', maxWorkers: 2 }
+const LIMITS: Limits = { models: ['haiku', 'sonnet'], maxEffort: 'high', maxWorkers: 2, autoAdopt: true }
 const ledger = (workers: Worker[] = []): Ledger => ({ ...emptyLedger('coord', 'cc-mods-d9', NOW), on: true, limits: LIMITS, workers })
 const pane = (over: Partial<PaneSeen>): PaneSeen => ({ pane: '%1', window: '@1', sid: 's', state: 'done', attention: 'none', cwd: '/src/x', ...over })
 const worker = (over: Partial<Worker>): Worker => ({ slug: 'w', sid: 'w1', relation: 'owned', cwd: '/w/x', at: NOW - 600_000, ...over })
@@ -89,4 +89,21 @@ test('coord_route: spawn needs a real checkout or directory, and a model and eff
 test('coord_route: unsure is an answer, telling the coordinator to ask the person', () => {
   const d = checkRoute({ action: 'unsure', reason: 'which repo?' }, CANDS, LIMITS, 0, {})
   expect(routeText(d as any)).toContain('ask the person')
+})
+
+test('coord_route: an auto-adopted session is a send target, marked auto; the owned count leaves adopted ones out', () => {
+  const l = ledger([worker({ slug: 'ops-k8s', sid: 'ops', relation: 'adopted', auto: true }), worker({ slug: 'a', sid: 'a1' }), worker({ slug: 'b', sid: 'b1', relation: 'adopted' })])
+  const seen = [pane({ sid: 'ops', pane: '%9', cwd: '/src/ops-k8s' }), pane({ sid: 'a1', pane: '%2' }), pane({ sid: 'b1', pane: '%3' })]
+  const cs = candidates(seen, l, new Map([['ops', 'ops-k8s']]), { titles: new Map(), prompts: new Map(), repos: new Map() }, NOW)
+  expect(cs[0]).toMatchObject({ slug: 'ops-k8s', relation: 'adopted', auto: true })
+  expect(cs[2]!.auto).toBeUndefined()
+  const d = checkRoute({ action: 'send', target: 'ops-k8s', reason: 'it works in ops-k8s' }, cs, LIMITS, 1, {})
+  expect(d).toMatchObject({ action: 'send', target: { slug: 'ops-k8s' } })
+  expect(checkRoute({ action: 'adopt', target: 'ops-k8s', reason: 'r' }, cs, LIMITS, 1, {})).toEqual({ error: expect.stringContaining('already adopted') })
+  // Two adopted plus one owned under maxWorkers 2: spawn is still open.
+  expect(checkRoute({ action: 'spawn', cwd: '/src/x', model: 'haiku', effort: 'low', reason: 'r' }, cs, LIMITS, 1, { cwdOk: true })).toMatchObject({ action: 'spawn' })
+  const ask = routeRequest('fix the ops alert', cs, LIMITS, 1)
+  expect(ask.system).toContain('"auto": true is a session the person runs themselves')
+  expect(ask.system).toContain('Adopted sessions never count toward maxWorkers')
+  expect(JSON.parse(ask.prompt).sessions[0].auto).toBe(true)
 })
