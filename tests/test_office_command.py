@@ -339,6 +339,76 @@ class SayAndViewTest(BriefsCase):
 
 
 
+class AskingTest(BriefsCase):
+    """A session waiting on the person, opened in the view's left pane."""
+
+    def test_a_short_answer_is_shown_whole(self):
+        self.assertEqual(command.ask_block("첫 줄\n\n어느 쪽으로 할까요?\n"), {"text": "첫 줄\n\n어느 쪽으로 할까요?", "cut": False})
+        self.assertEqual(command.ask_block(""), {"text": "", "cut": False})
+
+    def test_a_long_answer_keeps_whole_paragraphs_from_the_end(self):
+        paras = ["\n".join(f"p{i} line{j}" for j in range(8)) for i in range(6)]
+        b = command.ask_block("\n\n".join(paras) + "\n\n어느 쪽으로 할까요?")
+        lines = b["text"].splitlines()
+        self.assertTrue(b["cut"])
+        self.assertLessEqual(len(lines), command.ASK_LINES)
+        # Opens on a paragraph's first line, never in the middle of one.
+        self.assertEqual(lines[0].split()[1], "line0")
+        self.assertEqual(lines[-1], "어느 쪽으로 할까요?")
+
+    def test_one_long_paragraph_is_its_last_lines_and_the_chars_are_capped(self):
+        b = command.ask_block("\n".join(f"line {i}" for i in range(100)))
+        self.assertEqual(b["text"].splitlines(), [f"line {i}" for i in range(70, 100)])
+        self.assertTrue(b["cut"])
+        wide = command.ask_block("\n".join("가" * 400 + str(i) for i in range(20)))
+        self.assertLessEqual(len(wide["text"]), command.ASK_CHARS)
+        self.assertTrue(wide["text"].startswith("가"), "cut at a line start")
+        self.assertTrue(wide["cut"])
+
+    def test_the_view_says_where_each_waiting_session_is_and_whose_worker(self):
+        self.ledger([{"slug": "w", "sid": WORKER}])
+        people = [{"id": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": {"name": "cc-mods-d9", "slug": "w"}}, {"id": MAKER, "name": "m", "attention": "none"}]
+        calls = command.view(people)["calls"]
+        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w"}])
+
+    def test_asking_reads_the_answer_tail_and_the_screen(self):
+        me = {"pane": "%9", "wid": "@3", "window": "cc:3", "name": "w", "cwd": "/src/x"}
+        with mock.patch.object(office, "pane_of", return_value=me), mock.patch.object(office, "last_text", return_value="설명\n\n진행할까요?"), mock.patch.object(office, "capture", return_value=[]), mock.patch.object(office, "inbox_waiting", return_value=None):
+            a = office.asking(WORKER)
+        self.assertEqual((a["sid"], a["pane"], a["cwd"], a["text"], a["cut"], a["dialog"]), (WORKER, "%9", "/src/x", "설명\n\n진행할까요?", False, None))
+        self.assertIn("네, 진행해 주세요", a["suggestions"])
+        screen = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"]
+        with mock.patch.object(office, "pane_of", return_value=me), mock.patch.object(office, "last_text", return_value="진행할까요?"), mock.patch.object(office, "capture", return_value=screen), mock.patch.object(office, "inbox_waiting", return_value=None):
+            a = office.asking(WORKER)
+        # A choice on its screen is answered with a key: no quick replies beside it.
+        self.assertEqual(([o["n"] for o in a["dialog"]["options"]], a["suggestions"]), ([1, 2], []))
+        # Beside a preview box every line runs out to its border.
+        boxed = ["어떻게 정리할까요?" + " " * 30 + "│", "│" + " " * 40 + "│", "❯ 1. 전부 진행 (Recommended)" + " " * 40, "  2. 정리는 내가 직접" + " " * 30 + "│", "  3. 보류  "]
+        d = office.dialog(boxed)
+        self.assertEqual((d["question"], [o["label"] for o in d["options"]]), ("어떻게 정리할까요?", ["전부 진행 (Recommended)", "정리는 내가 직접", "보류"]))
+        with mock.patch.object(office, "pane_of", side_effect=AssertionError("not asked")):
+            self.assertEqual(office.asking("../x"), {"error": "no such session"})
+        with mock.patch.object(office, "pane_of", return_value=None):
+            self.assertEqual(office.asking(WORKER), {"error": "no such session"})
+
+    def test_an_answer_from_the_office_goes_to_the_session_not_its_coordinator(self):
+        # Not coord_say: coord_send's hold on a worker the person typed in never stops it.
+        self.ledger([{"slug": "w", "sid": WORKER}])
+        me = {"id": WORKER, "pane": "%9", "state": "waiting"}
+        with mock.patch.object(office, "snapshot", return_value=[me]), mock.patch.object(office, "inbox_put", side_effect=self.put), mock.patch.object(office, "INBOX", str(self.tmp / "inbox")), mock.patch.object(office, "set_mute"):
+            self.assertEqual(office.act({"sid": WORKER, "kind": "reply", "value": "B로 해"})[0], 200)
+        self.assertEqual(self.sent, [(WORKER, "B로 해")])
+
+    def test_the_view_route_answers_one_session_when_asked(self):
+        srv = office.ThreadingHTTPServer(("127.0.0.1", 0), office.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        with mock.patch.object(office, "asking", return_value={"sid": WORKER, "text": "?"}) as ask, mock.patch.object(office, "snapshot", side_effect=AssertionError("the whole floor is not read")):
+            with urllib.request.urlopen(f"http://127.0.0.1:{srv.server_port}/command?sid={WORKER}") as r:
+                self.assertEqual(json.loads(r.read()), {"sid": WORKER, "text": "?"})
+        ask.assert_called_once_with(WORKER)
+
+
 class RoutesTest(BriefsCase):
     def test_the_view_and_its_script_are_two_routes(self):
         # /command once answered /command.js too (a prefix match), so the
@@ -385,9 +455,24 @@ KEYS_HARNESS = textwrap.dedent(r"""
         return [took, stopped, blurred]
       }
       function press(k, typing = false, alt = false) { let stopped = false; const took = commandKey({ altKey: alt, preventDefault: () => { stopped = true } }, k, typing); return took && stopped }
+      // One brief and two sessions waiting on the person, the first picked
+      // with what it asks; replies are recorded, not sent.
+      var replies = [], cmdReplyReal = cmdReply, focused = []
+      focusPane = (pane) => { focused.push(pane) }
+      cmdReply = (s, body, label) => { replies.push([s.sid, body, label]) }
+      function calls(ask = { suggestions: ['네', '아니요'] }) {
+        cmd.data = { pending: [{ file: 'a.html', path: '/b/a.html', title: 'A', decision: { question: 'Z?', options: [{ label: 'Y' }] } }], coordinators: [],
+          calls: [{ sid: 's1', name: 'one', window: 'w:1', pane: '%1' }, { sid: 's2', name: 'two', window: 'w:2', pane: '%2' }] }
+        if (!cmd.on) press('c')
+        cmd.sel = { sid: 's1', name: 'one', window: 'w:1' }; cmd.ask = { sid: 's1', ...ask }
+      }
+      function inCallBox(key, value = '', more = {}) {
+        let stopped = false, blurred = false
+        const e = { key, shiftKey: false, isComposing: false, keyCode: 0, ...more, target: { value, blur: () => { blurred = true } }, preventDefault: () => { stopped = true } }
+        return [cmdCallKey(e, cmd.sel), stopped, blurred]
+      }
     `, ctx)
-    const out = vm.runInContext(process.argv[3], ctx)
-    process.stdout.write(JSON.stringify(out))
+    Promise.resolve(vm.runInContext(process.argv[3], ctx)).then((out) => process.stdout.write(JSON.stringify(out)))
 """)
 
 
@@ -486,6 +571,84 @@ class CommandKeysTest(unittest.TestCase):
             return [a, b, answers]
         """)
         self.assertEqual(got, [{"q": "q2", "i": 1}, {"q": "q1", "i": 0}, [["b.html", "q1", {"label": "Y"}]]])
+
+    def test_j_and_k_walk_the_briefs_then_the_waiting_sessions(self):
+        got = self.run_js("""
+            calls(); cmd.sel = null
+            const seen = []
+            for (let n = 0; n < 4; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid) }
+            press('k'); seen.push(cmd.sel.file || cmd.sel.sid)
+            return seen
+        """)
+        self.assertEqual(got, ["a.html", "s1", "s2", "a.html", "s2"])
+
+    def test_a_picked_session_arms_a_choice_with_a_digit_and_sends_it_with_enter(self):
+        got = self.run_js("""
+            calls()
+            const nine = press('9'), early = press('Enter')
+            press('2'); const armed = cmd.armed
+            press('Enter')
+            // A choice drawn on its screen is a key, not a reply.
+            calls({ dialog: { question: 'Proceed?', options: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }] }, suggestions: [] })
+            press('1'); press('Enter')
+            return [nine, early, armed, replies]
+        """)
+        self.assertEqual(got, [False, False, {"call": "s1", "i": 1}, [["s1", {"kind": "reply", "value": "아니요"}, "아니요"], ["s1", {"kind": "key", "value": "1"}, "Yes"]]])
+
+    def test_enter_in_a_sessions_box_sends_the_words_or_the_armed_reply_or_says_what_to_do(self):
+        got = self.run_js("""
+            calls()
+            const empty = inCallBox('Enter', '  ')
+            cmd.armed = { call: 's1', i: 0 }
+            const words = inCallBox('Enter', ' B로 해 주세요 ')
+            const armed = inCallBox('Enter', '')
+            const other = [['Enter', { isComposing: true }], ['Enter', { keyCode: 229 }], ['Enter', { shiftKey: true }], ['j', {}], ['1', {}]].map(([k, m]) => inCallBox(k, 'x', m)[0])
+            return [empty, words, armed, inCallBox('Escape', 'x'), other, replies, toasts.length]
+        """)
+        self.assertEqual(got[:4], [[True, True, False]] * 3 + [[True, True, True]])
+        self.assertEqual(got[4], [False] * 5)
+        self.assertEqual(got[5], [["s1", {"kind": "reply", "value": "B로 해 주세요"}, "답장"], ["s1", {"kind": "reply", "value": "네"}, "네"]])
+        self.assertEqual(got[6], 1)
+
+    def test_keys_typed_in_a_sessions_box_never_reach_the_view_and_the_floor_keeps_its_own(self):
+        got = self.run_js("""
+            calls()
+            const typed = ['j', 'k', '1', '2', 'Enter', 'm', 'i', 'd', 'g', 'Escape'].filter((k) => press(k, true))
+            const still = [cmd.sel.sid, cmd.armed, replies.length, focused.length]
+            const floor = ['n', 'p', 'v', 'f', '0', 'Tab', 'ArrowUp', '?', ','].filter((k) => press(k))
+            press('Escape'); const shut = [cmd.sel, cmd.ask, cmd.on]
+            return [typed, still, floor, shut]
+        """)
+        self.assertEqual(got, [[], ["s1", None, 0, 0], [], [None, None, True]])
+
+    def test_g_goes_to_the_picked_sessions_pane_and_alt_g_from_its_box(self):
+        got = self.run_js("""
+            calls()
+            const g = press('g'), altInBox = press('g', true, true)
+            // The pane /command?sid= saw wins over the list's.
+            cmd.ask = { sid: 's1', pane: '%7', suggestions: [] }; press('g')
+            // A brief picked, an open card or the floor: G is not the view's.
+            cmd.sel = { file: 'a.html' }; const onBrief = press('g'), altOnBrief = press('g', true, true)
+            cmd.sel = { sid: 's2', name: 'two' }; card.style.display = 'block'; const cardG = press('g'), cardAltG = press('g', false, true); card.style.display = 'none'
+            press('Escape'); press('Escape'); const shut = press('g')
+            return [g, altInBox, onBrief, altOnBrief, cardG, cardAltG, shut, focused]
+        """)
+        self.assertEqual(got, [True, True, False, False, False, False, False, ["%1", "%1", "%7"]])
+
+    def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
+        got = self.run_js("""
+            return (async () => {
+              calls()
+              const posts = [], answers = [{ busy: 'inbox' }, { ok: true }]
+              cmdPost = async (body) => { posts.push(body); return answers.shift() }
+              cmdAsk = () => {}
+              await cmdReplyReal(cmd.sel, { kind: 'reply', value: '네' }, '네')
+              const after1 = [cmd.sel.sid, !!cmd.force]
+              await cmdReplyReal(cmd.sel, { kind: 'reply', value: '네' }, '네')
+              return [posts.map((b) => [b.sid, b.value, !!b.force]), after1, cmd.sel.sid, Object.keys(cmd.sent)]
+            })()
+        """)
+        self.assertEqual(got, [[["s1", "네", False], ["s1", "네", True]], ["s1", True], "s2", ["s1"]])
 
 
 if __name__ == "__main__":
