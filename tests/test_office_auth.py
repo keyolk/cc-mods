@@ -87,23 +87,24 @@ class AuthPanelTest(unittest.TestCase):
             return [rs.map((r) => r.act || null), sent, aws, argo, mcp, coder, copied]
         """ % json.dumps(ITEMS))
         acts, sent, aws, argo, mcp, coder, copied = got
-        # A /mcp row still copies: it logs in to one session's own connection.
-        self.assertEqual(acts, ["run", "run", "how", None, "copy"])
+        # A /mcp row too: the session's runFix opens that server's login.
+        self.assertEqual(acts, ["run", "run", "how", None, "run"])
         # Only the ids go: the session runs its own row (its foldLogins batch for argocd:*).
-        self.assertEqual(sent, ["aws-sso", "argocd:*"])
+        self.assertEqual(sent, ["aws-sso", "argocd:*", "mcp:claude.ai Canva"])
         self.assertEqual(aws, "▶ 로그인 시작: cc-mods-d9 · 진행과 결과는 그 세션 화면에 뜹니다")
         self.assertEqual(argo, aws)
-        self.assertEqual(mcp, "📋 복사했습니다 · 아무 세션 프롬프트에 붙여 넣으세요: /mcp")
+        self.assertEqual(mcp, aws)
         self.assertEqual(coder, "❔ 아무 세션에서나 /auth로 다시 확인")
-        self.assertEqual(copied, ["/mcp"])
+        self.assertEqual(copied, [])
 
     def test_a_handoff_nobody_took_copies_the_fix_instead(self):
         got = self.run_js("""
             const rs = rows(authHtml({ at: 1, items: %s }, '', { sid: 's1', name: 'x' }))
-            return [await pressOn(rs[0], async () => null), copied]
-        """ % json.dumps(ITEMS[:1]))
+            return [await pressOn(rs[0], async () => null), await pressOn(rs[4], async () => null), copied]
+        """ % json.dumps(ITEMS))
         self.assertTrue(got[0].startswith("📋 복사했습니다 · 터미널에 붙여 넣으세요: aws sso logout"), got[0])
-        self.assertEqual(len(got[1]), 1)
+        self.assertEqual(got[1], "📋 복사했습니다 · 아무 세션 프롬프트에 붙여 넣으세요: /mcp")
+        self.assertEqual(len(got[2]), 2)
 
     def test_the_panel_names_the_session_a_press_goes_to(self):
         got = self.run_js("return [authHtml({ at: 1, items: %s }, '', { sid: 's', name: 'co<x>' }), authHtml({ at: 1, items: %s }, '')]" % (json.dumps(ITEMS[:1]), json.dumps(ITEMS[:1])))
@@ -234,9 +235,15 @@ class AuthHandoffTest(unittest.TestCase):
     def test_a_press_with_nothing_to_hand_over_is_refused_and_writes_nothing(self):
         self.assertEqual(office.auth_handoff("aws-sso", self.PEOPLE)[0], 409)  # nobody takes one
         self.able("co")
-        for bad in ("gh:keyolk", "coder:x", "mcp:portal", "nope", ""):
+        for bad in ("gh:keyolk", "coder:x", "nope", ""):
             self.assertIn(office.auth_handoff(bad, self.PEOPLE)[0], (400, 409), bad)
         self.assertFalse((self.fix / "co.run.json").exists())
+
+    def test_an_mcp_row_is_handed_over_too(self):
+        # The cockpit's runFix has its own MCP branch (the server's login page).
+        self.able("co")
+        self.assertEqual(office.auth_handoff("mcp:portal", self.PEOPLE)[0], 200)
+        self.assertEqual(json.loads((self.fix / "co.run.json").read_text())["id"], "mcp:portal")
 
     def test_the_act_kind_picks_the_session_itself(self):
         self.able("co")

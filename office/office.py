@@ -1146,11 +1146,11 @@ def auth() -> dict | None:
 # row (its radar id) in FIX_DIR/<sid>.run.json; that session's cc-mods takes
 # the file and runs the row as its cockpit's press would (register.ts
 # officeFix → runFix: the AWS reuse check, ArgoCD one after another, Coder's
-# token pane), and its toasts say how it went. Only a session whose module
-# can take one is picked: it writes FIX_DIR/<sid>.on as it starts. The
-# coordinator first (the person's hub), else the one they spoke to last.
-# None (no such session, or a /mcp row: it logs in to that session's own
-# connection) and the page copies the fix, as before.
+# token pane, an MCP server's login page), and its toasts say how it went.
+# Only a session whose module can take one is picked: it writes
+# FIX_DIR/<sid>.on as it starts. The coordinator first (the person's hub),
+# else the one they spoke to last. None, and the page copies the fix, as
+# before.
 FIX_DIR = os.path.expanduser("~/.claude/state/office/fix")
 
 
@@ -1173,8 +1173,6 @@ def auth_handoff(item_id: str, people: list[dict]) -> tuple[int, dict]:
     row = next((i for i in a["items"] if i.get("id") == item_id), None)
     if not row or row["state"] == "ok" or not row["fix"]:
         return 409, {"error": "nothing to fix in that row"}
-    if row["fix"].startswith("/"):
-        return 409, {"error": "a /mcp row logs in in its own session"}
     t = auth_target(people)
     if not t:
         return 409, {"error": "no session takes a fix"}

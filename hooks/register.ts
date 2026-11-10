@@ -1725,7 +1725,8 @@ async function officeMcp($: any) {
 }
 // The office's 🔑 panel: a press on a row that needs a login lands here as
 // <sid>.run.json naming the row (office.py auth_handoff), and runs as the
-// cockpit's press does (runFix), so the toasts land in this session. The
+// cockpit's press does (runFix, an MCP row's login included), so the toasts
+// land in this session. The
 // office never runs a fix: it only picks a session that takes one, which says
 // so with <sid>.on, written when this module starts (an older module never
 // writes it, and the office copies the fix instead). One fix at a time:
@@ -1746,10 +1747,13 @@ async function officeFix($: any) {
   try {
     const raw = await readText($, file)
     await $.process.run(['rm', '-f', file], { timeoutMs: 3000 })
-    const got = officeFixItem(raw, (await read($, authA)) as AuthItem[], Date.now() / 1000)
+    // The radar the office drew the row from (the store's, shared), not this
+    // session's copy: a quiet session's copy can be minutes behind, and a row
+    // that just turned ⏳ would read "already fine" here.
+    const got = officeFixItem(raw, await runRadar($), Date.now() / 1000)
     if ('why' in got) {
       $.ui.log('office fix: ' + got.why, { to: 'debug' })
-      if (!got.why.startsWith('stale')) $.ui.toast('office: ' + got.why)
+      $.ui.toast('office: ' + got.why)
       return
     }
     $.ui.toast('office: ' + got.item.label + ' login from the office')

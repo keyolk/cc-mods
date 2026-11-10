@@ -5,9 +5,9 @@
 //
 // The office never runs a fix itself. A press on a row that needs one hands
 // it to a live session (office.py auth_handoff: /state's authTo names it),
-// whose cockpit runs it as its own press would and shows how it went. With no
-// such session, or for a /mcp row (it logs in to one session's connection),
-// the press copies the fix instead. Either way the panel says so, where the
+// whose cockpit runs it as its own press would and shows how it went (an MCP
+// row too: the cockpit opens that server's login). With no such session, the
+// press copies the fix instead. Either way the panel says so, where the
 // eye already is: the page's toast (#hint) sits under it, at the same corner.
 // Uses office.html's esc, clock and toast.
 
@@ -18,7 +18,7 @@ const AUTH_MARK = { expired: '⛔', soon: '⏳', unknown: '❔', ok: '✅' }
 // for a row that needs a login but has none to paste, null for a fine one.
 function authAction(i, to) {
   if (!i || i.state === 'ok') return null
-  if (i.fix && to && i.id && !i.fix.startsWith('/')) return { run: i.id, copy: i.fix, where: '터미널', to }
+  if (i.fix && to && i.id) return { run: i.id, copy: i.fix, where: i.fix.startsWith('/') ? '아무 세션 프롬프트' : '터미널', to }
   if (i.fix) return { copy: i.fix, where: i.fix.startsWith('/') ? '아무 세션 프롬프트' : '터미널' }
   return { how: '아무 세션에서나 /auth로 다시 확인' }
 }

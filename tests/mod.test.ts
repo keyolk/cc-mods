@@ -502,10 +502,16 @@ function fixSession(on: any) {
   const toasts: string[] = []
   const argo = (n: string, state: string) => ({ id: 'argocd:' + n, label: 'ArgoCD ' + n, state, fix: ['argocd', 'login', n, '--sso', '--grpc-web'] })
   const radar = { at: Date.now(), items: [argo('a', 'expired'), argo('b', 'soon'), { id: 'daemon', label: 'Claude daemon', state: 'expired', fix: ['claude', 'auth', 'login'] }, { id: 'gh:keyolk', label: 'gh keyolk', state: 'ok', fix: ['gh', 'auth', 'login'] }] }
-  const runs = baseStubs(on, { pane: '%42', files, toasts, writeBack: true, run: fsRun(files), store: { radar } })
+  const store: Record<string, unknown> = { radar }
+  const runs = baseStubs(on, { pane: '%42', files, toasts, writeBack: true, run: fsRun(files), store })
   on('store.keys', () => ({ value: [] }))
+  const mcp: any[] = []
+  on('mcp.call', (_$: any, e: any) => {
+    mcp.push(e)
+    return { value: { content: [{ type: 'text', text: 'Open this URL to authorize: https://sentry.example/oauth?state=s' }] } } as any
+  })
   const logins = () => runs.filter((a) => a[0] === 'argocd' || (a[0] === 'claude' && a[1] === 'auth') || (a[0] === 'gh' && a[1] === 'auth' && a[2] === 'login'))
-  return { files, toasts, runs, logins }
+  return { files, toasts, runs, logins, store, mcp }
 }
 
 test('office: a 🔑 press handed to this session runs the row from its own radar, as the cockpit press does: a folded row its logins in turn', async ($, on) => {
@@ -541,10 +547,31 @@ test('office: a 🔑 press for a row that is fine, one this session does not hav
   expect(logins()).toHaveLength(0)
   expect(toasts).toContain('office: gh keyolk is already fine')
   expect(toasts).toContain('office: no such row here: nope')
+  expect(toasts).toContain('office: stale request')
   files[FIX_RUN] = JSON.stringify({ id: 'daemon', at: Date.now() / 1000 })
   await clock.advance(2_100)
   expect(logins()).toEqual([['claude', 'auth', 'login']])
   expect(toasts).toContain('office: Claude daemon login from the office')
+})
+
+test('office: a 🔑 press reads the radar the office drew it from (the store\'s), not this session\'s copy; an MCP row opens that server\'s login here', async ($, on) => {
+  const { files, toasts, runs, store, mcp } = fixSession(on)
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(100)
+  // Another session's probe found these due after this one last looked.
+  store.radar = { at: Date.now(), items: [{ id: 'gh:keyolk', label: 'gh keyolk', state: 'soon', fix: ['gh', 'auth', 'login'] }, { id: 'mcp:sentry', label: 'MCP sentry', state: 'expired', fix: ['/mcp'], mine: true }] }
+  // An MCP row: runFix's own MCP branch, the server's authenticate tool and its page.
+  files[FIX_RUN] = JSON.stringify({ id: 'mcp:sentry', at: Date.now() / 1000 })
+  await clock.advance(2_100)
+  expect(mcp[0]).toMatchObject({ server: 'sentry', tool: 'authenticate' })
+  // In the person's own Chrome, through tmux-chrome (openLoginPage).
+  expect(runs.some((a) => a[0] === 'tmux-chrome' && a.includes('https://sentry.example/oauth?state=s'))).toBe(true)
+  // A row this session's own copy still has as fine.
+  files[FIX_RUN] = JSON.stringify({ id: 'gh:keyolk', at: Date.now() / 1000 })
+  await clock.advance(2_100)
+  expect(runs.some((a) => a.join(' ') === 'gh auth login')).toBe(true)
+  expect(toasts).not.toContain('office: gh keyolk is already fine')
 })
 
 test('the policy pane draws a row per capability and applies a mode', async ($, on) => {
