@@ -328,6 +328,33 @@ export function foldLogins(items: readonly AuthItem[]): AuthItem[] {
   return out
 }
 
+// The office's 🔑 panel hands a press to a live session (office.py
+// auth_handoff): a file naming the radar row by its id, never a command. The
+// row is looked up here, in this session's own radar folded as the panel
+// folds it, so a folded `argocd:*` comes back with its batch and runFix runs
+// what the cockpit's press would. A request older than OFFICE_FIX_MAX_S is
+// dropped: the person pressed it a while ago and may have logged in since.
+export const OFFICE_FIX_MAX_S = 120
+
+export type OfficeFix = { item: AuthItem } | { why: string }
+
+export function officeFixItem(raw: string | undefined, radar: readonly AuthItem[], nowS: number): OfficeFix {
+  let ask: { id?: unknown; at?: unknown }
+  try {
+    ask = JSON.parse(raw ?? '')
+  } catch {
+    return { why: 'unreadable request' }
+  }
+  const id = typeof ask?.id === 'string' ? ask.id : ''
+  if (!id) return { why: 'no row named' }
+  if (!(nowS - Number(ask.at ?? 0) <= OFFICE_FIX_MAX_S)) return { why: 'stale request' }
+  const item = foldLogins(radar.filter((i) => i.state === 'expired' || i.state === 'soon')).find((i) => i.id === id) ?? radar.find((i) => i.id === id)
+  if (!item) return { why: 'no such row here: ' + id }
+  if (item.state === 'ok') return { why: item.label + ' is already fine' }
+  if (!item.fix) return { why: item.label + ' has no fix' }
+  return { item }
+}
+
 function jwtExp(token: string): number | undefined {
   const part = token.split('.')[1]
   if (!part) return undefined

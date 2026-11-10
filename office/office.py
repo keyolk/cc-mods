@@ -1073,10 +1073,12 @@ def fix_text(argv) -> str | None:
 
 
 # Several logins of one kind due at once become one row, as the cockpit's
-# foldLogins does: the office never runs a fix, so the row's fix is the
-# logins chained with && to paste once. They cannot run side by side (ArgoCD's
-# CLI shares one callback port; each Coder login waits for a pasted token),
-# and && stops at the first that fails.
+# foldLogins does, under the same id (argocd:*, coder:*): a press hands that
+# id to a session, whose own foldLogins runs the logins one after another
+# (auth_handoff). The row's fix, for the copy when no session takes it, is
+# the logins chained with && to paste once. They cannot run side by side
+# (ArgoCD's CLI shares one callback port; each Coder login waits for a pasted
+# token), and && stops at the first that fails.
 LOGIN_FOLDS = (("argocd:", "ArgoCD"), ("coder:", "Coder"))
 
 
@@ -1088,6 +1090,7 @@ def fold_logins(items: list[dict], ids: list[str]) -> list[dict]:
         rows = [items[n] for n in due]
         exp = [i["expiresAt"] for i in rows if i["expiresAt"]]
         one = {
+            "id": prefix + "*",
             "label": "%s ×%d" % (name, len(rows)),
             "state": "expired" if any(i["state"] == "expired" for i in rows) else "soon",
             "detail": ", ".join(i["label"].removeprefix(name + " ") for i in rows),
@@ -1118,11 +1121,14 @@ def auth() -> dict | None:
         return None
     items = [
         {
+            # What a press hands a session (auth_handoff): it runs its own row.
+            "id": str(i.get("id") or ""),
             "label": str(i.get("label") or i.get("id") or ""),
             "state": i.get("state") or "unknown",
             "detail": str(i.get("detail") or "")[:160],
             "expiresAt": (i.get("expiresAt") or 0) / 1000 or None,
-            # The fix as the person would type it (never run from the office).
+            # The fix as the person would type it: what a press copies when no
+            # session can take it. The office itself never runs it.
             "fix": fix_text(i.get("fix")),
             "connector": str(i.get("id") or "").startswith("mcp:claude.ai "),
             "mine": bool(i.get("mine")),
@@ -1133,6 +1139,49 @@ def auth() -> dict | None:
     items = fold_logins(items, [str(i.get("id") or "") for i in r.get("items") or [] if isinstance(i, dict)])
     items.sort(key=lambda i: (AUTH_ORDER.get(i["state"], 2), i["connector"], i["label"]))
     return {"at": (r.get("at") or 0) / 1000 or None, "items": items} if items else None
+
+
+# ---- a 🔑 press, handed to a session ------------------------------------
+# The office never runs a fix. A press on a row that needs a login names the
+# row (its radar id) in FIX_DIR/<sid>.run.json; that session's cc-mods takes
+# the file and runs the row as its cockpit's press would (register.ts
+# officeFix → runFix: the AWS reuse check, ArgoCD one after another, Coder's
+# token pane, an MCP server's login page), and its toasts say how it went.
+# Only a session whose module can take one is picked: it writes
+# FIX_DIR/<sid>.on as it starts. The coordinator first (the person's hub),
+# else the one they spoke to last. None, and the page copies the fix, as
+# before.
+FIX_DIR = os.path.expanduser("~/.claude/state/office/fix")
+
+
+def auth_target(people: list[dict]) -> dict | None:
+    try:
+        on = {f[: -len(".on")] for f in os.listdir(FIX_DIR) if f.endswith(".on")}
+    except OSError:
+        return None
+    able = [p for p in people if p["id"] in on]
+    if not able:
+        return None
+    best = max(able, key=lambda p: (bool(p.get("coord")), last_spoke(p["id"]) or 0))
+    return {"sid": best["id"], "name": best.get("coordName") or best.get("name") or best["id"][:8]}
+
+
+def auth_handoff(item_id: str, people: list[dict]) -> tuple[int, dict]:
+    if not item_id or len(item_id) > 300:
+        return 400, {"error": "no row named"}
+    a = auth() or {"items": []}
+    row = next((i for i in a["items"] if i.get("id") == item_id), None)
+    if not row or row["state"] == "ok" or not row["fix"]:
+        return 409, {"error": "nothing to fix in that row"}
+    t = auth_target(people)
+    if not t:
+        return 409, {"error": "no session takes a fix"}
+    os.makedirs(FIX_DIR, exist_ok=True)
+    tmp = os.path.join(FIX_DIR, t["sid"] + ".run.json.tmp")
+    with open(tmp, "w") as f:
+        json.dump({"id": item_id, "at": time.time()}, f)
+    os.replace(tmp, os.path.join(FIX_DIR, t["sid"] + ".run.json"))
+    return 200, {"ok": True, "sent": "fix", "to": t}
 
 
 def tweb_bin() -> str | None:
@@ -1405,6 +1454,9 @@ def act(body: dict) -> tuple[int, dict]:
         return memo_send(body)
     if kind in defer.KINDS:
         return defer.act(body, {p["id"] for p in snapshot()})
+    if kind == "fix":
+        # value: the 🔑 row's id. The session is the office's pick, not the page's.
+        return auth_handoff(str(value or ""), snapshot())
     me = next((p for p in snapshot() if p["id"] == sid), None)
     if not me:
         return 404, {"error": "no such session"}
@@ -1789,7 +1841,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "decisions": len(command.pending())}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending())}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
