@@ -726,6 +726,7 @@ KEYS_HARNESS = textwrap.dedent(r"""
     vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
     vm.runInContext(`
       var card = { style: { display: 'none' } }, viewer = { path: '' }, renders = 0, toasts = [], answers = []
+      var cmdRenderDocReal = cmdRenderDoc
       cmdRender = () => { renders++ }; cmdRenderDoc = () => {}; cmdLoad = () => {}
       var cmdAnswerReal = cmdAnswer
       toast = (m) => { toasts.push(m) }; cmdAnswer = (p, q, a) => { answers.push([p.file, q.id, a]) }
@@ -1028,6 +1029,37 @@ class CommandKeysTest(unittest.TestCase):
             return [cancelled, sent, left, replies]
         """)
         self.assertEqual(got, [[], True, True, [["sid1", {"kind": "reply", "value": "네"}, "답장"]]])
+
+    def test_a_pick_answered_before_the_view_is_built_draws_its_box_once_it_is(self):
+        # /command?sid= can answer before the view's first /command builds the
+        # panes. Drawing then threw after cmd.frame was set, and every redraw
+        # after found no .sbrief: the box never came.
+        got = self.run_js("""
+            const mk = () => { const e = { dataset: {}, style: {}, className: '', kids: {}, appendChild() {}, focus() {}, remove() {}, replaceWith() {} }
+              e.querySelector = (q) => e.kids[q] || null
+              Object.defineProperty(e, 'innerHTML', { set(v) { e.html = v; e.kids = {}; for (const c of ['endarm', 'sbrief', 'said', 'cardv']) if (v.includes('class="' + c + '"')) e.kids['.' + c] = mk()
+                if (v.includes('class="note"')) { e.kids['.note[data-call]'] = e.kids['.note'] = mk(); e.kids['.note'].dataset.call = 'sid1' }
+                if (v.includes('class="opts"')) e.kids['.opts'] = mk()
+                for (const c of ['go', 'shut', 'seg', 'm']) if (v.includes('class="act ' + c) || v.includes('class="' + c)) e.kids['.' + c] = mk() }, get: () => e.html || '' })
+              e.contains = () => false; return e }
+            const parts = {}
+            cmdEl.querySelector = (q) => parts[q] || null
+            cmdEl.classList = { toggle() {} }
+            cmd.sel = { sid: 'sid1', name: 'n' }; cmd.frame = null
+            cmd.ask = { sid: 'sid1', text: 't', suggestions: ['a'], dialog: null, inbox: null }
+            cmdAsk = () => {}; cmdRenderView = () => {}
+            let early = 'ok'
+            try { cmdRenderDocReal() } catch (e) { early = e.message }
+            parts['.bar'] = mk(); parts['.doc'] = mk(); parts['.decide'] = mk(); parts['.rtabs'] = mk()
+            let late = 'ok'
+            try { cmdRenderDocReal() } catch (e) { late = e.message }
+            // A look lost under a frame already set is made again.
+            parts['.doc'].innerHTML = ''; parts['.decide'].dataset.key = ''
+            let again = 'ok'
+            try { cmdRenderDocReal() } catch (e) { again = e.message }
+            return [early, late, again, !!parts['.doc'].kids['.sbrief'], !!parts['.decide'].kids['.note[data-call]']]
+        """)
+        self.assertEqual(got, ["ok", "ok", "ok", True, True])
 
     def test_no_box_hands_its_key_function_straight_to_onkeydown(self):
         # Every box's keys go in through cmdBoxKeys: an arrow with no braces

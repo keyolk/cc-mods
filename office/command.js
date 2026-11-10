@@ -423,6 +423,10 @@ function cmdFrameMsg(ev) {
 
 function cmdRenderDoc() {
   const bar = cmdEl.querySelector('.bar'), doc = cmdEl.querySelector('.doc'), dec = cmdEl.querySelector('.decide'), s = cmd.sel
+  // Not built yet (cmdRender builds the panes): a pick's /command?sid= can
+  // answer before the view's first /command does. Drawing then failed after
+  // cmd.frame was set, and every redraw after it found no .sbrief.
+  if (!bar || !doc || !dec) return
   cmdEl.classList.toggle('doc-on', !!s)
   tblRenderTabs()
   if (!s) { doc.innerHTML = ''; dec.dataset.key = ''; cmd.frame = null; return }
@@ -500,7 +504,8 @@ function cmdChoices(a) {
 // only when what it asks changes, so the 3 s poll keeps what is typed.
 function cmdRenderCall(bar, doc, dec, s) {
   const a = cmd.ask && cmd.ask.sid === s.sid ? cmd.ask : null, c = cmdCall(s.sid)
-  if (cmd.frame !== 'call:' + s.sid) {
+  // Its look is made again when it is not there, whatever cmd.frame says.
+  if (cmd.frame !== 'call:' + s.sid || !doc.querySelector('.sbrief') || !doc.querySelector('.said')) {
     cmd.frame = 'call:' + s.sid
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
     bar.innerHTML = '<b title="' + cmdEsc(cmdWho(s)) + '">' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.summary || s.name) + '</b>' + (s.summary && s.summary !== s.name ? '<span class="slug">' + cmdEsc(s.name) + '</span>' : '') + '<span class="m">' + cmdEsc(s.window || '') + '</span>'
