@@ -49,7 +49,7 @@ import { agentFlow, flowOf } from './lib/flow'
 import { HELD_PREFIX, firstLine, heldNotification, holdDeadline, isWrite, parseExpiry, parseMonitor, shouldRearm, splitLines, startedTaskId, turnMattered, watchInput, weigh, type MonitorState, type WatchInput, type Weight } from './lib/monitor'
 import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
 import { CAPS, GOD_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
-import { ghAccountFor, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
+import { ghAccountFor, ghAsAccount, ghAsAccountDeny, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
 import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
@@ -4006,19 +4006,13 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       }
     }
     // gh: run as the account that owns the target repo, without touching the
-    // global active account other sessions rely on.
-    let call = e
-    if (/^\s*(\w+=\S+\s+)*gh\s/.test(command) && !/\bGH_TOKEN=/.test(command) && !/\bgh\s+auth\b/.test(command)) {
-      const target = repoFromGh(command) ?? repo
-      const acct = ghAccountFor(target)
-      // An owner org.json maps to a login runs as that login; any other runs
-      // as gh's active account. The active one needs no token, but which it is
-      // is not known here, so a mapped owner always gets one.
-      if (acct) {
-        call = { ...e, command: 'GH_TOKEN="$(gh auth token --user ' + acct + ')" ' + command }
-      }
-    }
-    const result = await approveGuard($, e, await next(call), () => next(call))
+    // global active account other sessions rely on. The call is refused with
+    // the prefixed command to run instead, never rewritten (ghAsAccount says
+    // why). An owner org.json maps to a login always gets its token: which
+    // account is gh's active one is not known here.
+    const gh = ghAsAccount(command, repo)
+    if (gh) return { deny: ghAsAccountDeny(gh) }
+    const result = await approveGuard($, e, await next(e), () => next(e))
     let resultText = ''
     try {
       resultText = JSON.stringify(result) ?? ''

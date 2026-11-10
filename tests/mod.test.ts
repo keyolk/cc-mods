@@ -112,6 +112,21 @@ test('Claude cannot self-grant session policy through Bash', async ($, on) => {
   expect(ok.result.stdout).toBe('ran')
 })
 
+test('a gh call for an owner org.json maps to a login is refused with the prefixed command, and that command runs as written', async ($, on) => {
+  baseStubs(on, {})
+  const ran: string[] = []
+  on('tool.call', (_$: any, e: any) => (ran.push(e.command), { result: { stdout: 'ran', stderr: '', interrupted: false } }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const tok = 'GH_TOKEN="$(gh auth token --user keyolk)" '
+  const r: any = await $.tool.call({ tool: 'Bash', command: 'gh pr view 1 -R keyolk/cc-mods --json state' })
+  expect(r.deny).toContain('\n' + tok + 'gh pr view 1 -R keyolk/cc-mods --json state\n')
+  // What the model writes itself, and a call that needs no token, reach the tool unchanged.
+  for (const c of [tok + 'gh pr view 1 -R keyolk/cc-mods --json state', 'gh --version', 'gh pr view 1 -R torvalds/linux']) {
+    expect(((await $.tool.call({ tool: 'Bash', command: c })) as any).result.stdout).toBe('ran')
+  }
+  expect(ran).toEqual([tok + 'gh pr view 1 -R keyolk/cc-mods --json state', 'gh --version', 'gh pr view 1 -R torvalds/linux'])
+})
+
 test('Claude\'s tweb split is refused while its window has a browser pane; the office pane alone, or TWEB_SECOND_PANE=1, lets it run', async ($, on) => {
   // The window of %10 holds the office (%401) and, once the worker opened one, its own browser pane (%418).
   let listed = [{ pane: '%401', status: { browser: 'electron', tabs: { tabs: [{ url: 'http://127.0.0.1:8796/' }] } } }]
@@ -683,7 +698,8 @@ test('a call the policy refused runs again by itself once a /policy grant covers
   on('classic.UserPromptSubmit', () => ({}) as any)
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await $.turn.start({ turnId: 'm1', text: 'merge it' })
-  await $.tool.call({ tool: 'Bash', command: 'gh pr merge 169 --repo keyolk/tweb --squash', description: 'x' } as any).catch(() => undefined)
+  // As the model runs it once the gh-account guard handed it back with keyolk's token.
+  await $.tool.call({ tool: 'Bash', command: 'GH_TOKEN="$(gh auth token --user keyolk)" gh pr merge 169 --repo keyolk/tweb --squash', description: 'x' } as any).catch(() => undefined)
   await $.turn.complete({ turnId: 'm1', answer: 'merge is blocked; run /policy allow merge keyolk/tweb', durationMs: 5, isAborted: false, usage: null } as any)
   await clock.advance(1000)
   // An unrelated grant does nothing.
@@ -1931,7 +1947,8 @@ test('with the cockpit open, the fork offer is asked in the cockpit and the band
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   await $.prompt.submit({ text: 'fix the band', origin: { kind: 'composer' }, wait: false } as any)
   await $.turn.start({ turnId: 't1', text: 'fix the band' })
-  await $.tool.call({ tool: 'Bash', command: 'gh pr create --fill', description: 'open PR' } as any)
+  // As the model runs it once the gh-account guard handed it back with the session repo's login.
+  await $.tool.call({ tool: 'Bash', command: 'GH_TOKEN="$(gh auth token --user work-login)" gh pr create --fill', description: 'open PR' } as any)
   await $.turn.complete({ turnId: 't1', answer: 'opened https://github.com/acme/infra-k8s/pull/9159', durationMs: 5, isAborted: false, usage: null } as any)
   await clock.advance(10)
   // Cockpit closed: the band shows the PR.
