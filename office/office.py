@@ -1141,7 +1141,7 @@ def asking(sid: str) -> dict:
         return {"error": "no such session"}
     text = last_text(sid)
     d = dialog(capture(me["pane"]))
-    return {"sid": sid, **me, **command.ask_block(text), "dialog": d, "suggestions": [] if d else suggestions(text), "inbox": inbox_waiting(sid)}
+    return {"sid": sid, **me, **command.ask_block(text), "dialog": d, "suggestions": [] if d else suggestions(text), "inbox": inbox_waiting(sid), "summary": coord.summaries().get(sid)}
 
 
 

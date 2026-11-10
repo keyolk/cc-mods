@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import textwrap
 import urllib.request
@@ -36,7 +37,8 @@ class BriefsCase(unittest.TestCase):
         self.link.symlink_to(self.repo)
         self.coords = self.tmp / "coord"
         self.coords.mkdir()
-        for target, attr, value in ((command, "BRIEFS", str(self.link)), (coord, "COORD_DIR", str(self.coords))):
+        self.sums = self.tmp / "summary.json"
+        for target, attr, value in ((command, "BRIEFS", str(self.link)), (coord, "COORD_DIR", str(self.coords)), (coord, "SUMMARY_FILE", str(self.sums))):
             p = mock.patch.object(target, attr, value)
             p.start()
             self.addCleanup(p.stop)
@@ -44,6 +46,7 @@ class BriefsCase(unittest.TestCase):
         self.cli.start()
         self.addCleanup(self.cli.stop)
         coord._cache.update(at=0.0, ledgers=[])
+        coord._sums.update(at=0.0, sums={})
         command._side.clear()
         command._title.clear()
         command._pending.update(at=0.0, items=[])
@@ -64,8 +67,8 @@ class BriefsCase(unittest.TestCase):
         (self.repo / (name + ".brief.json")).write_text(json.dumps(side, ensure_ascii=False))
         return file
 
-    def ledger(self, workers: list[dict], on: bool = True) -> None:
-        (self.coords / f"{COORD}.json").write_text(json.dumps({"sid": COORD, "on": on, "name": "cc-mods-d9", "workers": workers}))
+    def ledger(self, workers: list[dict], on: bool = True, log: list | None = None) -> None:
+        (self.coords / f"{COORD}.json").write_text(json.dumps({"sid": COORD, "on": on, "name": "cc-mods-d9", "workers": workers, "log": log or []}))
         coord._cache.update(at=0.0, ledgers=[])
 
     def side(self, file: str) -> dict:
@@ -318,6 +321,45 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual([c["name"] for c in v["calls"]], ["w"])
         self.assertEqual((v["recent"][0]["file"], v["recent"][0]["by"], v["recent"][0]["pending"]), (f, "w", True))
 
+    def test_the_box_says_when_it_sent_and_the_view_carries_where_tasks_went(self):
+        # The box's task is the coordinator's to place; the view finds where it
+        # went from the ledger's send and spawn lines after `at`.
+        log = [{"at": 1, "kind": "event", "text": "w: finished its turn"}, {"at": 2, "kind": "send", "text": "w: 테스트 먼저"}, {"at": 3, "kind": "spawn", "text": "fix opus/high in /w"}, {"at": 4, "kind": "order", "text": "on"}]
+        self.ledger([{"slug": "w", "sid": WORKER}], log=log)
+        code, j = command.say(COORD, "", "X 고쳐줘", self.put)
+        self.assertEqual(code, 200)
+        self.assertLessEqual(abs(j["at"] - time.time() * 1000), 5000)
+        c = command.view([])["coordinators"][0]
+        self.assertEqual([(e["kind"], e["text"]) for e in c["log"]], [("send", "w: 테스트 먼저"), ("spawn", "fix opus/high in /w")])
+
+    def test_what_is_open_rides_with_the_task_as_re(self):
+        self.ledger([{"slug": "w", "sid": WORKER}])
+        self.assertEqual(command.say(COORD, "", "표를 접어 줘", self.put, {"brief": "2026-11-10-x.html", "worker": "w"})[0], 200)
+        self.assertEqual(command.say(COORD, "", "링크가 죽었어", self.put, {"review": "cc-mods#85"})[0], 200)
+        self.assertEqual(command.say(COORD, "", "다시 봐", self.put, {"brief": "2026-11-10-x.html"})[0], 200)
+        self.assertEqual(command.say(COORD, "", "그냥 할 일", self.put, {})[0], 200)
+        self.assertEqual([t for _, t in self.sent], ["[office→coord] (re: 2026-11-10-x.html, worker w) 표를 접어 줘", "[office→coord] (re: review cc-mods#85) 링크가 죽었어", "[office→coord] (re: 2026-11-10-x.html) 다시 봐", "[office→coord] 그냥 할 일"])
+        # Only a brief's own name and a slug ride along: nothing else reaches the prompt.
+        for bad in ({"brief": "../x.html"}, {"brief": "2026-11-10-x.html", "worker": "w; rm"}, {"review": "a b"}):
+            self.assertEqual(command.say(COORD, "", "x", self.put, bad)[0], 400)
+        with mock.patch.object(office, "inbox_put", side_effect=self.put):
+            self.assertEqual(office.act({"kind": "coord_say", "coord": COORD, "value": "go", "re": {"review": "tweb-240"}})[0], 200)
+        self.assertEqual(self.sent[-1], (COORD, "[office→coord] (re: review tweb-240) go"))
+
+    def test_each_session_carries_what_it_was_doing_and_whether_a_coordinator_ever_instructed_it(self):
+        self.ledger([{"slug": "w", "sid": WORKER, "instructed": 1794296997069}, {"slug": "gavin-jeong-63", "sid": MAKER, "relation": "adopted", "auto": True}])
+        self.sums.write_text(json.dumps({WORKER: {"text": "office 지휘 view 정리", "src": "model", "key": "k", "at": 1}, MAKER: {"text": 3}}))
+        people = [{"id": WORKER, "name": "w", "pane": "%9", "attention": "ask"}, {"id": MAKER, "name": "gavin-jeong-63", "pane": "%4", "attention": "none"}]
+        v = command.view(people)
+        w, m = v["coordinators"][0]["workers"]
+        self.assertEqual((w["summary"], w["instructed"], w["auto"], w["pane"]), ("office 지휘 view 정리", True, False, "%9"))
+        # A row the cache cannot use is no summary, not an error.
+        self.assertEqual((m["summary"], m["instructed"], m["auto"]), (None, False, True))
+        self.assertEqual(v["calls"][0]["summary"], "office 지휘 view 정리")
+        self.sums.write_text("{half")
+        coord._sums.update(at=0.0, sums={})
+        self.assertEqual(coord.summaries(), {})
+
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
         with mock.patch.object(office, "inbox_put", side_effect=self.put):
@@ -370,7 +412,7 @@ class AskingTest(BriefsCase):
         self.ledger([{"slug": "w", "sid": WORKER}])
         people = [{"id": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": {"name": "cc-mods-d9", "slug": "w"}}, {"id": MAKER, "name": "m", "attention": "none"}]
         calls = command.view(people)["calls"]
-        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w"}])
+        self.assertEqual(calls, [{"sid": WORKER, "name": "w", "window": "cc:3", "pane": "%9", "cwd": "/src/x", "attention": "ask", "doing": "asking", "boss": "cc-mods-d9", "slug": "w", "summary": None}])
 
     def test_asking_reads_the_answer_tail_and_the_screen(self):
         me = {"pane": "%9", "wid": "@3", "window": "cc:3", "name": "w", "cwd": "/src/x"}
@@ -572,6 +614,17 @@ KEYS_HARNESS = textwrap.dedent(r"""
         const e = { key, shiftKey: false, isComposing: false, keyCode: 0, ...more, target: { value, blur: () => { blurred = true } }, preventDefault: () => { stopped = true } }
         return [revBoxKey(e, cmd.sel), stopped, blurred]
       }
+      // A coordinator with four sessions at work: one it started, one handed
+      // over, one auto-adopted it gave a task, one auto-adopted and quiet.
+      function crew() {
+        calls()
+        cmd.data.coordinators = [{ sid: 'c1', name: 'd9', live: true, state: 'working', log: [], workers: [
+          { slug: 'fix', sid: 'w1', relation: 'owned', live: true, state: 'working', window: 'w:3', summary: 'office 지휘 정리' },
+          { slug: 'held', sid: 'w2', relation: 'adopted', live: true, state: 'done' },
+          { slug: 'told', sid: 'w3', relation: 'adopted', auto: true, instructed: 1, live: true, state: 'done' },
+          { slug: 'gavin-jeong-63', sid: 'w4', relation: 'adopted', auto: true, live: true, state: 'done', summary: 'Twingate 조사' }] }]
+      }
+      const row = (sid) => ({ target: { closest: (q) => (q === 'tr.w' ? { dataset: { sid } } : null) } })
       function inCallBox(key, value = '', more = {}) {
         let stopped = false, blurred = false
         const e = { key, shiftKey: false, isComposing: false, keyCode: 0, ...more, target: { value, blur: () => { blurred = true } }, preventDefault: () => { stopped = true } }
@@ -835,6 +888,117 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got[0], [{"kind": "review_issue", "coord": "c1", "id": "cc-mods#85", "value": "다시 봐 줘"}, {"kind": "review_confirm", "coord": "c1", "id": "cc-mods#85"}, {"kind": "review_confirm", "coord": "c1", "id": "tweb-240"}])
         self.assertEqual(got[1:], [["cc-mods#85", 2, ["다시 봐 줘"]], ["tweb-240", ["tweb-240"]], None, 0])
+
+    def test_j_and_k_never_walk_the_sessions_at_work(self):
+        got = self.run_js("""
+            crew(); cmd.sel = null
+            const seen = []
+            for (let n = 0; n < 4; n++) { press('j'); seen.push(cmd.sel.file || cmd.sel.sid) }
+            return seen
+        """)
+        self.assertEqual(got, ["a.html", "s1", "s2", "a.html"])
+
+    def test_alt_i_j_k_do_what_i_j_k_do_for_tweb_and_leave_a_box_and_the_card_alone(self):
+        # TWeb's normal mode keeps bare i, j and k; ⌥ reaches the page.
+        got = self.run_js("""
+            crew(); cmd.sel = { sid: 'w1', name: 'fix' }
+            const seen = []
+            for (const k of ['j', 'j', 'k']) { press(k, false, true); seen.push(cmd.sel.file || cmd.sel.sid) }
+            const typedJ = press('j', true, true), boxI = press('i', true, true), floorI = press('i', false, true)
+            card.style.display = 'block'; const cardJ = press('j', false, true), cardI = press('i', false, true); card.style.display = 'none'
+            // Nothing waits: ⌥J is the floor's.
+            cmd.data.pending = []; cmd.data.calls = []; cmd.data.reviews = []
+            const none = press('j', false, true)
+            return [seen, typedJ, boxI, floorI, cardJ, cardI, none]
+        """)
+        self.assertEqual(got, [["a.html", "s1", "a.html"], False, True, True, False, False, False])
+
+    def test_a_row_of_the_table_opens_that_session_and_leaves_the_box_to_the_coordinator(self):
+        got = self.run_js("""
+            crew(); cmd.sel = null
+            cmdClick(row('w1'))
+            const opened = [cmd.sel.sid, cmd.sel.name, cmd.coord, cmdCoord().sid]
+            // Its view's keys are a waiting session's: G to its pane, i still the box on top.
+            const g = press('g'), i = press('i')
+            cmdClick(row('nope'))
+            return [opened, g, i, cmd.sel.sid, 'worker' in cmd]
+        """)
+        self.assertEqual(got, [["w1", "fix", None, "c1"], True, True, "w1", False])
+
+    def test_the_table_is_folded_to_one_line_and_hides_the_quiet_adopted_ones_until_asked(self):
+        got = self.run_js("""
+            crew(); cmd.wOpen = false
+            const folded = cmdWorkersHtml(cmd.data)
+            cmdFold('workers'); const open = cmdWorkersHtml(cmd.data)
+            cmdFold('quiet'); const all = cmdWorkersHtml(cmd.data)
+            return [folded, open, all, cmd.wOpen, cmd.wQuiet]
+        """)
+        folded, opened, every, w_open, w_quiet = got
+        self.assertIn("👷 일하는 세션 4", folded)
+        self.assertIn("(내 worker 1 · 자동 입양 2)", folded)
+        self.assertNotIn("<table>", folded)
+        # Unfolded: the quiet one (auto, never instructed) stays hidden; told is shown.
+        self.assertIn('data-sid="w3"', opened)
+        self.assertNotIn('data-sid="w4"', opened)
+        self.assertIn("지시받지 않은 자동 입양 1개 숨김 · 보기", opened)
+        self.assertIn("office 지휘 정리", opened)
+        self.assertIn('data-sid="w4"', every)
+        self.assertIn("Twingate 조사", every)
+        self.assertEqual((w_open, w_quiet), (True, True))
+
+    def test_where_the_task_went_is_the_first_send_or_spawn_after_it_was_sent(self):
+        got = self.run_js("""
+            const c = { log: [{ at: 100, kind: 'send', text: 'old: x' }, { at: 5000, kind: 'event', text: 'fix: finished' }, { at: 6000, kind: 'send', text: 'fix: 테스트 먼저' }, { at: 7000, kind: 'spawn', text: 'new opus/high in /w' }] }
+            return [cmdWhere(c, 5000), cmdWhere({ log: [{ at: 9000, kind: 'spawn', text: 'new-one opus/high in /w' }] }, 8000), cmdWhere(c, 8000), cmdWhere(undefined, 1)]
+        """)
+        self.assertEqual(got, ["👷 <b>fix</b>에 맡김", "🆕 새 worker <b>new-one</b>", "", ""])
+
+    def test_an_answer_to_a_session_at_work_stays_on_it_and_one_waiting_goes_on(self):
+        got = self.run_js("""
+            return (async () => {
+              crew()
+              cmdPost = async () => ({ ok: true })
+              cmd.sel = { sid: 'w1', name: 'fix' }
+              await cmdReplyReal(cmd.sel, { kind: 'reply', value: 'x' }, '답장')
+              const stay = cmd.sel.sid
+              cmd.sel = { sid: 's1', name: 'one' }
+              await cmdReplyReal(cmd.sel, { kind: 'reply', value: 'y' }, '답장')
+              return [stay, cmd.sel.sid]
+            })()
+        """)
+        self.assertEqual(got, ["w1", "s2"])
+
+    def test_the_box_speaks_about_what_is_open_and_x_makes_it_a_plain_task(self):
+        got = self.run_js("""
+            return (async () => {
+              crew()
+              cmdReply = cmdReplyReal
+              const posts = []
+              cmdPost = async (body) => { posts.push(body); return body.kind === 'coord_say' ? { ok: true, sent: 'x', at: 5 } : { ok: true } }
+              cmd.data.pending[0].decision.worker = 'fix'
+              cmd.data.pending[0].decision.coordinator = 'c1'
+              cmd.data.reviews = [{ coord: 'c1', id: 'cc-mods#85', title: 'R1', links: [] }]
+              const out = []
+              cmd.sel = null; out.push(cmdAbout()); await cmdSay('할 일')
+              cmd.sel = { file: 'a.html', title: 'A' }; out.push(cmdAbout().label); await cmdSay('표를 접어 줘')
+              revPick(cmd.data.reviews[0]); out.push(cmdAbout().label); await cmdSay('링크가 죽었어')
+              cmdPickCall({ sid: 'w1', name: 'fix', window: 'w:3' }); out.push(cmdAbout().label); await cmdSay('테스트부터'); out.push(cmd.said.direct)
+              // ✕ on the chip: the same thing open, the box is a plain task again.
+              cmd.aboutOff = cmdAbout().key; out.push(cmdAbout()); await cmdSay('아무 데나')
+              cmd.sel = { file: 'a.html', title: 'A' }; out.push(!!cmdAbout())
+              return [out, posts]
+            })()
+        """)
+        out, posts = got
+        self.assertEqual(out, [None, "📄 A 에 대해", "🔎 cc-mods#85 에 대해", "👷 fix 에게", "fix", None, True])
+        self.assertEqual(posts, [
+            {"kind": "coord_say", "coord": "c1", "slug": "", "value": "할 일"},
+            {"kind": "coord_say", "coord": "c1", "slug": "", "value": "표를 접어 줘", "re": {"brief": "a.html", "worker": "fix"}},
+            {"kind": "coord_say", "coord": "c1", "slug": "", "value": "링크가 죽었어", "re": {"review": "cc-mods#85"}},
+            # A session is told straight, as its own view's box does: not through a coordinator.
+            {"sid": "w1", "kind": "reply", "value": "테스트부터"},
+            {"kind": "coord_say", "coord": "c1", "slug": "", "value": "아무 데나"},
+        ])
 
 
 if __name__ == "__main__":

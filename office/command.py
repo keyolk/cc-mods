@@ -264,6 +264,7 @@ def view(people: list[dict]) -> dict:
     brief each is on), and the finished work waiting on the person's look."""
     by_sid = {p["id"]: p for p in people}
     latest = latest_by_session()
+    sums = coord.summaries()
 
     def live(sid: str | None) -> dict:
         p = by_sid.get(sid or "") or {}
@@ -277,9 +278,26 @@ def view(people: list[dict]) -> dict:
                 "name": c.get("name") or c["sid"][:8],
                 **{k: v for k, v in live(c["sid"]).items() if k != "name"},
                 "workers": [
-                    {"slug": w.get("slug"), "sid": w.get("sid"), "relation": w.get("relation") or "owned", "auto": bool(w.get("auto")), "model": w.get("model"), "effort": w.get("effort"), **live(w.get("sid")), "brief": latest.get(w.get("sid") or "")}
+                    {
+                        "slug": w.get("slug"),
+                        "sid": w.get("sid"),
+                        "relation": w.get("relation") or "owned",
+                        "auto": bool(w.get("auto")),
+                        # An auto-adopted session the coordinator never gave a
+                        # task is the person's own: the view folds it away.
+                        "instructed": bool(w.get("instructed")),
+                        "model": w.get("model"),
+                        "effort": w.get("effort"),
+                        **live(w.get("sid")),
+                        "pane": (by_sid.get(w.get("sid") or "") or {}).get("pane"),
+                        "summary": sums.get(w.get("sid") or ""),
+                        "brief": latest.get(w.get("sid") or ""),
+                    }
                     for w in c["workers"]
                 ],
+                # Where the coordinator handed tasks out lately: the view
+                # tells the person where the task they typed went.
+                "log": [{"at": e.get("at"), "kind": e.get("kind"), "text": str(e.get("text") or "")[:200]} for e in c.get("log") or [] if e.get("kind") in ("send", "spawn")][-20:],
             }
         )
     waiting = []
@@ -289,7 +307,7 @@ def view(people: list[dict]) -> dict:
     # With nothing to decide the panel still says something: who waits on
     # the person across the floor, and the briefs written lately.
     calls = [
-        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug")}
+        {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug"), "summary": sums.get(p["id"])}
         for p in people
         if p.get("attention") in ("ask", "alert")
     ]
@@ -435,11 +453,31 @@ def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = ""
     return 200, {"ok": True, "sent": f"{said} → {_coord_name(to) or who}" if len(qs) == 1 else f"답 {len(qs)}개 → {_coord_name(to) or who}", "via": via, "to": to, "left": 0}
 
 
-def say(coord_sid: str, slug: str, text: str, inbox_put) -> tuple[int, dict]:
-    """An instruction for a worker, given to its coordinator (which relays it
-    with coord_send), or with no slug one for the coordinator itself (start a
-    worker, report, stop). The office writes to the coordinator only: talking
-    to a worker directly is the office floor's card."""
+SLUG = re.compile(r"^[\w.-]{1,64}$")
+
+
+def _re(about: dict | None) -> str | None:
+    """What the person has open beside the box, as the coordinator reads it:
+    `(re: <brief file>, worker <slug>) ` or `(re: review <id>) `. "" for
+    nothing open; None for something that is not a brief or a review item."""
+    if not about:
+        return ""
+    if about.get("review"):
+        rid = str(about["review"])
+        return f"(re: review {rid}) " if review.ID.match(rid) else None
+    file, worker = str(about.get("brief") or ""), str(about.get("worker") or "")
+    if not NAME.match(file) or (worker and not SLUG.match(worker)):
+        return None
+    return f"(re: {file}" + (f", worker {worker}" if worker else "") + ") "
+
+
+def say(coord_sid: str, slug: str, text: str, inbox_put, about: dict | None = None) -> tuple[int, dict]:
+    """A task typed in the 지휘 box, for the coordinator to hand out
+    (coord_route), or about what the person has open (`about`: a brief and its
+    worker, or a review item), for it to pass to that work's worker. With a
+    slug, an instruction it relays to that worker with coord_send. The office
+    writes to the coordinator only: a session is answered directly from its
+    own view (office.py act, kind reply)."""
     text = (text or "").strip()
     if not text or len(text) > 4000:
         return 400, {"error": "empty or too long"}
@@ -447,9 +485,14 @@ def say(coord_sid: str, slug: str, text: str, inbox_put) -> tuple[int, dict]:
     if not led or not SID.match(coord_sid):
         return 404, {"error": "no such coordinator"}
     name = led.get("name") or coord_sid[:8]
+    re_ = _re(about if isinstance(about, dict) else None)
+    if re_ is None:
+        return 400, {"error": "bad re"}
     if not slug:
-        inbox_put(coord_sid, f"[office→coord] {text}")
-        return 200, {"ok": True, "sent": f"지시 → {name}"}
+        inbox_put(coord_sid, f"[office→coord] {re_}{text}")
+        # `at` (ms, the ledger log's clock): the view looks for the first
+        # send or spawn after it, to say where the task went.
+        return 200, {"ok": True, "sent": f"지시 → {name}", "at": int(time.time() * 1000)}
     if not any(w.get("slug") == slug and not w.get("endedAt") for w in led.get("workers") or []):
         return 404, {"error": "no such worker under it"}
     inbox_put(coord_sid, f"[office→coord] {slug}: {text}")
@@ -463,7 +506,7 @@ def act(body: dict, inbox_put) -> tuple[int, dict]:
     if kind in review.KINDS:
         return review.act(body, inbox_put)
     if kind == "coord_say":
-        return say(str(body.get("coord") or ""), str(body.get("slug") or ""), str(body.get("value") or ""), inbox_put)
+        return say(str(body.get("coord") or ""), str(body.get("slug") or ""), str(body.get("value") or ""), inbox_put, body.get("re"))
     return 400, {"error": "unknown action"}
 
 

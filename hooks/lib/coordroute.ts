@@ -20,10 +20,11 @@ export type Candidate = {
   code?: string // a worker's code outside its cwd
   repo?: string // the main checkout of the git repository its cwd is in
   title?: string // @title, the pane label the person set
+  doing?: string // what it was working on, one line (lib/coordsum.ts)
   prompts: string[] // the newest few prompts it was given, oldest first
 }
 
-export type SessionInfo = { titles: Map<string, string>; prompts: Map<string, string[]>; repos: Map<string, string> }
+export type SessionInfo = { titles: Map<string, string>; prompts: Map<string, string[]>; repos: Map<string, string>; doing?: Map<string, string> }
 
 // Every live session but the coordinator itself, once each.
 export function candidates(seen: PaneSeen[], l: Ledger, names: Map<string, string>, info: SessionInfo, now: number): Candidate[] {
@@ -48,6 +49,7 @@ export function candidates(seen: PaneSeen[], l: Ledger, names: Map<string, strin
       ...(w?.code ? { code: w.code } : {}),
       ...(info.repos.get(s.cwd) ? { repo: info.repos.get(s.cwd) } : {}),
       ...(title ? { title: title.slice(0, 80) } : {}),
+      ...(info.doing?.get(s.sid) ? { doing: info.doing.get(s.sid) } : {}),
       prompts: info.prompts.get(s.sid) ?? [],
     })
   }
@@ -85,7 +87,7 @@ const SYSTEM = [
   '- "send": give it to an owned or adopted session already working in the right repository or directory. target: its slug. Every live session is adopted by default; one with "auto": true is a session the person runs themselves, adopted automatically: send to it only when its directory and recent prompts are on the same work.',
   '- "adopt": an observed session (one handed back, or with automatic adoption off) fits (same repository or directory, its recent prompts are on the same work). target: its name. The person hands it over, then it gets the task.',
   '- "spawn": start a new worker. Give repo_dir (a git checkout from the candidates\' repo or cwd values, or a path the task names) to work on a fresh worktree, or cwd to run in a directory as is; and model and effort, the smallest that fits the task, within the limits.',
-  '- "unsure": the task does not say where it belongs and no candidate makes it clear. Say in reason what you would need to know.',
+  '- "unsure": the task does not say where it belongs and no candidate makes it clear. Say in reason what you would need to know, and name in it the most plausible repository (a candidate\'s repo or cwd): the coordinator spawns there rather than ask the person.',
   'Rules:',
   '- Prefer a session already working in the right repository or directory, on related work.',
   '- Choose spawn only when no live session fits, or the one that fits is working (busy).',
@@ -176,5 +178,7 @@ export function routeText(d: Decision): string {
   if (d.action === 'send') return 'Route: send to ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: coord_send slug=' + d.target.slug + ' with the task' + (d.target.state === 'working' ? ' (it is mid-turn: the instruction waits for its turn to end)' : '') + '.'
   if (d.action === 'adopt') return 'Route: adopt ' + who(d.target) + '.\nReason: ' + d.reason + '\nNext: it is observed (handed back, or auto-adopt is off), so only the person can hand it over: ask them to run `/coord adopt ' + d.target.pane + '`, then coord_send it the task. If they say no, coord_spawn instead.'
   if (d.action === 'spawn') return 'Route: spawn a new worker ' + (d.repoDir ? 'on a worktree of ' + d.repoDir : 'in ' + d.cwd) + ', ' + d.model + '/' + d.effort + (d.window ? ', ' + (d.window === 'new' ? 'in a new window' : 'in window ' + d.window) : '') + '.\nReason: ' + d.reason + (d.placeNote ? '\nPlace: ' + d.placeNote + '.' : '') + '\nNext: coord_spawn ' + (d.repoDir ? 'repo_dir=' + d.repoDir : 'cwd=' + d.cwd) + ' model=' + d.model + ' effort=' + d.effort + (d.window ? ' window=' + d.window : '') + ', a slug for the task, and a brief with the person\'s words verbatim.'
-  return 'Route: the router cannot tell.\nReason: ' + d.reason + '\nNext: ask the person where this goes (the recommended guess first).'
+  // Never back to the person: a guess in the open beats a question they
+  // have to come back for (office 지휘: "알아서 되게").
+  return 'Route: the router cannot tell.\nReason: ' + d.reason + '\nNext: do not ask the person where this goes. coord_spawn in the most plausible repository (the one the reason names, else the one the task\'s words point to) with a brief carrying the person\'s words verbatim, and tell the person in one line where it went and why.'
 }

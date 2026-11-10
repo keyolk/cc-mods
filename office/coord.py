@@ -14,7 +14,11 @@ import os
 import time
 
 COORD_DIR = os.path.expanduser("~/.claude/state/office/coord")
+# What each live session was doing, one line per session id: a coordinator's
+# cc-mods writes it (hooks/lib/coordsum.ts), the office only reads it.
+SUMMARY_FILE = os.path.expanduser("~/.claude/state/office/summary.json")
 _cache: dict = {"at": 0.0, "ledgers": []}
+_sums: dict = {"at": 0.0, "sums": {}}
 
 
 def ledgers() -> list[dict]:
@@ -32,6 +36,20 @@ def ledgers() -> list[dict]:
             out.append(d)
     _cache.update(at=time.time(), ledgers=out)
     return out
+
+
+def summaries() -> dict[str, str]:
+    """Session id -> what it was doing, read at most every 2 s."""
+    if time.time() - _sums["at"] < 2:
+        return _sums["sums"]
+    try:
+        with open(SUMMARY_FILE) as fh:
+            d = json.load(fh) or {}
+        sums = {k: v["text"] for k, v in d.items() if isinstance(v, dict) and isinstance(v.get("text"), str) and v["text"]}
+    except (OSError, ValueError, AttributeError):
+        sums = {}
+    _sums.update(at=time.time(), sums=sums)
+    return sums
 
 
 def relations() -> dict[str, dict]:
