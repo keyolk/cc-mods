@@ -318,8 +318,19 @@ test('coord: a worker spawned with add_dirs runs claude --add-dir=<dir>, never s
   // the prompt would read the prompt as a directory.
   // Under bun test only: the plugin test runtime has no process to spawn.
   const bun = (globalThis as any).Bun
-  const run = bun?.spawnSync(['sh', '-c', argv[13]!.replace('exec claude', 'printf "%s\\n" claude').replace('"$(cat "$p")"', '"<$p>"'), ...argv.slice(14)])
-  if (run) expect(run.stdout.toString().trim().split('\n')).toEqual(['claude', '--add-dir=/w/briefs/b', '--add-dir=/odd dir', '--model', 'opus', '--effort', 'high', '--permission-mode', 'auto', '--disallowedTools', 'AskUserQuestion', '--session-id', 'u-2', '-n', 'b', '</r/b/prompt.txt>'])
+  const script = argv[13]!.replace('exec "$@"', 'printf "%s\\n" "$@"').replace('"$(cat "$p")"', '"<$p>"')
+  const tail = ['--add-dir=/w/briefs/b', '--add-dir=/odd dir', '--model', 'opus', '--effort', 'high', '--permission-mode', 'auto', '--disallowedTools', 'AskUserQuestion', '--session-id', 'u-2', '-n', 'b', '</r/b/prompt.txt>']
+  // No ccproxy on PATH: claude itself.
+  const run = bun?.spawnSync(['sh', '-c', script, ...argv.slice(14)], { env: { PATH: '/usr/bin:/bin' } })
+  if (run) expect(run.stdout.toString().trim().split('\n')).toEqual(['claude', ...tail])
+  // ccproxy on PATH: through it, as the person's own `claude` runs.
+  if (bun) {
+    const dir = bun.spawnSync(['mktemp', '-d']).stdout.toString().trim()
+    bun.spawnSync(['sh', '-c', 'printf "#!/bin/sh\\n" > "$1/ccproxy" && chmod +x "$1/ccproxy"', 'x', dir])
+    const via = bun.spawnSync(['sh', '-c', script, ...argv.slice(14)], { env: { PATH: dir + ':/usr/bin:/bin' } })
+    expect(via.stdout.toString().trim().split('\n')).toEqual(['ccproxy', 'claude', '--intercept=mitm', '--', ...tail])
+    bun.spawnSync(['rm', '-rf', dir])
+  }
   expect(spawnRefusal(on(), { ...req, addDirs: ['~/worktrees/briefs', '/abs'] })).toBeUndefined()
   expect(spawnRefusal(on(), { ...req, addDirs: ['relative/dir'] })).toContain('add_dirs')
   expect(spawnRefusal(on(), { ...req, addDirs: '/not/a/list' })).toContain('add_dirs')

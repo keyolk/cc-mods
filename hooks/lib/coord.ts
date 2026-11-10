@@ -348,7 +348,11 @@ export function workerArgv(o: { target: string; split?: Split; slug: string; cwd
   // it as `--add-dir=<dir>`, put first on claude's line: --add-dir takes
   // several values, and in its spaced form the prompt after it would be read
   // as one more directory.
-  const cmd = 'm=$1 e=$2 s=$3 n=$4 p=$5; shift 5; exec claude "$@" --model "$m" --effort "$e" --permission-mode auto --disallowedTools AskUserQuestion --session-id "$s" -n "$n" "$(cat "$p")"'
+  // Through ccproxy when it is installed, as the person's own `claude` (a
+  // fish function) is: a bare `exec claude` from sh skipped it, so every
+  // worker ran on the person's account directly and hit its session limit
+  // (2026-11-10). Without ccproxy, claude itself.
+  const cmd = 'm=$1 e=$2 s=$3 n=$4 p=$5; shift 5; if command -v ccproxy >/dev/null 2>&1; then set -- ccproxy claude --intercept=mitm -- "$@"; else set -- claude "$@"; fi; exec "$@" --model "$m" --effort "$e" --permission-mode auto --disallowedTools AskUserQuestion --session-id "$s" -n "$n" "$(cat "$p")"'
   const dirs = (o.addDirs ?? []).map((d) => '--add-dir=' + d)
   const run = ['-c', o.cwd, 'sh', '-c', cmd, 'worker', modelAlias(o.model), o.effort, o.sid, o.slug, o.promptFile, ...dirs]
   // -d: the person's keyboard stays where it is. `target` is the
