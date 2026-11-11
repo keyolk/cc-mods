@@ -99,7 +99,7 @@ test('coord: a [coord] prompt taken from the queue after its worker closed is dr
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'brief-decision-4' } as any)
-  const text = '[coord] brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; if a dialog stays, the person answers it in the office 지휘 view)'
+  const text = '[coord] brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; if a dialog stays, read its pane, check the command, answer it with coord_answer)'
   const out: any = await $.prompt.submit({ text, origin: { kind: 'plugin', name: 'cc-mods' }, wait: false } as any)
   expect(out.drop).toContain('ended')
   expect(submitted).toEqual([])
@@ -606,4 +606,33 @@ test('status: a worker gets the tool, a call is written whole, and a turn withou
   await $.turn.complete({ turnId: 't3', answer: 'ok', durationMs: 5, isAborted: false, usage: null } as any)
   await clock.advance(1_000)
   expect(submitted.filter((t) => t.startsWith('[cc-mods] Your turn ended without')).length).toBe(1)
+})
+
+test('coord: coord_answer presses the option only while that dialog is on the worker\'s screen', async ($, on) => {
+  // Live: office-coord-row sat at "rm node_modules && git commit" and the
+  // coordinator told the person "권한 확인 1건 대기" twice instead of answering.
+  const files: Record<string, string> = { [LEDGER]: ledgerJson() }
+  const runs: string[][] = []
+  let screen = ['Bash command', '  rm node_modules && git commit -m fix', 'Do you want to proceed?', '❯ 1. Yes', '  2. No'].join('\n')
+  stubs(on, { files, submitted: [], runs, panes: () => '%365\t@134\tw4\twaiting\task\t/r/bd\t\tBash rm node_modules && git commit -m fix', run: (a) => (a[0] === 'tmux' && a[1] === 'capture-pane' ? screen : undefined) })
+  mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__cc-mods__coord_answer', ...input } as any) as any
+  const keys = () => runs.filter((a) => a[0] === 'tmux' && a[1] === 'send-keys')
+  // The dialog shows another command than the one checked: nothing pressed.
+  const other: any = await call({ slug: 'brief-decision-4', option: 1, expect: 'git push' })
+  expect(other.deny).toContain('does not show')
+  expect(other.deny).toContain('rm node_modules')
+  expect(keys()).toEqual([])
+  // No such option: nothing pressed.
+  expect((await call({ slug: 'brief-decision-4', option: 3 })).deny).toContain('no dialog with option 3')
+  const ok: any = await call({ slug: 'brief-decision-4', option: 1, expect: 'rm node_modules && git commit' })
+  expect(ok.result).toContain('Pressed 1 (Yes)')
+  expect(keys()).toEqual([['tmux', 'send-keys', '-t', '%365', '1']])
+  expect(JSON.parse(files[LEDGER]!).log.at(-1)).toMatchObject({ kind: 'answer' })
+  // The dialog is gone (answered, or the worker's prompt box): no key goes in.
+  screen = '> \n'
+  expect((await call({ slug: 'brief-decision-4', option: 1 })).deny).toContain('nothing was pressed')
+  expect(keys().length).toBe(1)
+  expect((await call({ slug: 'nobody', option: 1 })).deny).toContain('no owned or adopted worker')
 })

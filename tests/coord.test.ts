@@ -445,14 +445,14 @@ test('coord: a permission dialog in a worker is "asks: <tool> <target>" with its
   const l = on({ workers: [worker({ slug: 'brief-decision-3', sid: 'w1' })] })
   const dialog = parsePanes('%358\t@132\tw1\twaiting\task\t/r/brief-decision\t\tRead ~/worktrees/briefs/brief-decision/bin/brief.py')
   const first = observe(l, dialog, NOW)
-  expect(first.changes.map((c) => [c.kind, c.text])).toEqual([['ask', 'brief-decision-3 (pane %358, window @132): asks: Read ~/worktrees/briefs/brief-decision/bin/brief.py (a permission dialog: the person answers it on its row in the office 지휘 view)']])
+  expect(first.changes.map((c) => [c.kind, c.text])).toEqual([['ask', 'brief-decision-3 (pane %358, window @132): asks: Read ~/worktrees/briefs/brief-decision/bin/brief.py (a permission dialog: read its pane, check the command, answer it with coord_answer)']])
   expect(first.ledger.workers[0]!.asks).toBe('Read ~/worktrees/briefs/brief-decision/bin/brief.py')
   expect(observe(first.ledger, dialog, NOW + 10_000).changes).toEqual([])
   // Its action ticks first, then the dialog for the same call: told once.
   const action = parsePanes('%358\t@132\tw1\twaiting\taction\t/r/brief-decision\t\tRead ~/x.py')
   const a1 = observe(l, action, NOW)
   const a2 = observe(a1.ledger, action, NOW + 10_000)
-  expect(a2.changes.map((c) => c.text)).toEqual(['brief-decision-3 (pane %358, window @132): asks: Read ~/x.py (a permission ask still unsettled; if a dialog stays, the person answers it in the office 지휘 view)'])
+  expect(a2.changes.map((c) => c.text)).toEqual(['brief-decision-3 (pane %358, window @132): asks: Read ~/x.py (a permission ask still unsettled; if a dialog stays, read its pane, check the command, answer it with coord_answer)'])
   expect(observe(a2.ledger, parsePanes('%358\t@132\tw1\twaiting\task\t/r/brief-decision\t\tRead ~/x.py'), NOW + 20_000).changes).toEqual([])
   // Answered: it runs (working), then its turn ends.
   const ran = observe(a2.ledger, parsePanes('%358\t@132\tw1\tworking\tnone\t/r/brief-decision\t\t'), NOW + 30_000)
@@ -477,7 +477,7 @@ test('coord: two calls each caught in action on consecutive ticks are not one st
 test('coord: a [coord] prompt that waited in the queue loses the lines about workers closed since', () => {
   // Live: brief-decision-4's ask went out mid-turn (a reload had reset the
   // turn flag), sat queued, and arrived a minute after coord_close.
-  const ask = { slug: 'brief-decision-4', sid: 'w4', kind: 'ask' as const, text: 'brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; if a dialog stays, the person answers it in the office 지휘 view)', wake: true }
+  const ask = { slug: 'brief-decision-4', sid: 'w4', kind: 'ask' as const, text: 'brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; if a dialog stays, read its pane, check the command, answer it with coord_answer)', wake: true }
   const turn = { slug: 'tmc-layout', sid: 'w1', kind: 'turn' as const, text: 'tmc-layout: finished its turn', wake: true }
   const open = on({ workers: [worker({ state: 'done', attention: 'none' }), worker({ slug: 'brief-decision-4', sid: 'w4', state: 'waiting', attention: 'action', asks: 'Read ~/r/prompt.txt' })] })
   const closed: Ledger = { ...open, workers: open.workers.map((w) => (w.sid === 'w4' ? { ...w, endedAt: NOW } : w)) }
