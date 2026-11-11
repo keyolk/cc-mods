@@ -159,7 +159,10 @@ class AuthPanelTest(unittest.TestCase):
 
     def test_the_page_loads_auth_js_and_the_server_serves_it(self):
         page = (OFFICE / "office.html").read_text()
-        self.assertIn('<script src="auth.js"></script>', page)
+        # The tag may carry attributes (#113: onerror="modErr(this)"), and the
+        # module guard must know the file, so a page missing it reloads.
+        self.assertRegex(page, r'<script src="auth\.js"[^>]*></script>')
+        self.assertIn("['auth.js','authHtml']", page)
         self.assertNotIn("function authHtml", page)
         # The panel's rows answer through one listener on the panel, which
         # outlives the rows a redraw replaces.

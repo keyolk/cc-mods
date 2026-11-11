@@ -1882,12 +1882,19 @@ test('mcp heal: retries back off and go on; a name /mcp does not know is not sen
   expect(healStuck({ at: 0, n: 2, last: 'failed' }, true)).toBe(false)
   expect(healStuck({ at: 0, n: 3, last: 'failed' }, true)).toBe(true)
   expect(healStuck({ at: 0, n: 1, last: 'unknown' }, true)).toBe(true)
-  // A radar server this session never had and /mcp does not know: another
-  // project's, not this session's to report or show.
+  // A server this session never had and that does not come back: never
+  // reported, never on the card. Live 2026-11-11: claude.ai Claude Data, in
+  // the radar but not in several sessions, was told as down from each.
   expect(healStuck({ at: 0, n: 1, last: 'unknown' }, false)).toBe(false)
+  expect(healStuck({ at: 0, n: 5, last: 'failed' }, false)).toBe(false)
   expect(healShown({ at: 0, n: 1, last: 'unknown' }, false)).toBe(false)
-  expect(healShown({ at: 0, n: 1, last: 'failed' }, false)).toBe(true)
+  expect(healShown({ at: 0, n: 1, last: 'failed' }, false)).toBe(false)
+  expect(healShown({ at: 0, n: 1, last: 'failed' }, true)).toBe(true)
   expect(healShown({ at: 0, n: 1, last: 'off' }, true)).toBe(false)
+  // …and gets one try: not a second, whatever the gap.
+  expect(healDue(undefined, 0, false)).toBe(true)
+  expect(healDue({ at: 0, n: 1, last: 'failed' }, 99 * 60_000, false)).toBe(false)
+  expect(healDue({ at: 0, n: 1, last: 'failed' }, 99 * 60_000, true)).toBe(true)
 })
 
 test('mcp heal: a server that failed at this session\'s start is a target; a live one is not, whatever its spelling', () => {

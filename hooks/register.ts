@@ -1691,7 +1691,9 @@ async function healServer($: any, server: string, force = false): Promise<boolea
   const t = mcpHealTries.get(key)
   // The engine's clock, as the watch's timer runs on it.
   const now = await clockNow($)
-  if (!force && !healDue(t, now)) return false
+  // A server this session never had gets one try (lib/mcpheal.ts healDue).
+  const seen = mcpWatch.seen.some((s) => normalizeServer(s) === key)
+  if (!force && !healDue(t, now, seen)) return false
   const name = displayName(server, (await mcpNames($)).all)
   let text: string
   try {

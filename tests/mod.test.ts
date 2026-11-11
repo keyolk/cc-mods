@@ -1658,13 +1658,15 @@ test('MCP heal: a call failing on a dropped server reconnects that one server wh
   await ui.unmount()
 })
 
-test('MCP heal: a server that failed at the session start is retried with a growing gap, under its own name; stuck after 3 it goes to the office file; back, it clears', { timeoutMs: 20_000 }, async ($, on) => {
+test('MCP heal: a claude.ai connector this session never got is tried once at start, then left quiet: no repeat, nothing reported', { timeoutMs: 20_000 }, async ($, on) => {
   const store: Record<string, unknown> = { 'cockpit-settings': {} }
   const toasts: string[] = []
   const written: Record<string, string> = {}
-  // The radar's `claude mcp list` (its own process) connects Slack; this
-  // session never got it (ECONNRESET at start, 2026-11-11).
-  const list = ['claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected', 'portal: https://portal.acme.io/mcp (HTTP) - ✔ Connected', 'sentry: https://mcp.sentry.dev/mcp (HTTP) - ! Needs authentication'].join('\n')
+  // The radar's `claude mcp list` (its own process) connects Slack and Claude
+  // Data; this session has neither. Slack failed its first connect
+  // (ECONNRESET, 2026-11-11); Claude Data this session never loads, and /mcp
+  // answers "not found" with no text reaching the mod.
+  const list = ['claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected', 'claude.ai Claude Data: https://data.example/mcp - ✔ Connected', 'portal: https://portal.acme.io/mcp (HTTP) - ✔ Connected', 'sentry: https://mcp.sentry.dev/mcp (HTTP) - ! Needs authentication'].join('\n')
   baseStubs(on, { store, toasts, written, run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
   on('mcp.call', () => ({ value: { content: [] } }) as any)
   const clock = mock.clock(on)
@@ -1672,55 +1674,31 @@ test('MCP heal: a server that failed at the session start is retried with a grow
   let tools = [{ name: 'mcp__portal__x', serverName: 'portal', tokens: 1, isLoaded: true }]
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: tools } }, rateLimits: [] } }) as any)
   const reconnects: string[] = []
-  let reply = 'Failed to reconnect to claude.ai Slack: The socket connection was closed unexpectedly (ECONNRESET)'
   on('command.run', (_$: any, e: any) => {
-    if (e.command === 'mcp') reconnects.push(e.args)
-    return { text: e.command === 'mcp' ? reply : '' }
+    if (e.command === 'mcp') {
+      reconnects.push(e.args)
+      // Slack comes back on its one try; Claude Data never does.
+      if (e.args === 'reconnect claude.ai Slack') tools = [...tools, { name: 'mcp__claude_ai_Slack__slack_read_thread', serverName: 'claude_ai_Slack', tokens: 1, isLoaded: false }]
+    }
+    return { text: '' }
   })
   const settle = async () => {
     for (let i = 0; i < 400; i++) await Promise.resolve()
   }
   const state = () => JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}')
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
-  await clock.advance(0)
+  await clock.advance(15_000)
   await settle()
-  // The watch runs 15 s after the start, then on the minute (60, 120, …);
-  // `to` moves the clock to that many seconds after the start.
-  let now = 0
-  const to = async (sec: number) => {
-    await clock.advance(sec * 1000 - now)
-    now = sec * 1000
+  // One try each, by the name /mcp knows; sentry (needs sign-in) and portal (live) not at all.
+  expect(reconnects.sort()).toEqual(['reconnect claude.ai Claude Data', 'reconnect claude.ai Slack'])
+  expect(toasts).toContain('MCP claude.ai Slack reconnected')
+  // An hour on: Claude Data is not tried again, and is on no card or notice.
+  for (let i = 0; i < 3; i++) {
+    await clock.advance(20 * 60_000)
     await settle()
   }
-  // The radar's background `claude mcp list` has run by the first check.
-  await to(15)
-  expect(reconnects).toEqual(['reconnect claude.ai Slack'])
-  expect(state().dropped).toMatchObject([{ server: 'claude.ai Slack', tries: 1, last: 'failed', atStart: true }])
-  // A gap of 1 minute after the first try (due at 75: the 120 check), 2
-  // after the second (due at 240), 4 after the third (due at 480).
-  await to(60)
-  expect(reconnects).toHaveLength(1)
-  await to(120)
   expect(reconnects).toHaveLength(2)
-  await to(180)
-  expect(reconnects).toHaveLength(2)
-  await to(240)
-  expect(reconnects).toHaveLength(3)
-  // Three failures: stuck, for the coordinator and the office.
-  expect(state().dropped).toMatchObject([{ server: 'claude.ai Slack', tries: 3, stuck: true }])
-  // sentry needs sign-in (the radar's 🔑): never retried here.
-  expect(reconnects.every((r) => r === 'reconnect claude.ai Slack')).toBe(true)
-  // It comes up: the next try succeeds, and once live it leaves the file.
-  reply = 'Reconnected to claude.ai Slack.'
-  await to(420)
-  expect(reconnects).toHaveLength(3)
-  await to(480)
-  expect(reconnects).toHaveLength(4)
-  expect(toasts).toContain('MCP claude.ai Slack reconnected')
-  tools = [...tools, { name: 'mcp__claude_ai_Slack__slack_read_thread', serverName: 'claude_ai_Slack', tokens: 1, isLoaded: false }]
-  await to(540)
   expect(state().dropped).toEqual([])
-  expect(reconnects).toHaveLength(4)
 })
 
 test('MCP heal: a name /mcp does not know is sent once, then reported, not repeated', { timeoutMs: 20_000 }, async ($, on) => {
