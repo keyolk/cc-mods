@@ -223,6 +223,8 @@ const cmdRev = () => typeof revList === 'function'
 const cmdSlx = () => typeof slxList === 'function'
 // hibernate.js, unless the server that sent this page has none.
 const cmdHib = () => typeof hibFoot === 'function'
+// agenda.js, the person's day (office/agenda.py), likewise.
+const cmdAgenda = () => typeof agRenderLine === 'function'
 
 async function cmdAsk() {
   const sid = cmd.sel?.sid
@@ -255,6 +257,7 @@ function cmdRender() {
   const wrap = list.querySelector('.tblwrap')
   if (wrap) wrap.scrollTop = keepT
   if (typeof cmdRenderBriefs === 'function') cmdRenderBriefs()
+  if (cmdAgenda()) agRenderLine()
   cmdRenderSay()
   cmdRenderDoc()
 }
@@ -325,7 +328,8 @@ function cmdWhere(c, at) {
 // until something else is opened. Nothing open: the coordinator places it.
 function cmdAbout() {
   const s = cmd.sel
-  if (!s) return null
+  // The day (agenda.js) is not a thing to instruct about: the box goes to the coordinator plain.
+  if (!s || s.agenda) return null
   const key = s.sid ? 'sid:' + s.sid : s.memos ? 'sid:' + s.memos : s.review ? 'review:' + s.review : s.revs ? 'revs:' + s.revs : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
   // A ✕ holds for the thing it was pressed on; opening another brings the chip back.
   if (cmd.aboutSeen !== key) { cmd.aboutSeen = key; cmd.aboutOff = null }
@@ -458,6 +462,7 @@ function cmdRenderDoc() {
   if (s.revs) return cmdRev() ? revRenderList(bar, doc, dec, s) : cmdShut()
   if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
   if (s.memos) return typeof dfrRenderMemos === 'function' ? dfrRenderMemos(bar, doc, dec, s) : cmdShut()
+  if (s.agenda) return cmdAgenda() ? agRenderDoc(bar, doc, dec) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
   // It loads /briefs/<name>, not /file?path=: a link inside the brief
   // (← 모든 브리프, another brief) then resolves beside it in ~/briefs. Against
@@ -821,6 +826,8 @@ function commandKey(e, k, typing) {
   if (k === 't' && (e.altKey || !typing) && cmd.on && cmd.sel?.sid && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmdView(); return true }
   // X (⌥X from a box; TWeb's normal mode keeps bare x): end the picked session (crew.js).
   if (k === 'x' && (e.altKey || !typing) && cmd.on && cmd.sel?.sid && typeof crewEnd === 'function' && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); crewEnd(cmd.sel); return true }
+  // A (⌥A from a box): the day (agenda.js) opens beside the panel, and closes.
+  if (k === 'a' && (e.altKey || !typing) && cmd.on && cmdAgenda() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); agToggle(); return true }
   // b (⌥B from anywhere, a box included) through the brief line.
   if (k === 'b' && (e.altKey || !typing) && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdBriefWalk(e)
   if (/^[1-9]$/.test(k) && e.altKey && cmd.on && cmdCardUp() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmd.card.selectTab(+k - 1); return true }

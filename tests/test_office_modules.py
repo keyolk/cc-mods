@@ -100,8 +100,8 @@ class GuardTest(unittest.TestCase):
     def without(self, *names):
         return [n for n in ALL if n not in names]
 
-    def test_the_probe_list_covers_the_fourteen_modules(self):
-        self.assertEqual(len(ALL), 14)
+    def test_the_probe_list_covers_the_fifteen_modules(self):
+        self.assertEqual(len(ALL), 15)
 
     def test_all_modules_present_does_nothing_and_clears_an_old_count(self):
         got = self.run_guard(store={"office.modReload": "3"})
@@ -163,7 +163,7 @@ LIST_HARNESS = textwrap.dedent(r"""
       localStorage: { getItem: () => null, setItem() {} },
       document: { createElement: mk, getElementById: el, head: el(), body: el() } }
     vm.createContext(ctx)
-    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js', 'table.js', 'defer.js', 'hibernate.js', 'command.js']) {
+    for (const f of ['review.js', 'crew.js', 'look.js', 'briefline.js', 'slx.js', 'table.js', 'defer.js', 'hibernate.js', 'agenda.js', 'command.js']) {
       if (without.includes(f)) continue
       vm.runInContext(fs.readFileSync(dir + '/' + f, 'utf8'), ctx)
     }
