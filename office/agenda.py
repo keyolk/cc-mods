@@ -246,6 +246,40 @@ def view(now: float | None = None) -> dict:
     return {"events": evs, **summarize(evs, now), "at": at, "error": err, "stale": bool(err), "canWrite": can, "fix": fix}
 
 
+GCL_DIR = "~/src/keyolk/gcl"
+GCL_PULLS = "https://github.com/keyolk/gcl/pulls"
+_since: dict[str, float] = {}
+
+
+def deps(now: float | None = None) -> list[dict]:
+    """What this panel's features need on the machine and lack: [{id, title,
+    text, cmd, link, since}], each a row in 내 차례 (office/turn.py). The
+    panel said "install gcl anew" only inside itself, which nobody was
+    looking at (2026-11-11: the 일정 panel merged and never worked). A fixed
+    one drops out; `since` is when this office first saw it missing. Reads
+    only what is cached: no gcl, gh or network run here."""
+    now = time.time() if now is None else now
+    out = []
+    b = binary()
+    if not b:
+        out.append({"id": "gcl", "title": "📅 일정: gcl 없음", "text": "gcl이 없어 일정을 읽지 못합니다. 설치하세요 (거기에 -json이 든 PR이 merge돼 있어야 합니다)", "cmd": f"cd {GCL_DIR} && make install", "link": GCL_PULLS})
+    elif not knows_cli(b) or not knows_json(b):
+        out.append({"id": "gcl", "title": "📅 일정: gcl 업데이트 필요", "text": f"설치된 {b}가 옛 버전이라 -json/rsvp/find를 모릅니다. 새로 설치하세요 (안 되면 남은 PR을 merge: {GCL_PULLS})", "cmd": f"cd {GCL_DIR} && make install", "link": GCL_PULLS})
+    err = ghprs.last_error()
+    if err and ("gh가 없" in err or "로그인되어 있지" in err):
+        out.append({"id": "ghprs", "title": "🔗 GitHub PR 연결: gh 로그인 필요", "text": f"참석자에 PR을 붙이지 못합니다: {err}", "cmd": "brew install gh" if "gh가 없" in err else "gh auth login", "link": None})
+    cfg = ghprs.config()
+    if not cfg["ghUser"] or not cfg["ghOrg"]:
+        miss = " · ".join(k for k in ("ghUser", "ghOrg") if not cfg[k])
+        out.append({"id": "ghcfg", "title": "🔗 GitHub PR 연결: 설정 없음", "text": f"{CONFIG}의 agenda.{miss}가 없어 참석자별 PR을 붙이지 못합니다. 예: {{\"agenda\": {{\"ghUser\": \"<login>\", \"ghOrg\": \"<org>\"}}}}", "cmd": None, "link": None})
+    live = {x["id"] for x in out}
+    for k in [k for k in _since if k not in live]:
+        del _since[k]
+    for x in out:
+        x["since"] = _since.setdefault(x["id"], now)
+    return out
+
+
 def knows_cli(path: str) -> bool:
     """Whether this gcl has `gcl rsvp` and `gcl find`: its usage names them."""
     u = _usage(path)

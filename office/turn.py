@@ -52,7 +52,11 @@ def epoch(v) -> float:
         return 0.0
 
 
-STATUS_STALE = 2 * 3600  # a declared block older than this is no longer trusted
+# A declared block older than this is no longer trusted. A worker declares again
+# before each turn ends, so an old block mostly means a session that ended; but
+# 2 h dropped a block the person had not seen yet (office-gcl, 2026-11-11), so
+# the window is a work day's half.
+STATUS_STALE = 8 * 3600
 PERSON_KINDS = ("question", "permission", "auth")
 
 
@@ -71,9 +75,13 @@ def status_blocks_person(st: dict | None, now: float) -> bool:
     return not at or now - at < STATUS_STALE
 
 
-def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None, held: dict[str, dict] | None = None) -> list[dict]:
+def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None, held: dict[str, dict] | None = None, declared: dict[str, dict] | None = None, deps: list[dict] | None = None) -> list[dict]:
     """The rows. `coords`: /command's coordinators, each with its workers. A
     waiting time not known counts as now: it has waited the least we can tell.
+    `declared`: sid -> {name, summary, state, status} read from the status
+    files of live sessions (the ledger's copy lags a coordinator tick, and a
+    session no coordinator holds has none). `deps`: what an office feature
+    needs installed or set up (office/agenda.py deps), a row each.
     `held`: the deferrals and memos of live sessions (office/defer.py), each
     with `info` ({name, summary, state}) for a session that has no row."""
     now = time.time() if now is None else now
@@ -83,7 +91,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
         r = rows.get(key)
         if r is None:
             r = rows[key] = {"key": key, "sid": None, "name": "", "summary": None, "coord": None, "isCoord": False, "relation": None, "state": None, "live": False,
-                             "decisions": [], "call": False, "reviews": [], "slx": [], "mcp": [], "at": None, "needKeys": []}
+                             "decisions": [], "call": False, "reviews": [], "slx": [], "mcp": [], "dep": None, "at": None, "needKeys": []}
         for k, v in info.items():
             if v is not None and not r.get(k):
                 r[k] = v
@@ -143,6 +151,18 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
             r = row("x:" + x["id"], name=x.get("from") or x["id"])
             r["slx"].append(x["id"])
             waited(r, epoch(x.get("at")) or now)
+    for sid, d in (declared or {}).items():
+        st = d.get("status")
+        r = rows.get("s:" + sid)
+        if r is None and status_blocks_person(st, now):
+            r = row("s:" + sid, sid=sid, name=d.get("name"), summary=d.get("summary"), state=d.get("state"), live=True)
+        if r is not None and epoch((st or {}).get("at")) > epoch((r.get("status") or {}).get("at")):
+            r["status"] = st
+    for x in deps or []:
+        r = row("d:" + x["id"], name=x.get("title") or x["id"])
+        r["dep"] = {k: x.get(k) for k in ("id", "text", "cmd", "link")}
+        r["needKeys"].append("p:" + x["id"])
+        waited(r, x.get("since") or now)
     # A worker blocked on the person by its own declaration. A pane dialog
     # (`call`) is the same wait seen from the screen: one need, not two.
     for r in rows.values():
@@ -159,7 +179,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     out = list(rows.values())
     for r in out:
         own = r["key"].startswith("x:")
-        r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own or r.get("byStatus") or any(x.get("stuck") for x in r["mcp"]))
+        r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own or r.get("byStatus") or r["dep"] or any(x.get("stuck") for x in r["mcp"]))
         r["name"] = r["name"] or (r["sid"] or "")[:8]
         defer(r, (held or {}).get(r["sid"] or ""), now)
     # Among triggers' own rows the latest receipt is on top; the other rows keep the longest wait on top.

@@ -81,7 +81,7 @@ function tblAll() {
     // MCP servers the session lost (office.py mcp_state); a stuck one is
     // the person's to reconnect (its cc-mods gave up retrying alone).
     const mcp = row.mcp || [], mstuck = mcp.filter((m) => m.stuck)
-    return { row, ds, c, rs, xs, mcp, mstuck, deferred, woke, memos: row.memos || [], needs: !deferred && !!(ds.length || c || rs.length || (own && xs.length) || woke || mstuck.length) }
+    return { row, ds, c, rs, xs, mcp, mstuck, deferred, woke, memos: row.memos || [], needs: !deferred && !!(ds.length || c || rs.length || (own && xs.length) || woke || mstuck.length || row.byStatus || row.dep) }
   })
 }
 function tblLegacy(d) {
@@ -242,6 +242,8 @@ function tblCells(R) {
   if (R.xs.length) st.push(R.xs[0].icon + (R.xs.length > 1 ? R.xs.length : ''))
   if (R.mcp.length) st.push('🔌' + (R.mcp.length > 1 ? R.mcp.length : ''))
   if (R.woke) st.push('⏰')
+  if (R.row.dep) st.push('🔧')
+  if (R.row.byStatus && R.needs) st.push('⏸')
   if (R.memos.length) st.push('📝' + R.memos.length)
   if (!st.length || (st.length === 1 && R.memos.length)) st.push(R.row.state === 'working' ? '⚙' : R.row.live === false ? '·' : '✓')
   return st.join(' ')
@@ -262,6 +264,7 @@ function tblAskNow(R) {
   if (R.mcp.length) return tblMcpLine(R.mstuck[0] || R.mcp[0])
   if (R.woke) return '⏰ 다시 볼 시각' + (R.memos.length ? ' · 📝 ' + R.memos[0].text.slice(0, 60) : '')
   if (R.memos.length) return '📝 ' + R.memos[0].text.slice(0, 80)
+  if (R.row.dep) return R.row.dep.text
   if (R.row.status) return tblStatus(R.row.status)
   return ''
 }
@@ -279,6 +282,7 @@ function tblStatus(s) {
 // A command the session's needs text names in backticks (a login to run by
 // hand): the row offers it for copying.
 const tblCmd = (R) => {
+  if (R.row.dep && R.needs) return R.row.dep.cmd || ''
   const st = R.row.status
   const m = st && st.state === 'blocked' && R.needs && !R.ds.length && !R.c ? /`([^`]+)`/.exec(st.needs || '') : null
   return m ? m[1] : ''
