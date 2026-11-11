@@ -26,6 +26,7 @@
 import type { Cap, CapValue, Policy } from './policy'
 import { ONE_BROWSER } from './webpane'
 import { grantRule } from './grant'
+import { sameStatus, statusLine, type Status } from './status'
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
@@ -80,6 +81,10 @@ export type Worker = {
   // (state/office/mcp/<sid>.json `stuck`), by name: told to the coordinator
   // once each until they come back (mcpWakes).
   mcpDown?: string[]
+  // What the worker last declared with its status tool (lib/status.ts,
+  // state/office/status/<sid>.json): shown in coord_roster, on its turn's
+  // wake and on its office row.
+  status?: Status
 }
 
 export type LogEntry = { at: number; kind: 'order' | 'spawn' | 'adopt' | 'release' | 'close' | 'send' | 'event' | 'limits'; text: string }
@@ -321,6 +326,12 @@ export const DECISION_BRIEF =
 export const MCP_WAIT =
   '- When an MCP tool fails on its connection (ECONNRESET, "not connected", "connection closed", or ToolSearch says the server failed to connect), do not send BLOCKED for it: do the rest of the work that does not need that server, then end your turn with one line naming the server you wait on. cc-mods reconnects it between turns and prompts you to go on once it is back; when it cannot, it tells the coordinator itself.'
 
+// A worker's status tool (lib/status.ts; register.ts registers it once the
+// worker is in a coordinator's ledger). The prompt names it so the worker
+// calls it; a turn that ends without one gets a self-check prompt.
+export const STATUS_RULE =
+  "- Keep your `status` tool current (cc-mods registers it in this session): call it when your state changes and before you end each turn, with state (working, blocked with a kind, done, error), step, next, and needs when someone must act. The coordinator reads it on your turn's end instead of asking you again; it does not replace the reports here. A turn that ends without it is followed by one prompt asking for it."
+
 // What every worker is told about reporting, after the coordinator's brief.
 // `fallback`: the command that queues a report in the coordinator's office
 // inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
@@ -339,6 +350,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. Report to it with SendMessage (to: "' + coordName + '"), and never wait on the person:\n' +
     '- `READY <sha>` when the work is pushed, tests pass, and the PR body has a live run; add the PR URL and, when the person must decide or understand something, a brief made with the doc:visual-brief skill (its path).\n' +
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
+    STATUS_RULE + '\n' +
     '- When the person must decide (two or more options, a step hard to undo, a scope call), ask on a decision brief. ' + DECISION_BRIEF + ' Add `--coordinator ' + (coordSid ?? '<coordinator sid>') + ' --worker ' + slug + '`, and send `QUESTION <one line> — <brief path>` (or `BLOCKED <why> — <brief path>`). Never run `brief show`: the decision shows in the office\'s 지휘 view, and the answer comes back as a `[coordinator]` prompt. Only a yes/no on one small step that is easy to undo goes as a plain QUESTION.\n' +
     '- Ask the person once per task where you can: early on, list every open question the work raises, and go on with what needs no answer; then ask them together, one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path. Ask alone and at once only what stops the work entirely.\n' +
     grantRule(briefGrant) + '\n' +
@@ -473,7 +485,9 @@ export function comesBack(l: Ledger, seen: readonly PaneSeen[]): Set<Worker> {
 // about alive. A worker taken for gone whose session a pane names again is
 // taken back (`back`), with its relation, worktree and spawn record as they
 // were.
-export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
+// `statuses`: each worker's declared status (lib/status.ts) as read this
+// tick; a worker it does not name keeps the one it had.
+export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map(), statuses: ReadonlyMap<string, Status> = new Map()): { ledger: Ledger; changes: Change[] } {
   const bySid = new Map(seen.map((s) => [s.sid, s]))
   const changes: Change[] = []
   const back = comesBack(l, seen)
@@ -496,6 +510,8 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
       return { ...w, missed: undefined, endedAt: now, goneAt: now }
     }
     const next: Worker = { ...w, missed: undefined, pane: s.pane, window: s.window, state: s.state, attention: s.attention, asks: s.asks }
+    const st = statuses.get(w.sid)
+    if (st && !sameStatus(st, w.status)) next.status = st
     // The brief itself arrives as an owned worker's first composer prompt
     // (it is claude's command-line argument), so a mark from the spawn's
     // first minute is that, not the person. An adopted one was given no
@@ -529,10 +545,21 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
     // fits between two ticks: so done, or that idle waiting, after anything
     // else is a finished turn.
     // A quiet worker's turns are the person's: not even logged.
-    else if (wake && !asks && idle(s.state) && !rested(w) && (w.state === 'working' || w.state === 'waiting' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, sid: w.sid, kind: 'turn', text: who(w.slug, sums.get(w.sid)) + ': finished its turn', wake: true })
+    else if (wake && !asks && idle(s.state) && !rested(w) && (w.state === 'working' || w.state === 'waiting' || now - w.at > SPAWN_GRACE_MS)) changes.push({ slug: w.slug, sid: w.sid, kind: 'turn', text: who(w.slug, sums.get(w.sid)) + ': finished its turn' + statusTail(next.status, now), wake: true })
     return next
   })
   return { ledger: { ...l, workers }, changes }
+}
+
+// What a turn's wake says about where the work stands: the worker's
+// declared status, so the coordinator need not read its pane or ask again;
+// with its age when it was declared over STATUS_OLD_MS ago (the worker may
+// not have called the tool this turn). None declared: nothing added.
+export const STATUS_OLD_MS = 10 * 60_000
+export function statusTail(s: Status | undefined, now: number): string {
+  if (!s) return ''
+  const old = now - s.at > STATUS_OLD_MS ? ' (declared ' + Math.round((now - s.at) / 60_000) + ' min ago)' : ''
+  return ' — status ' + statusLine(s) + old
 }
 
 // The person must answer the worker: the text says which pane and window,
@@ -706,6 +733,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Add `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker. The office's 지휘 view lists every waiting decision: while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`, which covers the office's pane and its controls; only without the office does `brief show <brief>` put it in a tweb pane. In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
     '- Only a yes/no on one small step that is easy to undo goes to the person in chat alone, without a brief.',
     "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: do not ask it again; it is in the office's 지휘 view.",
+    "- A worker declares where its work stands with its `status` tool (state working/blocked/done/error/idle, with blocked a kind: question, permission, auth or wait; step, next, needs). It shows in the status column above, in coord_roster, and after `finished its turn — status …` on its turn's wake. Act on that line: `blocked:question` waits on its decision brief (needs), `blocked:wait` on CI or a review, `done` with a link is ready for you to verify, `working` will report again; ask the worker only when no status was declared or it is old (`declared N min ago`).",
     "- The person gives intent and judgment; what it takes to carry them out is yours to arrange. coord_spawn's result names the gates a brief will meet (a Slack send, a merge, a prod write): the worker asks every approval it needs on its first decision brief, together, and an approval the person already gave (a brief answered, or their words in this conversation) is not asked again. A worker's Slack send the person approved on a brief (`[granted: …]` on the answer) goes through on its own: never tell the person to change a policy for it.",
     "- Gather the person's questions: say once in chat `결정 N건 대기` with the brief paths, not a message per question, and ask them on one occasion, not as each arrives. Ask alone and at once only what stops a worker entirely.",
     "- Finished work goes to the person's review queue, not only to chat: when you have verified and merged a worker's READY (or a worker finished something the person must judge), call `coord_review` add with id = the worker slug or the PR (cc-mods#85), title, changed (what changed, in the person's terms), verified (what you checked: tests, live run, CI on the sha; and what you did not), check (what the person should look at or try), risk, links (PR, brief, files). A later step of the same work (a follow-up PR, a fix after an issue) is `coord_review` update on the same id, not a new item. In chat say only the one line the tool returns, `검토 대기 N건`, never the items: the office's 지휘 view shows them under 🔎 검토. Do not write a one-off brief for finished work.",
@@ -732,9 +760,9 @@ export function coordRoster(l: Ledger, now: number, review?: string): string {
   // The quiet ones (every session the person runs, often twenty or more) go
   // on one line, so the table that rides on every turn stays the workers'.
   const mute = active(l).filter(quiet)
-  const rows = active(l).filter((w) => !quiet(w)).map((w) => '| ' + w.slug + ' | ' + w.relation + (w.auto ? ' (auto)' : '') + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (typedLately(w, now) ? ' (person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) + ')' : '') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
+  const rows = active(l).filter((w) => !quiet(w)).map((w) => '| ' + w.slug + ' | ' + w.relation + (w.auto ? ' (auto)' : '') + ' | ' + (w.model ?? '-') + '/' + (w.effort ?? '-') + ' | ' + (w.state ?? '?') + (w.attention && w.attention !== 'none' ? ' (' + w.attention + ')' : '') + (typedLately(w, now) ? ' (person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) + ')' : '') + ' | ' + (w.status ? statusTail(w.status, now).slice(' — status '.length) : '-') + ' | ' + w.cwd + (w.code ? ' (code ' + w.code + ')' : '') + ' |')
   return [
-    rows.length ? '| worker | relation | model/effort | state | cwd |\n|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
+    rows.length ? '| worker | relation | model/effort | state | status | cwd |\n|---|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
     ...(mute.length ? ['Adopted, the person\'s (not instructed yet; coord_roster has their state): ' + mute.map((w) => w.slug + ' ' + w.cwd).join(', ') + '.'] : []),
     ...(review ? [review] : []),
   ].join('\n')

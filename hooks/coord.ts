@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -18,6 +18,7 @@ import { BOX_FMT, busyOf, parseBoxes, pick, places, spots, type Fit, type PaneBo
 import type { Policy } from './lib/policy'
 import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, upsert, type ReviewFile } from './lib/coordreview'
 import { clip } from './lib/text'
+import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
 import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
@@ -293,7 +294,11 @@ async function tick($: any) {
     // session can take its pane's name (a `claude -p` it ran, from a cc-mods
     // before register.ts kept those off the pane).
     const live = await alive($, unseen(ledger, seen, Date.now()).map((w) => w.sid))
-    const o = observe(ledger, seen, Date.now(), live, sums)
+    // Each worker's declared status (register.ts statusTool writes
+    // state/office/status/<sid>.json), read before observe so a turn's wake
+    // carries the one declared in that turn.
+    const statuses = await statusFiles($, ledger)
+    const o = observe(ledger, seen, Date.now(), live, sums, statuses)
     // MCP servers the coordinator's and its workers' cc-mods could not get
     // back (register.ts mcpExport writes state/office/mcp/<sid>.json).
     const files = await mcpFiles($, o.ledger)
@@ -325,6 +330,25 @@ async function tick($: any) {
   }
 }
 
+// `<sid>\t<file on one line>` for each sid whose <dir>/<sid>.json exists.
+const READ_EACH = 'd=$0; for s; do [ -f "$d/$s.json" ] && printf "%s\\t%s\\n" "$s" "$(tr -d "\\n" < "$d/$s.json")"; done; true'
+
+// The active workers' status files, by session id. One read for all; a
+// failed read or a missing file is no news (the ledger keeps what it had).
+async function statusFiles($: any, l: Ledger): Promise<Map<string, Status>> {
+  const m = new Map<string, Status>()
+  const sids = active(l).map((w) => w.sid)
+  if (!sids.length) return m
+  const r = await sh($, ['sh', '-c', READ_EACH, ctx!.home() + STATUS_DIR, ...sids], { timeoutMs: 3000 })
+  if (!r.ok) return m
+  for (const line of r.out.split('\n')) {
+    const i = line.indexOf('\t')
+    const st = i > 0 ? parseStatusFile(line.slice(i + 1)) : undefined
+    if (st) m.set(line.slice(0, i), st)
+  }
+  return m
+}
+
 // The sessions set aside now (a failed read: none).
 async function deferredSids($: any): Promise<Map<string, number>> {
   const r = await sh($, ['sh', '-c', DEFER_LIST, ctx!.home() + DEFER_DIR], { timeoutMs: 3000 })
@@ -335,7 +359,7 @@ async function deferredSids($: any): Promise<Map<string, number>> {
 async function mcpFiles($: any, l: Ledger): Promise<Map<string, string | undefined> | undefined> {
   const sids = [l.sid, ...active(l).map((w) => w.sid)]
   const d = ctx!.home() + '/.claude/state/office/mcp'
-  const r = await sh($, ['sh', '-c', 'd=$0; for s; do [ -f "$d/$s.json" ] && printf "%s\\t%s\\n" "$s" "$(tr -d "\\n" < "$d/$s.json")"; done; true', d, ...sids], { timeoutMs: 3000 })
+  const r = await sh($, ['sh', '-c', READ_EACH, d, ...sids], { timeoutMs: 3000 })
   // A read that failed is no news (as a failed tmux read is for observe):
   // undefined, and the tick keeps what the ledger had.
   if (!r.ok) return undefined
@@ -508,9 +532,9 @@ async function roster($: any): Promise<string> {
     .map((s) => {
       const w = mine.get(s.sid)
       const rel = s.sid === ledger!.sid ? 'self' : (w?.relation ?? 'observed') + (w?.auto ? ' (auto)' : '')
-      return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && typedLately(w, now) ? ' person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) : '') + ' | ' + s.cwd + ' | ' + (doing.get(s.sid) ?? '').replace(/\|/g, '/') + ' |'
+      return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && typedLately(w, now) ? ' person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) : '') + ' | ' + (w?.status ? statusTail(w.status, now).slice(' — status '.length) : '-') + ' | ' + s.cwd + ' | ' + (doing.get(s.sid) ?? '').replace(/\|/g, '/') + ' |'
     })
-  return '| name | relation | pane | state | cwd | doing |\n|---|---|---|---|---|---|\n' + rows.join('\n')
+  return '| name | relation | pane | state | status | cwd | doing |\n|---|---|---|---|---|---|---|\n' + rows.join('\n')
 }
 
 // The newest prompts of each session, off the tail of its transcript (the

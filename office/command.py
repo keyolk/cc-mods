@@ -439,6 +439,19 @@ def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict
     return out or None
 
 
+STATUS_STATES = ("working", "blocked", "done", "error", "idle")
+
+
+def status_of(w: dict) -> dict | None:
+    """A worker's declared status from its ledger row, the fields the view
+    draws; None when it declared none (or the row holds something else)."""
+    st = w.get("status")
+    if not isinstance(st, dict) or st.get("state") not in STATUS_STATES:
+        return None
+    keep = ("state", "kind", "step", "next", "needs", "progress", "msg", "link", "at")
+    return {k: st[k] for k in keep if st.get(k) not in (None, "")}
+
+
 def view(people: list[dict], ask=None) -> dict:
     """What the command view draws: the waiting decisions, each coordinator
     with its live workers (their state from the office's own snapshot and the
@@ -483,6 +496,10 @@ def view(people: list[dict], ask=None) -> dict:
                         "pane": (by_sid.get(w.get("sid") or "") or {}).get("pane"),
                         "summary": label(w.get("sid"), sums, cwd(w.get("sid"), w), w),
                         "brief": latest.get(w.get("sid") or ""),
+                        # What the worker declared with its status tool
+                        # (hooks/lib/status.ts), as the coordinator's tick
+                        # last copied it into the ledger.
+                        "status": status_of(w),
                     }
                     for w in c["workers"]
                 ],

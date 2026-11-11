@@ -28,6 +28,15 @@ class TurnTest(unittest.TestCase):
         self.assertEqual(turn.epoch("2026-11-08T01:00Z"), turn.epoch("2026-11-08T01:00:00+00:00"))
         self.assertEqual([turn.epoch(x) for x in (None, "", "soon", True)], [0.0] * 4)
 
+    def test_a_worker_row_carries_its_declared_status(self):
+        st = {"state": "blocked", "kind": "wait", "step": "CI"}
+        coords = [{"sid": COORD, "name": "cc-mods-d9", "workers": [{"slug": "fix", "sid": OWNED, "status": st}, {"slug": "g", "sid": ADOPTED}]}]
+        rows = {r["sid"]: r for r in turn.table([], [], [], coords, now=1000)}
+        self.assertEqual(rows[OWNED]["status"], st)
+        self.assertIsNone(rows[ADOPTED].get("status"))
+        # A status asks nothing of the person: the row does not need them for it.
+        self.assertEqual(rows[OWNED]["needKeys"], [])
+
     def test_one_table_a_row_a_session_holding_its_decisions_call_and_reviews(self):
         coords = [{"sid": COORD, "name": "d9", "summary": "지휘", "state": "working", "live": True, "workers": [
             {"slug": "fix", "sid": OWNED, "summary": "office 지휘 정리", "state": "working", "live": True},
