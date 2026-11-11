@@ -135,7 +135,7 @@ const CMD_CSS = `
 // row: the table's row open beside the panel (its key), whose tabs show
 // over the left pane; null when what is open came from elsewhere (a brief
 // chip, a link).
-const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, view: 'said', row: null }
+const cmd = { on: false, data: null, sel: null, coord: null, armed: null, q: null, timer: null, frame: null, pendingN: 0, ask: null, force: null, sent: {}, said: null, view: 'said', row: null, refusedQ: null }
 const cmdEl = document.createElement('div')
 cmdEl.id = 'command'
 document.body.appendChild(cmdEl)
@@ -483,7 +483,8 @@ function cmdRenderDoc() {
   }
   const p = cmdPending(s.file)
   const act = p && cmdActive(p)
-  const key = p ? JSON.stringify(cmdQs(p)) + '|' + JSON.stringify(cmd.armed) + '|' + (act && act.id) : 'none'
+  const rq = cmd.refusedQ && p && cmd.refusedQ.file === p.file ? cmd.refusedQ : null
+  const key = p ? JSON.stringify(cmdQs(p)) + '|' + JSON.stringify(cmd.armed) + '|' + (act && act.id) + '|' + (rq ? rq.q + rq.text : '') : 'none'
   if (dec.dataset.key === key) return
   // A redraw (an option armed, the 3 s poll) keeps what is typed in the boxes and where the caret is.
   const typed = {}
@@ -526,6 +527,7 @@ function cmdRenderDoc() {
       d.innerHTML = '🔓 「' + cmdEsc(label) + '」을 누르면 이 세션의 Slack 전송 1건을 허가합니다 → <b>' + cmdEsc(g.channel) + '</b>' + (g.thread ? ' · 스레드 ' + cmdEsc(g.thread) : '') + '<pre>' + cmdEsc(g.text) + '</pre>'
       opts.after(d)
     }
+    if (rq && rq.q === q.id) box.querySelector('.row').insertAdjacentHTML('beforebegin', '<div class="refused">✕ ' + cmdEsc(rq.text) + '</div>')
     const note = box.querySelector('.note')
     note.value = typed[q.id] || ''
     cmdBoxKeys(note, (e) => cmdNoteKey(e, p, q))
@@ -764,6 +766,10 @@ async function cmdPost(body, busyOk = false) {
     const j = await r.json().catch(() => ({}))
     if (busyOk && r.status === 409 && j.busy) return j
     if (body.kind === 'key' && !r.ok) return { refused: j.error || String(r.status), dialog: j.dialog || null }
+    // A brief's answer refused (its worker gone, the action changed, already
+    // answered): shown under the question, where the press was. A toast in
+    // the corner went by unseen and the 보내기 looked dead (pt2677).
+    if (body.kind === 'brief_answer' && r.status === 409) return { refused: j.error || String(r.status), why: j.refused || '', worker: j.worker || '' }
     if (!r.ok) { toast('✕ ' + (j.error || r.status)); return null }
     return j
   } catch (e) { toast('✕ 못 보냈습니다: ' + e.message); return null }
@@ -780,7 +786,12 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
   // changed since the drawing is refused rather than allowed.
   const seen = label && q.grants && q.grants[label] ? q.grants[label].digest : ''
   const j = await cmdPost({ kind: 'brief_answer', file: p.file, qid: q.id, label, note, text, seen })
-  if (!j) { box?.querySelectorAll('button, input').forEach((b) => { b.disabled = false }); return }
+  if (!j || j.refused) {
+    box?.querySelectorAll('button, input').forEach((b) => { b.disabled = false })
+    if (j) { cmd.refusedQ = { file: p.file, q: q.id, text: cmdAnswerRefused(j) }; cmdRenderDoc() }
+    return
+  }
+  if (cmd.refusedQ && cmd.refusedQ.file === p.file) cmd.refusedQ = null
   toast('✅ ' + (j.sent || label || '직접 답'))
   q.answer = text ? { choice: '직접 답', note: text } : { choice: label, note }
   cmd.armed = null; cmd.q = null
@@ -798,6 +809,15 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
   cmd.data.pending = rest
   commandCount(rest.length)
   tblAfter()
+}
+
+// Why a brief's answer was not recorded, in the person's words, with what
+// still works: their own words need no grant and reach the coordinator.
+function cmdAnswerRefused(j) {
+  if (j.why === 'worker') return '이 전송을 맡을 worker ' + (j.worker || '') + '가 이미 끝나 허가를 줄 수 없습니다. 기록하지 않았습니다 — 「보내지 않음」을 고르거나, 아래 칸에 직접 쓴 답(예: 다시 요청해 줘)을 보내면 coordinator에게 전해집니다'
+  if (/changed since/.test(j.refused)) return '그 사이 이 선택지가 허가하는 내용이 바뀌었습니다. 새로 그린 내용을 보고 다시 누르세요'
+  if (/already answered/.test(j.refused)) return '이미 답한 질문입니다'
+  return j.refused
 }
 
 // Keys while the command view is up (office.html's officeKey asks first).

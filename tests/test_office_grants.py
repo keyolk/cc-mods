@@ -149,6 +149,37 @@ class PressTest(GrantsCase):
         self.assertIn("no live worker", out["error"])
         self.assertEqual(grants.live(), [])
 
+    def test_a_worker_the_ledger_ended_but_still_running_is_the_grantee(self):
+        # pt2677 (2026-11-12): ops-k8s-4a was ended in the ledger at 00:29
+        # while its session ran on; the person's 보내기 was refused and the
+        # coordinator's row stayed in 내 차례. Its newest entry is the one.
+        self.ledger([{"slug": "daily", "sid": OTHER, "relation": "adopted", "at": 1, "endedAt": 2}, {"slug": "daily", "sid": WORKER, "relation": "adopted", "at": 3, "endedAt": 4}])
+        f = self.ask()
+        code, out = command.answer(f, "q1", "보내기", "", self.put, seen=self.drawn(f)["digest"], alive={WORKER, OTHER})
+        self.assertEqual(code, 200, out)
+        [g] = grants.live()
+        self.assertEqual(g["sid"], WORKER)
+        self.assertEqual(self.side(f)["decisions"][0]["answer"]["choice"], "보내기")
+
+    def test_a_worker_ended_and_gone_is_refused_with_why_and_nothing_recorded(self):
+        self.ledger([{"slug": "daily", "sid": WORKER, "relation": "owned", "at": 1, "endedAt": 2}])
+        f = self.ask()
+        for alive in (None, set(), {OTHER}):
+            code, out = command.answer(f, "q1", "보내기", "", self.put, seen=self.drawn(f)["digest"], alive=alive)
+            self.assertEqual((code, out.get("refused"), out.get("worker")), (409, "worker", "daily"))
+        self.assertEqual(grants.live(), [])
+        self.assertIsNone(self.side(f)["decisions"][0]["answer"])
+        self.assertEqual(self.sent, [])
+        # What needs no grant still goes: the other option, or own words.
+        self.assertEqual(command.answer(f, "q1", "", "", self.put, text="다시 요청해 줘")[0], 200)
+        self.assertEqual(self.sent[-1][0], COORD)
+
+    def test_the_office_passes_the_running_sessions_to_the_press(self):
+        f = self.ask()
+        with mock.patch.object(office, "alive_sessions", return_value={WORKER}), mock.patch.object(command, "answer", return_value=(200, {})) as a:
+            office.act({"kind": "brief_answer", "file": f, "qid": "q1", "label": "보내기", "seen": "x"})
+        self.assertEqual(a.call_args.args[-1], {WORKER})
+
     def test_brief_answer_by_the_cli_is_not_a_press(self):
         # `brief answer … --by office` from a session writes the sidecar;
         # only the office's /act handler issues grants.
