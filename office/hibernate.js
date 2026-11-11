@@ -7,9 +7,14 @@
 // - 💤 휴면 N (folded): a row per sleeping session, its summary, when it went
 //   down and how much it gave back, and 깨우기, which resumes it in a new
 //   pane in the same directory (its old window when there is room).
-// - 휴면 후보 N개 · 회수 예상 X GB [모두 내리기]: the list is the server's;
+// - ▸ 휴면 후보 N개 · 회수 예상 X GB [모두 내리기]: the list is the server's;
 //   the press asks once more within 8 s. Under memory pressure the server
-//   puts them to sleep itself (auto "pressure", office.json).
+//   puts them to sleep itself (auto "pressure", office.json). 휴면 후보 N개
+//   unfolds a row per candidate: what it is doing (its summary), how long it
+//   has idled, what it would give back and why it is one (idle, 세션 상한),
+//   with 💤 휴면 (this one, asked once more), 📌 고정 and ↗ 열기 (its pane).
+//   Before, the names were only in the 모두 내리기 tooltip, as pane titles
+//   (`agent`), and the person could not tell which to put down.
 // A picked session's bar gets 💤 (put this one to sleep now, the idle time
 // not needed but every other rule kept) and 📌 (never propose it). A brief
 // recorded on a sleeping session gets 💤 깨우기 in its bar. Loaded before
@@ -23,11 +28,15 @@ const HIB_CSS = `
 #command .hiblist { list-style: none; margin: 0 0 10px; padding: 0; font: 12px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; }
 #command .hiblist li { padding: 3px 6px; border-bottom: 1px dashed rgba(59,42,53,.15); }
 #command .hiblist li .m { color: #7a7090; }
+#command .hiblist.cand li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+#command .hiblist.cand li b { flex: 1 1 12em; font-weight: 600; }
+#command .hiblist button.armed { background: #c0392b; color: #fff; border-color: #c0392b; }
+#command .hibfoot button.cand { border: 0; background: none; padding: 0; margin: 0; text-decoration: underline; color: inherit; font: inherit; }
 #command button.act.hib.on { background: #fff3c4; }
 `
 document.head.appendChild(Object.assign(document.createElement('style'), { textContent: HIB_CSS }))
 
-const hib = { open: false, allArmed: 0, busy: {} }
+const hib = { open: false, candOpen: false, allArmed: 0, oneArmed: null, busy: {} }
 const HIB_CONFIRM_MS = 8000
 const hibData = () => cmd.data?.hibernate || { cards: [], candidates: [], mb: 0, pins: [] }
 const hibCard = (sid) => hibData().cards.find((c) => c.sid === sid)
@@ -46,14 +55,29 @@ function hibFoot() {
     // A candidate the session cap brought in (`why: cap`) is marked: it has
     // rested hours, not half a day, and only a press puts it to sleep.
     const nCap = cands.filter((c) => c.why === 'cap').length
-    parts.push('휴면 후보 ' + cands.length + '개' + (nCap ? ' (세션 상한 ' + nCap + ')' : '') + ' · 회수 예상 ' + hibGB(d.mb || 0) + ' <button data-hib="all" class="' + (armed ? 'armed' : '') + '" title="' + cmdEsc(cands.map((c) => c.name + ' (' + c.idleH + 'h' + (c.why === 'cap' ? ' · 상한' : '') + ')').join(', ')) + '">' + (armed ? '한 번 더: 모두 내리기' : '모두 내리기') + '</button>')
+    parts.push('<button class="cand" data-hib="cands" title="후보 목록 ' + (hib.candOpen ? '접기' : '보기') + '">' + (hib.candOpen ? '▾' : '▸') + ' 휴면 후보 ' + cands.length + '개</button>' + (nCap ? ' (세션 상한 ' + nCap + ')' : '') + ' · 회수 예상 ' + hibGB(d.mb || 0) + ' <button data-hib="all" class="' + (armed ? 'armed' : '') + '" title="' + cmdEsc(cands.map((c) => (c.summary || c.name) + ' (' + c.idleH + 'h' + (c.why === 'cap' ? ' · 상한' : '') + ')').join(', ')) + '">' + (armed ? '한 번 더: 모두 내리기' : '모두 내리기') + '</button>')
   }
   // Over the session cap: how many run, and the cap.
   if (d.cap && d.cap.on) parts.push('<span class="warn">세션 ' + d.cap.live + '/' + d.cap.max + ' (상한 초과)</span>')
   if (d.pressure && d.pressure.on) parts.push('<span class="warn">메모리 압박' + (d.auto === 'off' ? '' : ' · 자동 휴면 켜짐') + '</span>')
   let out = '<div class="hibfoot">' + parts.join(' · ') + '</div>'
+  if (hib.candOpen && cands.length) out += '<ul class="hiblist cand">' + cands.map(hibCandRow).join('') + '</ul>'
   if (hib.open && cs.length) out += '<ul class="hiblist">' + cs.map(hibRow).join('') + '</ul>'
   return out
+}
+
+// A candidate: what it is doing, its idle time, what it gives back and why
+// it is one; 💤 휴면 asks once more (8 s), as 모두 내리기 does.
+function hibCandRow(c) {
+  const armed = hib.oneArmed && hib.oneArmed.sid === c.sid && Date.now() - hib.oneArmed.at < HIB_CONFIRM_MS
+  const busy = hib.busy[c.sid], pinned = hibPinned(c.sid)
+  const why = c.why === 'cap' ? '세션 상한' : 'idle'
+  return '<li><b>' + cmdEsc(c.summary || c.name || c.sid.slice(0, 8)) + '</b>'
+    + (c.summary && c.name && c.summary !== c.name ? '<span class="slug">' + cmdEsc(c.name) + '</span>' : '')
+    + '<span class="m">' + cmdEsc(c.idleH + '시간 idle · ~' + hibGB(c.mb || 0) + ' · ' + why + (c.window ? ' · ' + c.window : '')) + '</span>'
+    + '<span><button data-hib="one" data-sid="' + cmdEsc(c.sid) + '" class="' + (armed ? 'armed' : '') + '"' + (busy ? ' disabled' : '') + ' title="이 세션만 내립니다 (프로세스 종료, 대화는 남음)">' + (busy ? '내리는 중…' : armed ? '한 번 더: 💤 휴면' : '💤 휴면') + '</button>'
+    + '<button data-hib="pin" data-sid="' + cmdEsc(c.sid) + '" title="' + (pinned ? '고정 해제' : '휴면 후보에서 뺍니다') + '">📌 ' + (pinned ? '고정 해제' : '고정') + '</button>'
+    + (c.pane ? '<button data-hib="go" data-pane="' + cmdEsc(c.pane) + '" title="그 pane으로 이동">↗ 열기</button>' : '') + '</span></li>'
 }
 
 function hibRow(c) {
@@ -72,8 +96,50 @@ function hibClick(ev) {
   if (!b) return false
   const what = b.dataset.hib
   if (what === 'fold') { hib.open = !hib.open; cmdRender() } else if (what === 'all') hibAll()
+  else if (what === 'cands') hibCandFold(!hib.candOpen)
+  else if (what === 'one') hibOne(b.dataset.sid)
+  else if (what === 'pin') hibPin(b.dataset.sid)
+  else if (what === 'go') { if (typeof focusPane === 'function') focusPane(b.dataset.pane); toast('↗ ' + b.dataset.pane) }
   else if (what === 'wake') hibWake(b.dataset.sid)
   return true
+}
+
+// The unfolded list is a layer of its own (layers.js): Esc first takes back
+// an armed 💤 휴면, then folds the list, before the 지휘 view's own steps;
+// a layer opened over it (🔑 인증) closes before it.
+function hibCandFold(open) {
+  hib.candOpen = open
+  if (!open) hib.oneArmed = null
+  if (open && typeof layerUp === 'function') {
+    layerUp('hibcands', () => hib.candOpen && cmd.on, () => hibCandFold(false), () => {
+      if (hib.oneArmed && Date.now() - hib.oneArmed.at < HIB_CONFIRM_MS) { hib.oneArmed = null; cmdRender(); return true }
+      return false
+    })
+  }
+  cmdRender()
+}
+
+async function hibOne(sid) {
+  if (!sid || hib.busy[sid]) return
+  if (!(hib.oneArmed && hib.oneArmed.sid === sid && Date.now() - hib.oneArmed.at < HIB_CONFIRM_MS)) {
+    hib.oneArmed = { sid, at: Date.now() }
+    toast('한 번 더 누르면 이 세션을 내립니다')
+    setTimeout(cmdRender, HIB_CONFIRM_MS + 50)
+    return cmdRender()
+  }
+  hib.oneArmed = null
+  hib.busy[sid] = true
+  cmdRender()
+  const j = await cmdPost({ kind: 'hibernate', sid })
+  delete hib.busy[sid]
+  if (j) toast('💤 ' + (j.sent || '휴면'))
+  cmdLoad()
+}
+
+async function hibPin(sid) {
+  const j = await cmdPost({ kind: 'hibernate_pin', sid, on: !hibPinned(sid) })
+  if (j) toast(j.sent)
+  cmdLoad()
 }
 
 async function hibAll() {
