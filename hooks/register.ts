@@ -85,7 +85,7 @@ import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
 import { noteText, sentDigests, userTexts, type NoteBlock } from './lib/notes'
 import { SELF_CHECK_PROMPT, STATUS_DIR, STATUS_TOOL, parseStatus, selfCheckDue, workerOf } from './lib/status'
-import { coordCommand, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
+import { coordCommand, coordGodEnded, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -1097,7 +1097,12 @@ async function applyPolicy($: any, argv: string[], ttlMs?: number, revert?: stri
 // God mode (lib/policy.ts GOD_MS): the policy from before the press, and the
 // timer that puts it back. Kept in the store too, so a reload of the mod
 // still ends it on time.
-let god: { until: number; before: Policy; timer?: { cancel: () => void } } | undefined
+// `coord`: the coordinator's default god (lib/coord.ts coordGodWanted): no
+// end time (until is Infinity in memory, 0 in the store), no question, and
+// no secret-read unlock, since that stamp is machine-wide and would reach
+// the workers too. It ends with /coord off or /god off.
+let god: { until: number; before: Policy; coord?: boolean; timer?: { cancel: () => void } } | undefined
+type GodSaved = { until: number; before: Policy; coord?: boolean }
 
 // `asked`: the person already said so (typed /god), so no second question.
 async function startGod($: any, minutes: number, asked = false) {
@@ -1128,7 +1133,8 @@ async function startGod($: any, minutes: number, asked = false) {
 // it when it started. Still never more than 2 × GOD_MS ahead of now. A
 // capability someone set back meanwhile is allowed again.
 async function extendGod($: any, minutes: number) {
-  if (!god) return
+  // The coordinator's god has no end to move.
+  if (!god || god.coord) return
   const now = Date.now()
   const until = godExtended(god.until, now, minutes)
   const p = (await read($, policyA)) as Policy | null
@@ -1143,16 +1149,47 @@ async function extendGod($: any, minutes: number) {
 }
 
 async function endGod($: any, why: string) {
-  const g = god ?? (((await $.store.get(K.god(sid))) ?? undefined) as { until: number; before: Policy } | undefined)
+  const g = god ?? (((await $.store.get(K.god(sid))) ?? undefined) as GodSaved | undefined)
   god?.timer?.cancel()
   god = undefined
   await $.store.set(K.god(sid), null)
   if (!g) return
-  await runQuiet($, godSecretRevokeArgv(home))
+  if (!g.coord) await runQuiet($, godSecretRevokeArgv(home))
   for (const argv of restoreArgvs(g.before)) await runPolicy($, argv)
   await loadPolicy($)
+  // The person ended the coordinator's god: it stays off until /coord on
+  // again, a reload included (the ledger keeps that).
+  if (g.coord) await coordGodEnded($)
   await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode ended (' + why + '): policy put back' }))
   $.ui.toast('god mode ended (' + why + '): policy put back')
+}
+
+// The coordinator's default god, on: every capability allowed with no end
+// and no question (the person's standing order: a coordinator is god). A god
+// already on keeps its "before"; a timed one loses its end. After a reload
+// the stored one is taken back as it was.
+async function startCoordGod($: any) {
+  const saved = god ?? (((await $.store.get(K.god(sid))) ?? undefined) as GodSaved | undefined)
+  // Read from the file: at session start the policy atom is not loaded yet.
+  const p = await loadPolicy($)
+  const before = saved?.before ?? p
+  god?.timer?.cancel()
+  if (!saved || !isGod(p)) for (const argv of godArgvs()) await runPolicy($, argv)
+  god = { until: Infinity, before, coord: true }
+  await $.store.set(K.god(sid), { until: 0, before, coord: true })
+  await loadPolicy($)
+  if (!saved?.coord) await update($, uiA, (u) => ({ ...u, policyMsg: 'god mode: coordinator default (/god off or /coord off ends it)' }))
+}
+
+// The coordinator's default god, off by /coord off: dropped without putting
+// its "before" back (the caller puts back what it kept); that "before" is
+// returned for when the caller kept nothing.
+async function dropCoordGod($: any): Promise<Policy | undefined> {
+  if (!god?.coord) return undefined
+  const before = god.before
+  god = undefined
+  await $.store.set(K.god(sid), null)
+  return before
 }
 
 // secret_read_guard is not a session_policy capability: god mode lifts it with
@@ -1172,8 +1209,11 @@ async function runQuiet($: any, argv: string[]): Promise<boolean> {
 // After a reload: an unexpired god mode keeps its end time; an expired one
 // is put back now.
 async function resumeGod($: any) {
-  const g = (await $.store.get(K.god(sid))) as { until: number; before: Policy } | undefined
+  // coordStart, which runs first, may have taken it back already.
+  if (god) return
+  const g = (await $.store.get(K.god(sid))) as GodSaved | undefined
   if (!g) return
+  if (g.coord) return void (god = { ...g, until: Infinity })
   if (g.until <= Date.now()) return endGod($, 'time is up')
   god = { ...g, timer: $.clock.after(g.until - Date.now(), () => void endGod($, 'time is up')) }
 }
@@ -3679,8 +3719,11 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         setGodBefore: async (p) => {
           if (!god) return
           god = { ...god, before: p }
-          await $.store.set(K.god(sid), { until: god.until, before: p })
+          await $.store.set(K.god(sid), god.coord ? { until: 0, before: p, coord: true } : { until: god.until, before: p })
         },
+        coordGod: () => !!god?.coord,
+        startCoordGod: () => startCoordGod($),
+        dropCoordGod: () => dropCoordGod($),
         reload: async () => void (await loadPolicy($)),
       },
     }).catch((err: unknown) => $.ui.log('coord: ' + String(err)))
@@ -4664,6 +4707,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     }
     const minutes = parseGodMinutes(arg)
     if (minutes === undefined) return { text: 'usage: /god [15|30|60 | 45m | off]' }
+    if (god?.coord) return { text: '⚡ god mode is on as the coordinator default, with no end · /god off ends it' }
     if (god) await extendGod($, minutes)
     else await startGod($, minutes, true)
     return { text: god ? '⚡ god mode until ' + hhmm(god.until) + ' · /god off ends it' : 'god mode not started' }
@@ -5701,7 +5745,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       onUnscope: (cap: Cap, scope) => void applyPolicy($, ['inherit', cap, cap === 'gh_merge' ? '--repo' : '--scope', scope]),
       labels: await slackLabels($),
       onTimed: (cap: Cap, minutes) => void applyPolicy($, ['allow', cap], minutes * 60_000, ['inherit', cap]),
-      god: god?.until,
+      // A finite number: the coordinator's god has no end (Infinity), and a
+      // view prop may go through JSON.
+      god: god?.coord ? Number.MAX_SAFE_INTEGER : god?.until,
+      godCoord: !!god?.coord,
       onGod: (minutes?: number) => void (minutes && !god ? startGod($, minutes) : endGod($, 'ended by you')),
       onGodExtend: (minutes: number) => void extendGod($, minutes),
       hints: scopeHints(
