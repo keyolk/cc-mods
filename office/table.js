@@ -48,6 +48,7 @@ const TABLE_CSS = `
 #command .relay-bar button { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.45); border-radius: 8px; background: #fff; padding: 1px 8px; cursor: pointer; }
 #command .relay-bar button:disabled { opacity: .45; cursor: default; }
 #command .relay-bar input.relay-code { width: 8.5em; font: 14px ui-monospace, Menlo, monospace; letter-spacing: .12em; padding: 1px 6px; border: 1px solid rgba(59,42,53,.45); border-radius: 6px; }
+#command .relay-off { color: #b3261e; font-weight: 600; margin-top: 3px; }
 #command img.relay-shot { display: block; max-width: 100%; max-height: 220px; margin-top: 5px; border: 1px solid rgba(59,42,53,.25); border-radius: 6px; }
 #command .rtabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 12px 0; border-bottom: 2px solid var(--line); background: #fffaf0; }
 #command .rtabs:empty { display: none; }
@@ -436,11 +437,16 @@ function tblRelayRow(R) {
   const sid = cmdEsc(R.row.sid), shot = tblRelay.shot[R.row.sid], busy = tblRelay.busy[R.row.sid]
   const lookB = st.ask !== 'device' ? '<button data-relay="look" data-sid="' + sid + '" title="' + cmdEsc(st.pane) + ' 화면을 지금 한 장 찍어 봅니다">🖼 ' + (shot ? '다시 보기' : '화면 보기') + '</button>' : ''
   let act = ''
-  if (st.ask === 'otp') act = '<input class="relay-code" data-sid="' + sid + '" autocomplete="one-time-code" inputmode="numeric" maxlength="16" placeholder="인증 코드" aria-label="인증 코드"' + (busy ? ' disabled' : '') + '><button data-relay="otp" data-sid="' + sid + '"' + (busy ? ' disabled' : '') + '>보내기</button>'
-  else if (st.ask === 'click') act = '<button data-relay="click" data-sid="' + sid + '"' + (shot && shot.look && !busy ? '' : ' disabled') + ' title="' + (shot ? cmdEsc(st.target) + ' 누르기' : '먼저 🖼 화면을 보고 누릅니다') + '">👆 ' + cmdEsc(st.target) + ' 누르기</button>'
+  const no = busy || (shot && shot.approved === false)
+  if (st.ask === 'otp') act = '<input class="relay-code" data-sid="' + sid + '" autocomplete="one-time-code" inputmode="numeric" maxlength="16" placeholder="인증 코드" aria-label="인증 코드"' + (no ? ' disabled' : '') + '><button data-relay="otp" data-sid="' + sid + '"' + (no ? ' disabled' : '') + '>보내기</button>'
+  else if (st.ask === 'click') act = '<button data-relay="click" data-sid="' + sid + '"' + (shot && shot.look && !no ? '' : ' disabled') + ' title="' + (shot ? cmdEsc(st.target) + ' 누르기' : '먼저 🖼 화면을 보고 누릅니다') + '">👆 ' + cmdEsc(st.target) + ' 누르기</button>'
   else act = '<span class="m">🔐 passkey·지문은 기기에서 승인하세요.</span> <button data-relay="device" data-sid="' + sid + '">승인했어요</button>'
   const where = '<span class="m">' + cmdEsc(st.pane) + (shot ? ' · ' + cmdEsc(shot.url.replace(/^https?:\/\//, '').slice(0, 60)) : '') + '</span>'
-  const warn = shot && !shot.visible && st.ask !== 'device' ? '<div class="m">⚠ 대상이 지금 화면에 없습니다: ' + cmdEsc(shot.why) + '</div>' : ''
+  // Not an approved site (office.json relay.hosts): the server refuses a code
+  // or a press there, and the row says so before the person types.
+  const off = shot && shot.approved === false
+  const warn = (off ? '<div class="relay-off">⛔ ' + cmdEsc(shot.host || shot.url.split(':')[0] + ':') + ' 은(는) 승인된 사이트가 아니어서 코드·클릭을 보내지 않습니다 <span class="m">office.json relay.hosts</span></div>' : '')
+    + (shot && !shot.visible && st.ask !== 'device' ? '<div class="m">⚠ 대상이 지금 화면에 없습니다: ' + cmdEsc(shot.why) + '</div>' : '')
   const img = shot ? '<img class="relay-shot" alt="' + cmdEsc(st.pane) + ' 화면" src="data:image/png;base64,' + shot.png + '">' : ''
   return '<tr class="relay" data-relay-row="' + sid + '"><td colspan="3"><div class="relay-bar">' + lookB + act + where + '</div>' + warn + img + '</td></tr>'
 }
@@ -463,7 +469,7 @@ async function tblRelayClick(ev) {
   try {
     const j = await cmdPost(body)
     if (what === 'look') {
-      if (j && j.png) tblRelay.shot[sid] = { png: j.png, url: j.url || '', visible: j.visible, why: j.why || '', look: j.look, at: Date.now() }
+      if (j && j.png) tblRelay.shot[sid] = { png: j.png, url: j.url || '', host: j.host || '', approved: j.approved, visible: j.visible, why: j.why || '', look: j.look, at: Date.now() }
     } else if (j && j.ok) {
       toast('✅ ' + (what === 'otp' ? '코드를 보냈습니다' : what === 'click' ? '눌렀습니다' : '알렸습니다'))
       // The look was spent (click) or the page moved on: look again to see.

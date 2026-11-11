@@ -164,12 +164,24 @@ function cmdSwitch() {
   m.innerHTML = '<button data-m="office" class="' + (cmd.on ? '' : 'on') + '">🏢 사무실</button><button data-m="command" class="' + (cmd.on ? 'on' : '') + '">🎖 지휘' + (cmd.pendingN ? ' <b>' + cmd.pendingN + '</b>' : '') + '</button>'
 }
 
+// The 지휘 view's own Esc, before it closes (layers.js step): a trigger's
+// armed choice (slx.js) backs out first, then ⏰ 나중에's choices, then the
+// open row. False: nothing left to back out of, the view closes.
+function cmdEscStep() {
+  if (cmd.sel?.slx && cmd.armed?.slx) { cmd.armed = null; cmdRenderDoc(); return true }
+  if (typeof dfr !== 'undefined' && dfr.armed) { dfr.armed = null; tblRenderTabs(); return true }
+  if (cmd.sel) { cmdShut(); return true }
+  return false
+}
+
 function setCommand(on) {
   // Leaving the view is a close as much as ✕ is: the decisions waiting now
   // do not open their brief again on their own when it is opened next.
   if (cmd.on && !on) { cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|') }
   cmd.on = on
   cmdEl.classList.toggle('on', on)
+  // On the Esc stack (layers.js), with its own steps before it closes.
+  if (on && typeof layerUp === 'function') layerUp('command', () => cmd.on, () => setCommand(false), cmdEscStep)
   try { localStorage.setItem('office.mode', on ? 'command' : 'office') } catch { /* private window: the mode is only not remembered */ }
   cmdSwitch()
   clearTimeout(cmd.timer)
@@ -887,10 +899,10 @@ function commandKey(e, k, typing) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   // ⏰ 나중에's choices, while up, take the digits, Enter and Esc first; Z puts them up.
   if (typeof dfrKey === 'function' && dfrKey(k, hit)) return true
-  // A trigger's armed choice (slx.js) backs out first: 3 and 4 take numbers of their own.
-  if (k === 'Escape' && cmd.sel?.slx && cmd.armed?.slx) return hit(() => { cmd.armed = null; cmdRenderDoc() })
-  if (k === 'Escape' && cmd.sel) return hit(cmdShut)
-  if (k === 'Escape' || k === 'd') return hit(() => setCommand(false))
+  // Esc is the stack's (layers.js: cmdEscStep, then the view closes); a page
+  // without layers.js keeps the steps here.
+  if (k === 'Escape' && typeof layerEsc !== 'function') return hit(() => { if (!cmdEscStep()) setCommand(false) })
+  if (k === 'd') return hit(() => setCommand(false))
   // j/k only: the arrows walk the floor beside the panel.
   if (k === 'j' || k === 'k') return cmdWalk(e, k)
   // Tab / ⇧Tab: the open row's tabs; with none open (or one tab) the floor's.

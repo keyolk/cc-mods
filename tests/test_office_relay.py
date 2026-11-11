@@ -55,6 +55,7 @@ class Relay(unittest.TestCase):
         os.environ["OFFICE_TWEB"] = tw
         self.page("https://github.com/sessions/sudo")
         self.visible("#otp #verify #create")
+        relay.CONFIG = os.path.join(self.d, "office.json")
         relay.STATUS_DIR = os.path.join(self.d, "status")
         os.makedirs(relay.STATUS_DIR)
         relay._looks.clear()
@@ -91,6 +92,32 @@ class Relay(unittest.TestCase):
         self.assertEqual(len(self.told), 1)
         self.assertNotIn(CODE, self.told[0][1])
         self.assertNotIn(CODE, json.dumps(out))
+
+    def test_a_code_or_a_press_goes_only_to_an_approved_host(self):
+        self.status(ask="otp", target="#otp")
+        for url in ("https://evil.example/github.com", "https://github.com.evil.example/x", "http://github.com/x", "file:///tmp/form.html"):
+            self.page(url)
+            code, out = self.act(kind="relay_otp", value=CODE)
+            self.assertEqual(code, 409, url)
+            self.assertIn("not a site approved", out["error"])
+        self.assertFalse([c for c in self.calls() if c["argv"][0] in ("fill", "query")])
+        # A look still shows the page, says it is not approved, and why.
+        code, seen = self.act(kind="relay_look")
+        self.assertEqual((code, seen["approved"]), (200, False))
+        self.assertIn("file:", seen["refused"])
+        self.status(ask="click", target="#create")
+        self.assertEqual(self.act(kind="relay_click", look=self.act(kind="relay_look")[1]["look"])[0], 409)
+        # A subdomain of an approved host is approved; office.json replaces the default.
+        self.page("https://gist.github.com/x")
+        self.status(ask="otp", target="#otp")
+        self.assertEqual(self.act(kind="relay_otp", value=CODE)[0], 200)
+        json.dump({"relay": {"hosts": ["Login.Example.com"]}}, open(relay.CONFIG, "w"))
+        self.assertEqual(self.act(kind="relay_otp", value=CODE)[0], 409)
+        self.page("https://login.example.com/2fa")
+        self.assertEqual(self.act(kind="relay_otp", value=CODE)[0], 200)
+        json.dump({"relay": {"hosts": ["file:"]}}, open(relay.CONFIG, "w"))
+        self.page("file:///tmp/form.html")
+        self.assertEqual(self.act(kind="relay_otp", value=CODE)[0], 200)
 
     def test_without_a_submit_button_the_code_is_sent_with_enter(self):
         self.status(ask="otp", target="#otp")

@@ -20,6 +20,12 @@ is not used). It is never logged, never put in a reply, and never sent to the
 worker: the worker hears only that the person answered, so its transcript
 never holds it. Nothing keeps it after the call.
 
+Which sites. A code or a press goes only to a page whose host the person
+approved: ~/.config/cc-mods/office.json "relay": {"hosts": [...]}, else
+DEFAULT_HOSTS. The worker cannot widen it (its status names the pane, not
+the site): a pane that went to another host, by a redirect or a worker's
+navigate, gets nothing, and the row says which host it is on.
+
 Where it goes is read from the worker's status file, never from the request,
 and only while that pane shows the target: `tweb query` fails on an element
 that is missing or hidden, so a page that moved on (a new screen, a redirect)
@@ -41,6 +47,10 @@ import threading
 import time
 
 STATUS_DIR = os.path.expanduser("~/.claude/state/office/status")
+CONFIG = os.path.expanduser("~/.config/cc-mods/office.json")
+# The sites a code or a press may go to when office.json names none: the
+# login waits workers hit (GitHub sudo, Confirm access, an App's create).
+DEFAULT_HOSTS = ("github.com",)
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
 PANE = re.compile(r"^%\d+$")
 ASKS = ("otp", "click", "device")
@@ -85,6 +95,37 @@ def wait_of(sid: str, now: float | None = None) -> dict | None:
     if at and (now or time.time()) - at > STALE:
         return None
     return {"pane": pane, "ask": ask, "target": str(st.get("target") or ""), "submit": str(st.get("submit") or ""), "needs": str(st.get("needs") or ""), "at": at}
+
+
+def hosts() -> tuple[str, ...]:
+    """The hosts the person approved for a relay (office.json relay.hosts),
+    lower case; a host covers its subdomains. Read on each call: an edit
+    takes effect without a restart."""
+    try:
+        with open(CONFIG) as f:
+            hs = ((json.load(f) or {}).get("relay") or {}).get("hosts")
+    except (OSError, ValueError, AttributeError):
+        hs = None
+    if not isinstance(hs, list):
+        return DEFAULT_HOSTS
+    return tuple(h.strip().lower().lstrip(".") for h in hs if isinstance(h, str) and h.strip())
+
+
+def host_of(url: str) -> str:
+    """The page's host, '' for what has none (file:, data:, about:)."""
+    m = re.match(r"^https://([^/:?#@]+)(?::\d+)?(?:[/?#]|$)", url or "", re.I)
+    return m.group(1).lower() if m else ""
+
+
+def approved(url: str) -> bool:
+    """Whether a page is on a site the person approved: https, and its host
+    one of hosts() or under one. http is never approved; a local file only
+    when relay.hosts lists "file:" (the local test form, never a default)."""
+    h = host_of(url)
+    allowed = hosts()
+    if not h:
+        return "file:" in allowed and (url or "").startswith("file:///")
+    return any(h == a or h.endswith("." + a) for a in allowed)
 
 
 def _run(args: list[str], stdin: str | None = None, timeout: float = 8) -> tuple[int, str, str]:
@@ -142,6 +183,11 @@ def ref_of(pane: str, selector: str) -> tuple[str | None, str]:
     return (str(ref), "") if ref else (None, "not on the page")
 
 
+def off_site(url: str) -> str:
+    h = host_of(url) or (url or "").split(":", 1)[0] + ":"
+    return "the pane is on " + h + ", not a site approved for a relay (" + ", ".join(hosts()) + "; office.json relay.hosts)"
+
+
 def _lock_for(pane: str) -> threading.Lock:
     with _lock:
         return _busy.setdefault(pane, threading.Lock())
@@ -169,7 +215,8 @@ def look(sid: str, w: dict, office_port: int | None) -> tuple[int, dict]:
         for k in [k for k, v in _looks.items() if now - v["at"] > LOOK_TTL]:
             _looks.pop(k, None)
         _looks[nonce] = {"sid": sid, "pane": w["pane"], "url": pg["url"], "at": now}
-    return 200, {"ok": True, "png": png, "url": pg["url"], "title": pg["title"], "ask": w["ask"], "target": w["target"], "visible": not seen, "why": seen, "look": nonce}
+    ok = approved(pg["url"])
+    return 200, {"ok": True, "png": png, "url": pg["url"], "title": pg["title"], "ask": w["ask"], "target": w["target"], "visible": not seen, "why": seen, "look": nonce, "host": host_of(pg["url"]), "approved": ok, **({} if ok else {"refused": off_site(pg["url"])})}
 
 
 def otp(sid: str, w: dict, value, office_port: int | None, tell) -> tuple[int, dict]:
@@ -178,8 +225,11 @@ def otp(sid: str, w: dict, value, office_port: int | None, tell) -> tuple[int, d
     code = str(value or "").strip()
     if not CODE.match(code):
         return 400, {"error": "a code is 4 to 16 letters or digits"}
-    if not page(w["pane"], office_port):
+    pg = page(w["pane"], office_port)
+    if not pg:
         return 409, {"error": "pane " + w["pane"] + " is not a browser pane now"}
+    if not approved(pg["url"]):
+        return 409, {"error": off_site(pg["url"]), "host": host_of(pg["url"])}
     lk = _lock_for(w["pane"])
     if not lk.acquire(blocking=False):
         return 409, {"error": "a relay to this pane is running"}
@@ -187,6 +237,10 @@ def otp(sid: str, w: dict, value, office_port: int | None, tell) -> tuple[int, d
         ref, why = ref_of(w["pane"], w["target"])
         if not ref:
             return 409, {"error": "the code input is not on its screen now (" + why + ")"}
+        # The page may have moved between the check and the fill: look again.
+        pg2 = page(w["pane"], office_port)
+        if not pg2 or pg2["url"] != pg["url"]:
+            return 409, {"error": "the pane moved to another page: look again"}
         rc, out, err = _run(["fill", ref, "--stdin", "--pane", w["pane"], "--json"], stdin=code)
         if rc:
             return 502, {"error": "fill failed: " + _err(err or out)}
@@ -215,6 +269,8 @@ def click(sid: str, w: dict, nonce, office_port: int | None, tell) -> tuple[int,
     pg = page(w["pane"], office_port)
     if not pg or pg["url"] != seen["url"]:
         return 409, {"error": "the pane moved to another page since you looked: look again", "relook": True}
+    if not approved(pg["url"]):
+        return 409, {"error": off_site(pg["url"]), "host": host_of(pg["url"])}
     lk = _lock_for(w["pane"])
     if not lk.acquire(blocking=False):
         return 409, {"error": "a relay to this pane is running"}

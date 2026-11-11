@@ -51,7 +51,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py", "hibernate.py", "hibproc.py", "hibstate.py", "hibwake.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py", "hibernate.py", "hibproc.py", "hibstate.py", "hibwake.py", "relay.py")
 
 
 def code_stamp() -> str:
@@ -59,7 +59,7 @@ def code_stamp() -> str:
 
 
 STAMP = code_stamp()
-PAGE_FILES = ("office.html", "brands.js", "skins.js", "resources.js", "auth.js", "review.js", "crew.js", "look.js", "briefline.js", "slx.js", "table.js", "defer.js", "command.js", "paths.js", "hibernate.js", "agenda.js")
+PAGE_FILES = ("office.html", "layers.js", "brands.js", "skins.js", "resources.js", "auth.js", "review.js", "crew.js", "look.js", "briefline.js", "slx.js", "table.js", "defer.js", "command.js", "paths.js", "hibernate.js", "agenda.js")
 
 
 def page_stamp() -> str:
@@ -2206,7 +2206,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js", "/hibernate.js", "/agenda.js"):
+        if self.path in ("/layers.js", "/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js", "/hibernate.js", "/agenda.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")
