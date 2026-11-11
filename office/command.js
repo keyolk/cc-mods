@@ -244,6 +244,7 @@ function cmdRender() {
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="rtabs"></div><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
+    if (typeof tblRelayKey === 'function') cmdEl.querySelector('.list').onkeydown = tblRelayKey
     // A module the page failed to load (see the module guard in office.html)
     // leaves its names undefined: skip that part, and draw the rest.
     if (typeof cmdBriefClick === 'function') cmdEl.querySelector('.briefs').onclick = cmdBriefClick
@@ -251,11 +252,15 @@ function cmdRender() {
   }
   // The table scrolls on its own: a redraw keeps where it was.
   const list = cmdEl.querySelector('.list'), keep = list.scrollTop, keepT = list.querySelector('.tblwrap')?.scrollTop || 0
+  // A code half typed in a relay box (table.js) survives the 3 s redraw.
+  const codes = {}, codeAt = document.activeElement?.matches?.('input.relay-code') ? document.activeElement.dataset.sid : null
+  list.querySelectorAll('input.relay-code').forEach((i) => { if (i.value) codes[i.dataset.sid] = i.value })
   // The slx line under the table: what is hidden, what runs, the bulk choices.
   list.innerHTML = (typeof tblHtml === 'function' ? tblHtml() : '<div class="empty">table.js 를 불러오지 못했습니다. 곧 다시 불러옵니다.</div>') + (cmdHib() ? hibFoot() : '') + (cmdSlx() ? slxFoot() : '') + (typeof doneFoot === 'function' ? doneFoot() : '')
   list.scrollTop = keep
   const wrap = list.querySelector('.tblwrap')
   if (wrap) wrap.scrollTop = keepT
+  list.querySelectorAll('input.relay-code').forEach((i) => { if (codes[i.dataset.sid]) i.value = codes[i.dataset.sid]; if (i.dataset.sid === codeAt) i.focus() })
   if (typeof cmdRenderBriefs === 'function') cmdRenderBriefs()
   if (cmdAgenda()) agRenderLine()
   cmdRenderSay()
@@ -279,6 +284,9 @@ function cmdFold(which) {
 }
 
 function cmdClick(ev) {
+  if (typeof tblRelayClick === 'function' && ev.target.closest('button[data-relay]')) return void tblRelayClick(ev)
+  // The code box is typing, not a press on its row.
+  if (ev.target.closest('tr.relay')) return
   if (typeof doneClick === 'function' && doneClick(ev)) return
   if (cmdSlx() && slxClick(ev)) return
   if (cmdHib() && hibClick(ev)) return

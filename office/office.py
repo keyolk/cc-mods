@@ -44,6 +44,7 @@ import paths  # noqa: E402 - office/paths.py, which files the office may show
 import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes and a worker redeems
 import hibernate  # noqa: E402 - office/hibernate.py, long-idle sessions put to sleep and woken
 import agenda  # noqa: E402 - office/agenda.py, the person's meetings (gcl) and who is in them
+import relay  # noqa: E402 - office/relay.py, a worker's login wait answered from the office
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
@@ -1698,6 +1699,10 @@ def act(body: dict) -> tuple[int, dict]:
     if kind in hibernate.KINDS:
         # The card keeps the session's newest brief, so the brief can wake it.
         return hibernate.act(body, snapshot(), inbox_put, brief=lambda s: command.latest_by_session().get(s))
+    if kind in relay.KINDS:
+        # A 2FA code rides in this body only: relay.act hands it to tweb on
+        # stdin and tells the worker that it was sent, never what it was.
+        return relay.act(body, inbox_put, office_port=PORT["n"])
     if kind == "memo_send":
         return memo_send(body)
     if kind in defer.KINDS:
@@ -2072,6 +2077,8 @@ def _mem_watch() -> None:
 
 # `prefix O` (tmux) bumps this; the page sees the bump and opens the next one.
 NEXT = {"n": 1}
+# The port this office serves on: relay.py never drives a pane showing it.
+PORT = {"n": None}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2216,6 +2223,7 @@ def main():
     grants.close_leftovers()
     threading.Thread(target=_mem_watch, name="mem-watch", daemon=True).start()
     hibernate.start(snapshot, brief=lambda s: command.latest_by_session().get(s))  # memory-pressure sleep (office.json hibernate.auto)
+    PORT["n"] = port
     srv = OfficeServer(("127.0.0.1", port), Handler)
     print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
     srv.serve_forever()
