@@ -5,6 +5,7 @@
 // `gh pr view` / `gh pr checks` calls that showed up ~1,300 times in a month
 // of transcripts. The result lands in $.store so every session shares it.
 
+import { ghAccountFor } from './org'
 import { iacDetail, iacKind, iacLine, iacState, parseArgoDiff, parseCodex, type IacState } from './iac'
 
 export type PrRef = { repo: string; number: number }
@@ -211,6 +212,37 @@ export function repoFromRemote(url: string): string | undefined {
 // Explicit `--repo owner/name` / `-R owner/name` in a gh command line.
 export function repoFromGh(command: string): string | undefined {
   return /(?:--repo|-R)[ =]([\w.-]+\/[\w.-]+)/.exec(command)?.[1] ?? /github\.com\/([\w.-]+\/[\w.-]+)\/(?:pull|issues)\//.exec(command)?.[1]
+}
+
+// A Bash `gh` call that must run as another login than gh's active one: the
+// login org.json maps the target repo's owner to (the -R/URL repo, else the
+// session's), and the command to run instead, with that login's token in
+// front. Undefined when the call names its own GH_TOKEN, is `gh auth`, needs
+// no token (--version, help), or the owner maps to no login.
+//
+// The guard refuses such a call and hands this command back for the model to
+// run itself; it does not rewrite the call. Observed in auto mode: with the
+// old rewrite, `gh --version` and `gh api user` reached the classifier as
+// `GH_TOKEN="$(gh auth token --user keyolk)" gh ...` and were refused as
+// [Credential Exploration] (workers stopped at a permission prompt), while the
+// same prefixed command written by the model ran with no prompt.
+export function ghAsAccount(command: string, sessionRepo: string | undefined): { account: string; prefix: string; rerun: string } | undefined {
+  if (!/^\s*(\w+=\S+\s+)*gh\s/.test(command) || /\bGH_TOKEN=/.test(command) || /\bgh\s+auth\b/.test(command)) return undefined
+  if (/^\s*(\w+=\S+\s+)*gh\s+(--version|version|help|--help)\b/.test(command)) return undefined
+  const account = ghAccountFor(repoFromGh(command) ?? sessionRepo)
+  if (!account) return undefined
+  const prefix = 'GH_TOKEN="$(gh auth token --user ' + account + ')" '
+  return { account, prefix, rerun: prefix + command.trimStart() }
+}
+
+// What the model reads when ghAsAccount refuses a call: the whole command to
+// run when it is short, only the prefix for a long or multi-line one (a
+// `gh pr create` with its body would be echoed back in full).
+export function ghAsAccountDeny(need: { account: string; prefix: string; rerun: string }): string {
+  const head = 'This repo\'s owner maps to the gh login ' + need.account + ' (org.json). Run the same command again with its token in front'
+  const tail = '\n(cc-mods does not add the token itself: auto mode refused calls the hook had rewritten that way.)'
+  if (need.rerun.length <= 300 && !need.rerun.includes('\n')) return head + ', exactly:\n' + need.rerun + tail
+  return head + ': put this before `gh`, the rest unchanged:\n' + need.prefix.trimEnd() + tail
 }
 
 // The lines of a GitOps PR's comments that the ArgoDiff and Codex summaries

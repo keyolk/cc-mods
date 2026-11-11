@@ -24,7 +24,7 @@ import { WEB_ANCHOR, engineForUrl, engineOfTarget, parseEngine, parseEngineRules
 import { isKnownTime, parseStamps, rebuild, transcriptPath } from '../hooks/lib/backfill'
 import { agentFlow, flowOf, paragraphs } from '../hooks/lib/flow'
 import { CAPS, GOD_MS, badge, godArgvs, godExtended, isGod, parseGodMinutes, hintsFromBlock, hintsFromCommand, isProdContext, isSelfGrant, parseChannelSearch, parsePolicy, parsePolicyArgs, parseUserSearch, scopeHints, slackTargetKind } from '../hooks/lib/policy'
-import { checkVerdict, ghAccountFor, gitopsFromComments, graphqlQuery, needLabel, needsAttention, parseGraphql, prLine, repoFromGh, repoFromRemote } from '../hooks/lib/prs'
+import { checkVerdict, ghAccountFor, ghAsAccount, ghAsAccountDeny, gitopsFromComments, graphqlQuery, needLabel, needsAttention, parseGraphql, prLine, repoFromGh, repoFromRemote } from '../hooks/lib/prs'
 import { answerFiles, dropUnsourcedTickets, IN_ANSWER, isMade, mergeOutputs, outputKeysToDrop, slackOutputs, textOutputs, ticketOutputs, toolOutputs } from '../hooks/lib/record'
 import { clientItems, navItems, navTarget, skipHidden } from '../hooks/lib/nav'
 import { RESUME_SPREAD_MS, classify, decide as resumeDecide, slept } from '../hooks/lib/resume'
@@ -229,6 +229,37 @@ test('prs: graphql round trip, attention, account mapping', async () => {
   expect(repoFromRemote('https://github.com/acme/infra-k8s')).toBe('acme/infra-k8s')
   expect(repoFromGh('gh pr view 3 --repo keyolk/twm')).toBe('keyolk/twm')
   expect(repoFromGh('gh pr view https://github.com/acme/proxy/pull/24')).toBe('acme/proxy')
+})
+
+test('prs: a gh call for a mapped owner is handed back with the token in front, never rewritten', () => {
+  const tok = (a: string) => 'GH_TOKEN="$(gh auth token --user ' + a + ')" '
+  // The -R repo wins over the session's; a URL names one too.
+  expect(ghAsAccount('gh pr view 1 -R keyolk/cc-mods --json state', 'acme/infra-k8s')).toEqual({ account: 'keyolk', prefix: tok('keyolk'), rerun: tok('keyolk') + 'gh pr view 1 -R keyolk/cc-mods --json state' })
+  expect(ghAsAccount('gh pr view https://github.com/acme/proxy/pull/24', undefined)?.account).toBe('work-login')
+  // No repo on the line: the session's.
+  expect(ghAsAccount('gh pr create --fill', 'keyolk/cc-mods')?.rerun).toBe(tok('keyolk') + 'gh pr create --fill')
+  expect(ghAsAccount('  FOO=1 gh pr list', 'keyolk/cc-mods')?.rerun).toBe(tok('keyolk') + 'FOO=1 gh pr list')
+  // Left alone: an owner with no login, its own token, gh auth, no token needed, not gh.
+  for (const [c, r] of [
+    ['gh pr view 1 -R torvalds/linux', 'keyolk/cc-mods'],
+    ['gh pr view 1', undefined],
+    [tok('keyolk') + 'gh pr view 1', 'keyolk/cc-mods'],
+    ['GH_TOKEN=x gh api user', 'keyolk/cc-mods'],
+    ['gh auth token --user keyolk', 'keyolk/cc-mods'],
+    ['gh --version', 'keyolk/cc-mods'],
+    ['gh help pr', 'keyolk/cc-mods'],
+    ['git log | head', 'keyolk/cc-mods'],
+    ['echo gh pr view 1', 'keyolk/cc-mods'],
+  ] as const) expect(ghAsAccount(c, r)).toBeUndefined()
+  // What the model reads: the exact command to run, and why it is not done for it.
+  const deny = ghAsAccountDeny(ghAsAccount('gh pr view 1 -R keyolk/cc-mods', undefined)!)
+  expect(deny).toContain('\n' + tok('keyolk') + 'gh pr view 1 -R keyolk/cc-mods\n')
+  expect(deny).toContain('auto mode')
+  // A long or multi-line command is not echoed back: only the prefix to put before gh.
+  const body = 'gh pr create -R keyolk/cc-mods --title t --body "$(cat <<\'EOF\'\n' + 'line\n'.repeat(80) + 'EOF\n)"'
+  const long = ghAsAccountDeny(ghAsAccount(body, undefined)!)
+  expect(long).toContain('\n' + tok('keyolk').trimEnd() + '\n')
+  expect(long).not.toContain('line\nline')
 })
 
 test('autocomplete: stacks never mix, flags narrow the source', async () => {
