@@ -86,3 +86,27 @@ class LayersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommandStepTest(unittest.TestCase):
+    """command.js cmdEscStep: the 지휘 view's own Esc steps, in order."""
+
+    def test_a_brief_from_the_library_goes_back_to_it_then_the_library_closes_then_the_view(self):
+        src = (HERE / "command.js").read_text()
+        fn = re.search(r"function cmdEscStep\(\) \{.*?\n\}", src, re.S).group(0)
+        js = textwrap.dedent("""
+            const cmd = { sel: { file: 'a.html', fromLib: true }, armed: null }, dfr = { armed: null }, seen = []
+            const cmdRender = () => seen.push('render'), cmdRenderDoc = () => {}, tblRenderTabs = () => {}
+            const cmdShut = () => { cmd.sel = null; seen.push('shut') }
+        """) + fn + textwrap.dedent("""
+            const out = []
+            out.push([cmdEscStep(), JSON.stringify(cmd.sel)])
+            out.push([cmdEscStep(), JSON.stringify(cmd.sel)])
+            out.push([cmdEscStep(), JSON.stringify(cmd.sel)])
+            dfr.armed = { key: 'k' }; cmd.sel = { sid: 's' }
+            out.push([cmdEscStep(), JSON.stringify(cmd.sel), dfr.armed])
+            console.log(JSON.stringify(out))
+        """)
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), [[True, '{"library":true}'], [True, "null"], [False, "null"], [True, '{"sid":"s"}', None]])

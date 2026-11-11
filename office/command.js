@@ -165,11 +165,13 @@ function cmdSwitch() {
 }
 
 // The 지휘 view's own Esc, before it closes (layers.js step): a trigger's
-// armed choice (slx.js) backs out first, then ⏰ 나중에's choices, then the
-// open row. False: nothing left to back out of, the view closes.
+// armed choice (slx.js) backs out first, then ⏰ 나중에's choices, then a
+// brief opened from 📚 전체 브리프 goes back to 📚 (its ← 📚), then the open
+// row or 📚 itself. False: nothing left to back out of, the view closes.
 function cmdEscStep() {
   if (cmd.sel?.slx && cmd.armed?.slx) { cmd.armed = null; cmdRenderDoc(); return true }
   if (typeof dfr !== 'undefined' && dfr.armed) { dfr.armed = null; tblRenderTabs(); return true }
+  if (cmd.sel?.fromLib) { cmd.sel = { library: true }; cmd.armed = null; cmd.q = null; cmdRender(); return true }
   if (cmd.sel) { cmdShut(); return true }
   return false
 }
