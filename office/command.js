@@ -882,6 +882,8 @@ function commandKey(e, k, typing) {
   if (k === 'x' && (e.altKey || !typing) && cmd.on && cmd.sel?.sid && typeof crewEnd === 'function' && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); crewEnd(cmd.sel); return true }
   // A (⌥A from a box): the day (agenda.js) opens beside the panel, and closes.
   if (k === 'a' && (e.altKey || !typing) && cmd.on && cmdAgenda() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); agToggle(); return true }
+  // / in 📚 전체 브리프 (briefline.js): to its search box, as on ~/briefs/index.html.
+  if (k === '/' && !typing && cmd.on && !cardUp && typeof blibSlash === 'function' && blibSlash(e)) return true
   // b (⌥B from anywhere, a box included) through the brief line.
   if (k === 'b' && (e.altKey || !typing) && cmd.on && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) return cmdBriefWalk(e)
   if (/^[1-9]$/.test(k) && e.altKey && cmd.on && cmdCardUp() && !cardUp && !(typeof viewer !== 'undefined' && viewer.path)) { e.preventDefault(); cmd.card.selectTab(+k - 1); return true }

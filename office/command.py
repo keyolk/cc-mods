@@ -280,27 +280,78 @@ def hib_named(hib: dict, people: list[dict]) -> dict:
 LIB_MAX = 400  # the 📚 list: every brief there is (~300 today), at most this many
 
 
+_no_list: dict = {"until": 0.0}
+LIB_STATES = ("pending", "done", "answered", "read")
+
+
 def library() -> dict:
-    """Every brief for the 📚 전체 브리프 panel, newest first (the date in its
-    name, then its last change): its title, and where it stands: `pending`
-    (a question open), `done` (`brief done`, with its result), `answered`
-    (every question answered, not marked done) or `read` (asks nothing).
-    A brief with no sidecar is listed too: ~/briefs/index.html lists them."""
+    """Every brief for the 📚 전체 브리프 panel, newest first: what `brief list
+    --json` (keyolk/briefs bin/brief.py) gives, the records ~/briefs/index.html
+    is made of, so the panel and the index filter by one rule (title, topic,
+    state, the search text). Each: `state` pending (a question open, `ask`),
+    done (`brief done`, `result`), answered or read (asks nothing).
+    A CLI from before `list` (or none): read here, the same fields."""
+    rows = _cli_list()
+    if rows is None:
+        rows = _own_list()
+    for r in rows:
+        r["path"] = os.path.join(root(), r["file"])
+    topics: dict[str, int] = {}
+    for r in rows:
+        topics[r["topic"]] = topics.get(r["topic"], 0) + 1
+    counts = {k: sum(1 for r in rows if r["state"] == k) for k in LIB_STATES}
+    return {"at": time.time(), "total": len(rows), "counts": counts, "topics": sorted(topics.items(), key=lambda kv: (-kv[1], kv[0])), "items": rows[:LIB_MAX]}
+
+
+def _cli_list() -> list[dict] | None:
+    if time.time() < _no_list["until"]:
+        return None
+    r = _cli(["list", "--json"])
+    if not r or r.returncode != 0:
+        if r and "invalid choice" in r.stderr:
+            _no_list["until"] = time.time() + NO_CLI_TTL
+        return None
+    try:
+        items = json.loads(r.stdout).get("items")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(items, list):
+        return None
+    keep = ("file", "date", "title", "desc", "topic", "state", "ask", "result", "search")
+    return [{k: it.get(k) for k in keep} for it in items if isinstance(it, dict) and NAME.match(str(it.get("file") or "")) and it.get("state") in LIB_STATES]
+
+
+def _meta(head: str, name: str) -> str:
+    m = re.search(r'<meta\s+name="' + re.escape(name) + r'"\s+content="([^"]*)"', head)
+    return html.unescape(m.group(1)) if m else ""
+
+
+def _own_list() -> list[dict]:
+    """`brief list --json`'s records, read here (no CLI, or one from before it)."""
     rows = []
     sides = {b["file"]: b for b in briefs()}
     for path in glob.glob(os.path.join(root(), "*.html")):
         file = os.path.basename(path)
         if not NAME.match(file):
             continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                head = f.read(8192)
+        except OSError:
+            head = ""
         b = sides.get(file)
         qs = b["questions"] if b else []
         done = b["done"] if b else None
         state = "pending" if _open(qs) else "done" if done else "answered" if qs else "read"
-        rows.append({"file": file, "path": path, "title": title(file), "date": file[:10], "at": _mtime(path), "state": state,
-                     "result": done["result"] if done else None, "ask": next((q["question"] for q in _open(qs)), None)})
-    rows.sort(key=lambda r: (r["date"], r["at"]), reverse=True)
-    counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("pending", "done", "answered", "read")}
-    return {"at": time.time(), "total": len(rows), "counts": counts, "items": rows[:LIB_MAX]}
+        t, desc, topic = title(file), _meta(head, "description"), _meta(head, "brief:topic") or "기타"
+        rows.append({"file": file, "date": file[:10], "title": t, "desc": desc, "topic": topic, "state": state,
+                     "ask": next((q["question"] for q in _open(qs)), None), "result": done["result"] if done else None,
+                     "search": " ".join([t, desc, topic, "결정 대기" if state == "pending" else "", "완료" if done else "", done["result"] if done else ""] + (b["sessions"] if b else [])).lower(),
+                     "_at": _mtime(path)})
+    rows.sort(key=lambda r: (r["date"], r["_at"]), reverse=True)
+    for r in rows:
+        del r["_at"]
+    return rows
 
 
 def latest_by_session() -> dict[str, dict]:

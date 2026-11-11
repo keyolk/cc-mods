@@ -551,7 +551,10 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual((d["result"], d["by"], d["old"], d.get("auto")), ("load 원인은 fork 폭주", "w", False, True))
         self.assertNotIn(busy, [d["file"] for d in v["done"]])
 
-    def test_the_done_group_is_drawn_with_copy_and_a_fold(self):
+    def test_recent_done_is_the_newest_three_of_the_day_one_line_each(self):
+        # "최근 완료가 너무 길어서 불편하다": 13 rows of three lines. Now the
+        # newest three done in the last day, title and result on one line; the
+        # rest in 📚 on its 완료 filter. Links and undo live on the brief's banner.
         js = pathlib.Path(__file__).parents[1] / "office" / "briefline.js"
         prog = textwrap.dedent(r"""
             const vm = require('vm'), fs = require('fs')
@@ -560,25 +563,31 @@ class SayAndViewTest(BriefsCase):
               cmdEsc: (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]), cmdAgo: () => '1시간 전', cmd: {} }
             vm.createContext(ctx)
             vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + `
-              cmd.data = { done: [
-                { file: 'a.html', path: '/b/a.html', title: 'A', at: '2026-11-11T09:39Z', result: '결과 <b>', links: ['https://x/pull/1'], revert: 'git revert 1', old: false, by: 'w' },
-                { file: 'o.html', path: '/b/o.html', title: 'O', at: '2026-11-01T09:39Z', result: '옛것', links: [], old: true } ] }
-              var h1 = doneFoot(); briefDone.open = true; var h2 = doneFoot()
+              var mk = (i, old) => ({ file: i + '.html', path: '/b/' + i + '.html', title: 'T' + i, at: '2026-11-11T09:39Z', result: i === 0 ? '결과 <b>' : 'R' + i, links: ['https://x/pull/1'], revert: 'git revert 1', old })
+              cmd.data = { done: [mk(0, false), mk(1, false), mk(2, false), mk(3, false), mk(4, true)] }
+              var h1 = doneFoot()
+              var renders = 0; cmdRender = () => { renders++ }
+              var took = doneClick({ target: { closest: (q) => (q === '[data-dall]' ? {} : null) } })
+              var after = [JSON.stringify(cmd.sel), blib.only, renders]
+              cmd.data = { done: [mk(9, true)] }; var h2 = doneFoot()
               cmd.data = { done: [] }; var h3 = doneFoot()
             `, ctx)
-            console.log(JSON.stringify({ h1: ctx.h1, h2: ctx.h2, h3: ctx.h3 }))
+            console.log(JSON.stringify({ h1: ctx.h1, h2: ctx.h2, h3: ctx.h3, took: ctx.took, after: ctx.after }))
         """)
         r = subprocess.run(["node", "-e", prog, str(js)], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         j = json.loads(r.stdout)
         self.assertIn("✅ 최근 완료", j["h1"])
-        self.assertIn("결과 &lt;b&gt;", j["h1"])
-        self.assertIn('data-drevert="git revert 1"', j["h1"])
-        self.assertIn('data-dlink="https://x/pull/1"', j["h1"])
-        self.assertNotIn("옛것", j["h1"])  # a day old: folded
-        self.assertIn("24시간 지난 완료 1", j["h1"])
-        self.assertIn("옛것", j["h2"])
-        self.assertEqual(j["h3"], "")
+        self.assertIn("24시간 4", j["h1"])
+        self.assertEqual(re.findall(r'<span class="t">(T\d)</span><span class="r">([^<]*)</span>', j["h1"]), [("T0", "결과 &lt;b&gt;"), ("T1", "R1"), ("T2", "R2")])
+        self.assertNotIn("T3", j["h1"])
+        self.assertNotIn("T4", j["h1"])  # a day old: not in this list at all
+        self.assertNotIn("drevert", j["h1"])
+        self.assertIn('data-dall="1"', j["h1"])
+        self.assertIn("완료 5개 모두", j["h1"])
+        self.assertEqual((j["took"], j["after"]), (True, ['{"library":true}', "done", 1]))
+        # Only old ones, or none: no section.
+        self.assertEqual((j["h2"], j["h3"]), ("", ""))
 
     def test_the_box_says_when_it_sent_and_the_view_carries_where_tasks_went(self):
         # The box's task is the coordinator's to place; the view finds where it
@@ -682,6 +691,26 @@ class SayAndViewTest(BriefsCase):
             got = command.hib_named(hib, [{"id": WORKER, "cwd": "/w/x"}])
         self.assertEqual([c["summary"] for c in got["candidates"]], ["Dynamic cell 준비", None])
         self.assertNotIn("summary", hib["candidates"][0])
+
+    def test_the_library_is_the_briefs_cli_list_when_it_has_one(self):
+        # One record per brief for ~/briefs/index.html and 📚: `brief list --json`.
+        self.brief("2026-11-08-a", {"coordinator": COORD}, title="옛 결정")
+        out = json.dumps({"total": 2, "items": [
+            {"file": "2026-11-08-a.html", "date": "2026-11-08", "title": "옛 결정", "desc": "d", "topic": "결정", "state": "pending", "ask": "어느 쪽?", "result": None, "search": "옛 결정 결정 결정 대기"},
+            {"file": "../escape.html", "date": "x", "title": "x", "topic": "x", "state": "read", "search": ""}]}, ensure_ascii=False)
+        command._no_list["until"] = 0.0
+        with mock.patch.object(command, "_cli", return_value=subprocess.CompletedProcess([], 0, out, "")):
+            d = command.library()
+        self.assertEqual([(b["file"], b["topic"], b["state"], b["ask"]) for b in d["items"]], [("2026-11-08-a.html", "결정", "pending", "어느 쪽?")])
+        self.assertEqual((d["total"], d["topics"], d["counts"]["pending"]), (1, [("결정", 1)], 1))
+        self.assertEqual(d["items"][0]["path"], os.path.join(command.root(), "2026-11-08-a.html"))
+        # A CLI from before `list`: read here, the same fields, and not asked again for a while.
+        with mock.patch.object(command, "_cli", return_value=subprocess.CompletedProcess([], 2, "", "invalid choice: 'list'")) as cli:
+            d = command.library()
+            command.library()
+        self.assertEqual(cli.call_count, 1)
+        self.assertEqual((d["items"][0]["topic"], d["items"][0]["state"]), ("기타", "pending"))
+        self.assertIn("옛 결정", d["items"][0]["search"])
 
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
@@ -1329,7 +1358,8 @@ class CommandKeysTest(unittest.TestCase):
 
     def test_the_brief_line_has_no_fold_toggle_and_its_library_button_opens_every_brief(self):
         # The person: the line's 전체/접기 meant nothing (three more chips on a
-        # line that scrolls sideways); every brief needed a way in.
+        # line that scrolls sideways); every brief needed a way in, laid out and
+        # filtered as ~/briefs/index.html is.
         got = self.run_js("""
             const recent = Array.from({ length: 8 }, (_, i) => ({ file: 'f' + i + '.html', path: '/b/f' + i + '.html', title: 'T' + i, pending: i === 0, done: i === 1 }))
             cmd.data = { pending: [], coordinators: [], recent }
@@ -1338,22 +1368,30 @@ class CommandKeysTest(unittest.TestCase):
             const line = { scrollLeft: 0, clientWidth: 300, dataset: {}, querySelector: () => null, set innerHTML(v) { html = v }, get innerHTML() { return html } }
             const q0 = cmdEl.querySelector
             cmdEl.querySelector = (q) => (q === '.briefs' ? line : q0.call(cmdEl, q))
-            blib.data = { total: 3, counts: { pending: 1, done: 1, answered: 0, read: 1 }, items: [
-              { file: 'a.html', path: '/b/a.html', title: '결정 하나', date: '2026-11-12', state: 'pending', ask: '어느 쪽?' },
-              { file: 'b.html', path: '/b/b.html', title: '끝난 일', date: '2026-11-12', state: 'done', result: 'merge 완료' },
-              { file: 'c.html', path: '/b/c.html', title: '조사 메모', date: '2026-11-10', state: 'read' }] }
+            const today = new Date(), iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+            const t0 = iso(today), t1 = iso(new Date(today.getTime() - 86400000))
+            blib.data = { total: 3, counts: { pending: 1, done: 1, answered: 0, read: 1 }, topics: [['결정', 2], ['인프라', 1]], items: [
+              { file: 'a.html', path: '/b/a.html', title: '결정 하나', date: t0, state: 'pending', topic: '결정', ask: '어느 쪽?', search: '결정 하나 결정 결정 대기' },
+              { file: 'b.html', path: '/b/b.html', title: '끝난 일', date: t0, state: 'done', topic: '결정', result: 'merge 완료', search: '끝난 일 결정 완료 merge 완료' },
+              { file: 'c.html', path: '/b/c.html', title: '조사 메모', date: t1, state: 'read', topic: '인프라', desc: '노드 메모리', search: '조사 메모 노드 메모리 인프라' }] }
             cmdRenderBriefs()
             const chips = (html.match(/data-brief=/g) || []).length
             cmdBriefClick({ target: { closest: () => ({ dataset: { lib: '1' } }) } })
             const opened = JSON.stringify(cmd.sel), about = cmdAbout()
-            const all = blibHtml()
-            blib.only = 'done'; const done = blibHtml(); blib.only = ''
-            blib.q = '조사'; const found = blibHtml(); blib.q = ''
+            const n = (h) => (h.match(/data-lbrief=/g) || []).length
+            const all = blibHtml(), facets = blibFacets()
+            blib.topic = '결정'; const decided = n(blibHtml()), facetsOn = blibFacets(); blib.topic = ''
+            blib.only = 'done'; const done = n(blibHtml()); blib.only = ''
+            blib.q = '메모리'; const found = n(blibHtml()); blib.q = ''
+            blib.q = 'zzz'; const none = blibHtml(); blib.q = ''
             blibClick({ target: { closest: (q) => (q === '[data-lbrief]' ? { dataset: { lbrief: '/b/b.html', title: '끝난 일' } } : null) } })
-            return [/전체 8|접기|data-all/.test(html), /📚 전체 브리프 3/.test(html), chips, opened, (all.match(/data-lbrief=/g) || []).length, /2026-11-10/.test(all), all.includes('❓ 어느 쪽?'), /merge 완료/.test(all),
-              (done.match(/data-lbrief=/g) || []).length, (found.match(/data-lbrief=/g) || []).length, cmd.sel, about]
+            return [/전체 8|접기|data-all/.test(html), /📚 전체 브리프 3/.test(html), chips, opened, about, n(all),
+              /<span>오늘<\/span><small>2<\/small>/.test(all), /<span>어제<\/span><small>1<\/small>/.test(all), all.includes('❓ 어느 쪽?'), all.includes('✅ merge 완료'), all.includes('노드 메모리'), /class="topic">인프라/.test(all),
+              /data-ltopic="결정" aria-pressed="false">결정<small>2/.test(facets) && /data-lonly="pending" aria-pressed="false">⏳ 결정 대기<small>1/.test(facets), /3개/.test(facets), decided, /data-ltopic="결정" aria-pressed="true"/.test(facetsOn), /2 \/ 3/.test(facetsOn), /필터 지우기/.test(facetsOn),
+              done, found, /조건에 맞는 브리프가 없습니다/.test(none), cmd.sel]
         """)
-        self.assertEqual(got, [False, True, 5, '{"library":true}', 3, True, True, True, 1, 1, {"file": "b.html", "path": "/b/b.html", "title": "끝난 일", "fromLib": True}, None])
+        self.assertEqual(got, [False, True, 5, '{"library":true}', None, 3, True, True, True, True, True, True,
+                               True, True, 2, True, True, True, 1, 1, True, {"file": "b.html", "path": "/b/b.html", "title": "끝난 일", "fromLib": True}])
 
     def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
         got = self.run_js("""
