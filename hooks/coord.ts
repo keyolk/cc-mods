@@ -18,6 +18,7 @@ import { BOX_FMT, busyOf, parseBoxes, pick, places, spots, type Fit, type PaneBo
 import type { Policy } from './lib/policy'
 import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, upsert, type ReviewFile } from './lib/coordreview'
 import { clip } from './lib/text'
+import { dialogShown, dialogText, matches, parseDialog } from './lib/dialog'
 import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
@@ -80,6 +81,20 @@ const TOOLS = {
     description: 'Coordinator mode: send an instruction to an owned or adopted worker (every live session is adopted by default); it arrives in that session as a message starting with [coordinator]: a peer message, read mid-turn at its next tool call, or (when no peer message reaches it) its office inbox, read when its turn ends. No length limit: a very long text goes to a file and the message carries the path. Refused for observed sessions. The person typing in that pane is no bar (their draft is left alone); the result notes it when they typed there in the last 10 minutes.',
     inputSchema: { type: 'object', properties: { slug: { type: 'string' }, text: { type: 'string' } }, required: ['slug', 'text'] },
   },
+  answer: {
+    name: 'coord_answer',
+    description:
+      "Coordinator mode: answer a permission dialog in a worker's pane (an owned or adopted worker). It reads the pane's screen and presses the option's number there only when a dialog with that option is on it now, and, with expect, only when the dialog shows that text (a piece of the command you checked: the worker may have gone on to its next call, which asks with the same options). Read the pane and check the command first; option 1 is yes, this time only. Refused when no such dialog is up; nothing is pressed then.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string' },
+        option: { type: 'integer', description: "the option's number on the dialog (1: yes, this time only)" },
+        expect: { type: 'string', description: 'text the dialog must show: a piece of the command or path you checked' },
+      },
+      required: ['slug', 'option'],
+    },
+  },
   close: {
     name: 'coord_close',
     description: 'Coordinator mode: end a worker. Owned: kills the pane coord_spawn made for it (or its fallback window) and removes its worktree (refused when the worktree has uncommitted changes). Adopted: hands it back to the person (the session and its pane keep running) and it is not adopted again.',
@@ -121,7 +136,7 @@ const READY_WAIT_MS = 20_000
 // The tool by its name, whether or not this module has registered it yet.
 function kindOf(tool: string): keyof typeof TOOLS | undefined {
   if (toolNames[tool]) return toolNames[tool]
-  const m = /^mcp__cc-mods__coord_(roster|route|spawn|send|close|review)$/.exec(tool)
+  const m = /^mcp__cc-mods__coord_(roster|route|spawn|send|answer|close|review)$/.exec(tool)
   return m ? (m[1] as keyof typeof TOOLS) : undefined
 }
 
@@ -545,6 +560,7 @@ export async function coordTool($: any, tool: string, input: any): Promise<{ res
   if (kind === 'route') return withPending(await route($, input ?? {}))
   if (kind === 'spawn') return withPending(await spawn($, input ?? {}))
   if (kind === 'send') return withPending(await send($, input ?? {}))
+  if (kind === 'answer') return withPending(await answer($, input ?? {}))
   if (kind === 'close') return withPending(await close($, input ?? {}))
   if (kind === 'review') return withPending(await reviewTool($, input ?? {}))
   return { deny: 'unknown coordinator tool' }
@@ -963,6 +979,34 @@ async function reviewTool($: any, i: any): Promise<{ result: string } | { deny: 
   }
   review = out
   return { result: said + ' ' + countText(out) + ' (say only this in chat; the office shows the items).' }
+}
+
+// A permission dialog in a worker's pane, answered by the coordinator: the
+// key goes in only while a dialog with that option is on the screen (and,
+// with expect, shows what the coordinator checked), so a press never lands
+// in the worker's prompt box or on the next call's dialog. The digit alone,
+// as the office's key press sends it (office.py kind "key").
+async function answer($: any, i: any): Promise<{ result: string } | { deny: string }> {
+  const w = active(ledger!).find((x) => x.slug === String(i.slug ?? ''))
+  if (!w) return { deny: 'no owned or adopted worker ' + i.slug }
+  const n = Number(i.option)
+  if (!Number.isInteger(n) || n < 1 || n > 9) return { deny: 'coord_answer: option is the number of a choice on the dialog (1-9)' }
+  // Its pane now, not the ledger's: a worker moved by the person keeps its sid.
+  const seen = (await panes($)).find((p) => p.sid === w.sid)
+  const pane = seen?.pane ?? w.pane
+  if (!pane) return { deny: w.slug + ' has no pane to answer in' }
+  const cap = await sh($, ['tmux', 'capture-pane', '-p', '-J', '-t', pane], { timeoutMs: 3000 })
+  if (!cap.ok) return { deny: 'coord_answer: could not read pane ' + pane + ': ' + clip(cap.err, 200) }
+  const d = parseDialog(cap.out)
+  const o = d?.options.find((x) => x.n === n)
+  if (!d || !o) return { deny: 'coord_answer: no dialog with option ' + n + ' on ' + w.slug + "'s screen (" + pane + ') now; nothing was pressed' + (d ? '. It shows:\n' + dialogShown(d) : '') }
+  const expect = String(i.expect ?? '')
+  if (!matches(d, expect)) return { deny: 'coord_answer: the dialog on ' + w.slug + "'s screen does not show " + JSON.stringify(expect) + '; nothing was pressed. It shows:\n' + dialogShown(d) }
+  const sent = await sh($, ['tmux', 'send-keys', '-t', pane, String(n)], { timeoutMs: 3000 })
+  if (!sent.ok) return { deny: 'coord_answer: tmux could not send the key to ' + pane + ': ' + clip(sent.err, 200) }
+  const what = clip(dialogText(d), 200)
+  await save($, logged(ledger!, 'answer', w.slug + ': ' + n + '. ' + o.label + ' — ' + what, Date.now()))
+  return { result: 'Pressed ' + n + ' (' + o.label + ') in ' + w.slug + "'s pane " + pane + ' for: ' + what + '. Say in chat in one line what you allowed.' }
 }
 
 async function close($: any, i: any): Promise<{ result: string } | { deny: string }> {

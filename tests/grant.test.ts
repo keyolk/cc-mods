@@ -95,7 +95,10 @@ test('the worker prompt and the coordinator rules carry the approval rules', () 
   expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid', 'python3 /p/bin/brief-grant')).toContain('`python3 /p/bin/brief-grant <brief> 보내기 --slack')
   const rules = coordRules(emptyLedger('sid', 'cc-mods-d9', 0))
   expect(rules).toContain('is not asked again')
-  expect(rules).toContain("office's 지휘 view already shows it")
+  // A worker's permission dialog is the coordinator's to answer, not handed on.
+  expect(rules).toContain('call `coord_answer` with the slug, option 1')
+  expect(rules).toContain('never hand it on as `권한 확인 N건 대기`')
+  expect(rules).not.toContain("office's 지휘 view already shows it")
   expect(rules).not.toContain('Tell the person the pane and window')
 })
 
