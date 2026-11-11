@@ -58,7 +58,7 @@ import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from 
 import { clip, hhmm } from './lib/text'
 import { INBOX_HOLD_MAX_MS, INBOX_TRIES, failWake, inboxPrompt, landed, parseInbox, putBack, resumed, type InboxMsg } from './lib/inbox'
 import { DEFER_DIR, deferredUntil } from './lib/defer'
-import { displayName, healDue, healShown, healStuck, healTargets, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, type HealTry, type McpWatch } from './lib/mcpheal'
+import { displayName, healDue, healShown, healStuck, healTargets, healWanted, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, serversNamed, type HealTry, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
 import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseOpen, parseSums, type ExpCheck } from './lib/exp'
 import { focusWindowArgv, parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
@@ -1636,6 +1636,11 @@ const mcpHealPending = new Set<string>()
 // told to go on with what it was doing (a worker told to end its turn and
 // wait, coord.ts reporting rule), so nobody has to prompt it.
 const mcpHealResume = new Set<string>()
+// Servers this session used: a tool of it called, or searched for by name
+// (ToolSearch). Only these are reconnected on their own (lib/mcpheal.ts
+// healWanted); the rest stay as they are until someone presses 다시 연결.
+// Normalized names (the tool-name spelling).
+const mcpUsed = new Set<string>()
 
 // /mcp's answer. Live (2026-11-11) `text` came back empty both on success
 // ("Successfully reconnected to claude.ai Slack" in the pane) and on an
@@ -1692,7 +1697,9 @@ async function healServer($: any, server: string, force = false): Promise<boolea
   const t = mcpHealTries.get(key)
   // The engine's clock, as the watch's timer runs on it.
   const now = await clockNow($)
-  if (!force && !healDue(t, now)) return false
+  // A server this session never had gets one try (lib/mcpheal.ts healDue).
+  const seen = mcpWatch.seen.some((s) => normalizeServer(s) === key)
+  if (!force && !healDue(t, now, seen)) return false
   const name = displayName(server, (await mcpNames($)).all)
   let text: string
   try {
@@ -1759,11 +1766,14 @@ async function mcpCheck($: any) {
     // "not found" for it reaches no hook as text.
     const atStart = (await mcpNames($)).connected.filter((n) => n.startsWith('claude.ai '))
     mcpDown = healTargets(mcpWatch.dropped.map((d) => d.server), atStart, live)
+    // On its own, only the servers this session used: the person saw /mcp
+    // reconnect rows for servers they never touch (2026-11-11).
     // Set aside by the person (lib/defer.ts): no reconnect until its time.
     // Each /mcp reconnect makes the engine fire idle_prompt a minute later,
     // and that is a banner (the Notification hook). 다시 연결 on the office
     // card still runs (officeMcp), and the watch and the export go on.
-    if (mcpHealEnabled && !mainTurnRunning && mcpDown.length && !(await deferredHere($))) for (const s of mcpDown) await healServer($, s)
+    const want = healWanted(mcpDown, mcpUsed)
+    if (mcpHealEnabled && !mainTurnRunning && want.length && !(await deferredHere($))) for (const s of want) await healServer($, s)
     await mcpExport($)
   } finally {
     mcpChecking = false
@@ -3565,6 +3575,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     mcpHealTries.clear()
     mcpHealPending.clear()
     mcpHealResume.clear()
+    mcpUsed.clear()
     slashHidCockpit = false
     await loadEngineRules($)
     // The palette is a one-off: a session (or a reload) starts with it closed.
@@ -4001,9 +4012,19 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // server when the turn ends.
   on('tool.call', { tool: /^mcp__/ }, async ($: any, e: any, next: any) => {
     if (/^mcp__narwhal__/.test(e.tool)) narwhalTouched = true
+    const used = mcpServerKey(String(e.tool))
+    if (used) mcpUsed.add(used)
     const r = await next(e)
     if (mcpHealEnabled && isMcpTool(e.tool) && (r?.isError || r?.deny) && looksDisconnected(r)) mcpHealPending.add(e.tool)
     return r
+  })
+
+  // A search for a server's tools by name makes that server one this session
+  // uses: the model asks for Slack's tools when Slack is what it needs, and a
+  // server that failed to connect has no tool to call.
+  on('tool.call', { tool: 'ToolSearch' }, async ($: any, e: any, next: any) => {
+    for (const s of serversNamed(e.query ?? e.input?.query)) mcpUsed.add(normalizeServer(s))
+    return next(e)
   })
 
   // Browser automation: Bash `tweb …` and tweb MCP tools, for the Web tab.

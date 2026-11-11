@@ -120,26 +120,37 @@ export const HEAL_MAX_TRIES = 11
 // `n` 0 with `last` ok: reconnected at `at`. A call failing again within
 // the first gap waits it out: the reconnect did not hold, and retrying at
 // every turn's end would fill the transcript.
-export function healDue(t: HealTry | undefined, now: number): boolean {
+//
+// `seen`: the server was live in this session at some point. One never seen
+// here (it failed at start, or this session never loads it) gets ONE try:
+// live, 2026-11-11, "claude.ai Claude Data" was connected in the radar's
+// `claude mcp list` and in some sessions, but other sessions never had it,
+// and their `/mcp reconnect claude.ai Claude Data` answered "not found",
+// three times each, while $.command.run's text was empty. Those sessions told
+// the coordinator it was down. One try still brings back a connector that
+// failed its first connect (the coordinator's claude.ai Slack, ECONNRESET);
+// past that, the person's /mcp or the office card's 다시 연결 decides.
+export function healDue(t: HealTry | undefined, now: number, seen = true): boolean {
   if (!t) return true
+  if (!seen && t.n > 0) return false
   if (t.last === 'unknown' || t.last === 'off' || t.n >= HEAL_MAX_TRIES) return false
   return now - t.at >= HEAL_GAPS_MS[Math.min(Math.max(t.n - 1, 0), HEAL_GAPS_MS.length - 1)]!
 }
 
 // Whether a server is to be reported as down. `seen`: it was live in this
-// session. A server the radar lists that this session never had (another
-// project's server) and /mcp does not know is not this session's: quiet. One
-// it had and cannot be named is a mapping bug: told, so it is not silent again.
+// session. One this session never had is never reported: nothing here says
+// it is this session's (see healDue). One it had and cannot be named is a
+// mapping bug: told, so it is not silent again.
 export function healStuck(t: HealTry | undefined, seen: boolean): boolean {
-  if (!t || t.last === 'ok' || t.last === 'off') return false
-  if (t.last === 'unknown') return seen
+  if (!t || !seen || t.last === 'ok' || t.last === 'off') return false
+  if (t.last === 'unknown') return true
   return t.n >= NOTIFY_AFTER
 }
 
 // Whether a server belongs on the office card and in the coordinator's
-// notice: tried here and not left alone.
+// notice: one this session had, tried here and not left alone.
 export function healShown(t: HealTry | undefined, seen: boolean): boolean {
-  return !!t && t.n > 0 && t.last !== 'ok' && t.last !== 'off' && (t.last !== 'unknown' || seen)
+  return seen && !!t && t.n > 0 && t.last !== 'ok' && t.last !== 'off'
 }
 
 // The servers to reconnect now. `dropped`: seen live in this session, gone.
@@ -163,4 +174,24 @@ export function healTargets(dropped: readonly string[], expected: readonly strin
 export function radarNames(items: readonly { id: string; state: string }[]): { all: string[]; connected: string[] } {
   const mcp = items.filter((i) => i.id.startsWith('mcp:'))
   return { all: mcp.map((i) => i.id.slice(4)), connected: mcp.filter((i) => i.state === 'ok').map((i) => i.id.slice(4)) }
+}
+
+// The servers a ToolSearch query asks for by name (`select:mcp__claude_ai_Slack__slack_read_thread,…`,
+// or a bare `mcp__x__y` in keywords), by their tool-name spelling. A call to
+// a server's tool, or a search for one, is what makes a server one this
+// session uses (register.ts mcpUsed).
+export function serversNamed(query: unknown): string[] {
+  if (typeof query !== 'string') return []
+  const out = new Set<string>()
+  for (const m of query.matchAll(/mcp__(.+?)__[A-Za-z0-9_-]/g)) out.add(m[1]!)
+  return [...out]
+}
+
+// Which of the servers down are retried on their own: only the ones this
+// session used (called a tool of, or searched for one of). Live 2026-11-11
+// the person saw /mcp reconnect rows for servers they never use: a server
+// this session had and never touched is left as it is. The office card's
+// reconnect still runs for any of them, by hand.
+export function healWanted(down: readonly string[], used: ReadonlySet<string>): string[] {
+  return down.filter((s) => used.has(normalizeServer(s)))
 }

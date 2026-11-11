@@ -15,7 +15,7 @@ import { activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseN
 import { treeRows } from '../hooks/views/home'
 import { filterPalette, paletteItems } from '../hooks/lib/palette'
 import { helpSections } from '../hooks/lib/help'
-import { displayName, healDue, healShown, healStuck, healTargets, HEAL_GAPS_MS, HEAL_MAX_TRIES, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, resultText } from '../hooks/lib/mcpheal'
+import { displayName, healDue, healShown, healStuck, healTargets, healWanted, HEAL_GAPS_MS, HEAL_MAX_TRIES, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, resultText, serversNamed } from '../hooks/lib/mcpheal'
 import { goalChip, goalVisible, parseGoal } from '../hooks/lib/goal'
 import { deferredUntil, parseDeferred } from '../hooks/lib/defer'
 import { blockOf, nowAllowed, resumePrompt } from '../hooks/lib/unblock'
@@ -1883,12 +1883,19 @@ test('mcp heal: retries back off and go on; a name /mcp does not know is not sen
   expect(healStuck({ at: 0, n: 2, last: 'failed' }, true)).toBe(false)
   expect(healStuck({ at: 0, n: 3, last: 'failed' }, true)).toBe(true)
   expect(healStuck({ at: 0, n: 1, last: 'unknown' }, true)).toBe(true)
-  // A radar server this session never had and /mcp does not know: another
-  // project's, not this session's to report or show.
+  // A server this session never had and that does not come back: never
+  // reported, never on the card. Live 2026-11-11: claude.ai Claude Data, in
+  // the radar but not in several sessions, was told as down from each.
   expect(healStuck({ at: 0, n: 1, last: 'unknown' }, false)).toBe(false)
+  expect(healStuck({ at: 0, n: 5, last: 'failed' }, false)).toBe(false)
   expect(healShown({ at: 0, n: 1, last: 'unknown' }, false)).toBe(false)
-  expect(healShown({ at: 0, n: 1, last: 'failed' }, false)).toBe(true)
+  expect(healShown({ at: 0, n: 1, last: 'failed' }, false)).toBe(false)
+  expect(healShown({ at: 0, n: 1, last: 'failed' }, true)).toBe(true)
   expect(healShown({ at: 0, n: 1, last: 'off' }, true)).toBe(false)
+  // …and gets one try: not a second, whatever the gap.
+  expect(healDue(undefined, 0, false)).toBe(true)
+  expect(healDue({ at: 0, n: 1, last: 'failed' }, 99 * 60_000, false)).toBe(false)
+  expect(healDue({ at: 0, n: 1, last: 'failed' }, 99 * 60_000, true)).toBe(true)
 })
 
 test('mcp heal: a server that failed at this session\'s start is a target; a live one is not, whatever its spelling', () => {
@@ -1912,4 +1919,16 @@ test('lib/defer: the sessions set aside are the files whose until is ahead', () 
   expect(deferredUntil('{"until": 1800003600}', now)).toBe(1_800_003_600_000)
   expect(deferredUntil(undefined, now)).toBe(undefined)
   expect(deferredUntil('{"until": true}', now)).toBe(undefined)
+})
+
+test('mcp heal: only servers this session used are reconnected on their own', () => {
+  // Live 2026-11-11: /mcp reconnect rows for servers the person never uses.
+  expect(serversNamed('select:mcp__claude_ai_Slack__slack_read_thread,mcp__claude_ai_Slack__slack_send_message,Read')).toEqual(['claude_ai_Slack'])
+  expect(serversNamed('+slack mcp__portal__secrets_list send')).toEqual(['portal'])
+  expect(serversNamed('notebook jupyter')).toEqual([])
+  expect(serversNamed(undefined)).toEqual([])
+  const used = new Set(['claude_ai_Slack'])
+  expect(healWanted(['claude.ai Slack', 'claude.ai Claude Data', 'rea'], used)).toEqual(['claude.ai Slack'])
+  expect(healWanted(['claude_ai_Slack'], used)).toEqual(['claude_ai_Slack'])
+  expect(healWanted(['portal'], new Set())).toEqual([])
 })
