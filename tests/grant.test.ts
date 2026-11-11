@@ -98,3 +98,10 @@ test('the worker prompt and the coordinator rules carry the approval rules', () 
   expect(rules).toContain("office's 지휘 view already shows it")
   expect(rules).not.toContain('Tell the person the pane and window')
 })
+
+test('the coordinator rules mark a carried-out, verified decision brief done', () => {
+  const rules = coordRules(emptyLedger('sid', 'cc-mods-d9', 0))
+  expect(rules).toContain('brief done <brief> --result')
+  expect(rules).toContain('--revert')
+  expect(rules).toContain('✅ 최근 완료')
+})

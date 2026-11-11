@@ -11,6 +11,9 @@ made it and, when a coordinator asked the person something, the question:
                  "answer": null|{"choice", "note", "by", "at"[, "free"]}}]
   "decision":  the first unanswered of them (the last when all are), as a
                sidecar from before `decisions` has only this one
+  "done":      {"at": UTC iso (minutes), "result", "links": [url], "revert"?}
+               (`brief done`): the answer was carried out and checked; the
+               view lists it under ✅ 최근 완료 (a brief only answered is not done)
 
 A brief may ask several questions; the person answers each, with one of its
 options or in their own words (choice "직접 답", the words in note). The
@@ -49,6 +52,7 @@ NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
 KINDS = ("brief_answer", "brief_open", "coord_say", *review.KINDS, *slx.KINDS)
 RECENT = 8  # briefs listed in the command panel
+DONE_FOLD_H = 24  # a brief done longer ago than this is folded in the ✅ group
 # file -> (sidecar mtime, sidecar), (html mtime, title): 180 briefs are read
 # on every poll of the view, so only a changed file is read again.
 _side: dict[str, tuple[float, dict]] = {}
@@ -207,6 +211,25 @@ def _open(qs: list[dict]) -> list[dict]:
     return [q for q in qs if not q["answer"]]
 
 
+def _done(side: dict) -> dict | None:
+    """The sidecar's `done` (`brief done`): a brief whose answer was carried
+    out and checked. A `done` with no result is not one (the CLI refuses it,
+    a hand-written sidecar may hold it): the brief only answered."""
+    raw = side.get("done")
+    if not isinstance(raw, dict) or not str(raw.get("result") or "").strip():
+        return None
+    links = [str(x) for x in raw.get("links") or [] if isinstance(x, str) and x.strip()]
+    return {"at": str(raw.get("at") or ""), "result": str(raw["result"]).strip(), "links": links, "revert": str(raw.get("revert") or "").strip() or None}
+
+
+def _done_ts(at: str) -> float:
+    """`done.at` (UTC, minutes: 2026-11-11T09:39Z) as epoch seconds; 0 when unreadable."""
+    try:
+        return datetime.strptime(at, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def briefs() -> list[dict]:
     """Every brief with a sidecar, oldest first (by the date in its name)."""
     out = []
@@ -216,7 +239,7 @@ def briefs() -> list[dict]:
             continue
         d = _read_side(file)
         sids = [str(s.get("id")) for s in d.get("sessions") or [] if isinstance(s, dict) and s.get("id")]
-        out.append({"file": file, "path": os.path.join(root(), file), "sessions": sids, "questions": _decisions(d)})
+        out.append({"file": file, "path": os.path.join(root(), file), "sessions": sids, "questions": _decisions(d), "done": _done(d)})
     return out
 
 
@@ -488,7 +511,17 @@ def view(people: list[dict], ask=None) -> dict:
     names = {p["id"]: p.get("name") or p["id"][:8] for p in people}
     recent = []
     for b in sorted(briefs(), key=lambda b: _mtime(b["path"]), reverse=True)[:RECENT]:
-        recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"]))})
+        recent.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "at": _mtime(b["path"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "pending": bool(_open(b["questions"])), "done": bool(b["done"])})
+    # ✅ Briefs marked done (`brief done`), newest first. Apart from the ones
+    # only answered: those stay in `recent` with no mark. One finished a day
+    # ago is `old`; the view folds it.
+    finished = []
+    for b in briefs():
+        if not b["done"]:
+            continue
+        ts = _done_ts(b["done"]["at"]) or _mtime(b["path"])
+        finished.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "by": next((names[s] for s in b["sessions"] if s in names), None), **b["done"], "ts": ts, "old": time.time() - ts > DONE_FOLD_H * 3600})
+    finished.sort(key=lambda x: x["ts"], reverse=True)
     reviews = review.items()
     # Set aside and memos: only the live sessions' (an ended one keeps its file, out of sight).
     held = defer.held(set(by_sid))
@@ -507,7 +540,7 @@ def view(people: list[dict], ask=None) -> dict:
             defer.wake(r["sid"], r["wake"])
         elif r.get("adopt"):
             defer.adopt(r["sid"], r["adopt"])
-    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "table": rows, "slx": inbox}
+    return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "done": finished, "table": rows, "slx": inbox}
 
 
 # What a session waiting on the person shows in the view's left pane: the
