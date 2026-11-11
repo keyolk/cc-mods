@@ -696,12 +696,12 @@ class RoutesTest(BriefsCase):
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.shutdown)
         base = f"http://127.0.0.1:{srv.server_port}"
-        with mock.patch.object(office, "snapshot", return_value=[]):
+        with mock.patch.object(office, "snapshot", return_value=[]), mock.patch.object(office.agenda, "view", return_value={"events": []}), mock.patch.object(office.agenda, "people", return_value={"links": {}, "prs": None}):
             with urllib.request.urlopen(base + "/command.js") as r:
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "done", "table", "slx", "hibernate"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "done", "table", "slx", "hibernate", "agenda"})
             with urllib.request.urlopen(base + "/hibernate.js") as r:
                 self.assertIn(b"function hibFoot", r.read())
             with urllib.request.urlopen(base + "/review.js") as r:
