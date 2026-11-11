@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -723,4 +723,13 @@ test('coord: a worker is told to end its turn on a dropped MCP server, not to se
   expect(MCP_WAIT).toContain('do not send BLOCKED')
   expect(MCP_WAIT).toContain('end your turn')
   expect(coordSection(on(), NOW)).toContain('MCP <server> 끊김')
+})
+
+test('review requests to #team-core-platform-pr-review are pre-approved in the coordinator and worker rules', () => {
+  expect(workerPrompt('fix', 'c', 'x')).toContain(REVIEW_REQUEST_RULE)
+  expect(REVIEW_REQUEST_RULE).toContain('C0AR17WDTQ9')
+  expect(REVIEW_REQUEST_RULE).toContain('READY')
+  const rules = coordRules(on({}))
+  expect(rules).toContain('C0AR17WDTQ9')
+  expect(rules).toContain('without a decision brief')
 })
