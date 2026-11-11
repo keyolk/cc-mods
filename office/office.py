@@ -85,6 +85,9 @@ FMT = "|".join(
         "#{@cc_agents}",
         "#{@cc_ctx}",
         "#{window_id}",
+        # Set by cc-mods (register.ts session.compact): 1 compacting, 0 not,
+        # empty for a session on an older cc-mods (see compacting()).
+        "#{@cc_pane_compacting}",
         "#{pane_current_path}",
     ]
 )
@@ -476,14 +479,29 @@ def owner() -> str:
     return name or (os.environ.get("USER", "") or "my").split(".")[0].capitalize()
 
 
-# Compacting right now: Claude Code says so at the bottom of its pane. Only
-# asked of working panes, a few short captures per refresh.
-def compacting(pane: str) -> bool:
+# Compacting right now. cc-mods publishes it on the pane (@cc_pane_compacting,
+# read with the list-panes the snapshot already runs). A session on an older
+# cc-mods sets nothing: then the bottom of its pane is read, at most every
+# COMPACT_TTL seconds a pane. Before, every working pane was captured on each
+# 2 s /state poll: 16 tmux starts in 13 s on a day with ~5 working sessions
+# (sys-load brief D, 2026-11-11).
+COMPACT_TTL = 15
+_compact_seen: dict[str, tuple[float, bool]] = {}
+
+
+def compacting(pane: str, flag: str = "") -> bool:
+    if flag in ("0", "1"):
+        return flag == "1"
+    at, was = _compact_seen.get(pane, (0.0, False))
+    if time.time() - at < COMPACT_TTL:
+        return was
     try:
         out = subprocess.run(["tmux", "capture-pane", "-p", "-t", pane, "-S", "-12"], capture_output=True, text=True, timeout=2).stdout
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    return bool(re.search(r"Compacting conversation", out, re.I))
+        out = ""
+    now = bool(re.search(r"Compacting conversation", out, re.I))
+    _compact_seen[pane] = (time.time(), now)
+    return now
 
 
 def _snapshot() -> list[dict]:
@@ -493,18 +511,18 @@ def _snapshot() -> list[dict]:
     except (OSError, subprocess.TimeoutExpired):
         return []
     rows = [line.split("|") for line in out.splitlines()]
-    _live_panes = {p[0] for p in rows if len(p) >= 12}
+    _live_panes = {p[0] for p in rows if len(p) >= 13}
     alive = alive_sessions()
     seen, people = set(), []
     rel = coord.relations()
     for p in rows:
-        if len(p) < 12 or not p[4] or p[4] in seen:
+        if len(p) < 13 or not p[4] or p[4] in seen:
             continue
         if alive is not None and p[4] not in alive:
             continue  # the pane still names a session that has ended
         seen.add(p[4])
-        pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid = p[:12]
-        cwd = "|".join(p[12:])  # last, so a "|" in the path stays in it
+        pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid, compact_flag = p[:13]
+        cwd = "|".join(p[13:])  # last, so a "|" in the path stays in it
         t = last_tool(sid)
         where, doing = room(state, attn, t, int(since) if since.isdigit() else None)
         tc = tool_counts(sid)
@@ -530,7 +548,7 @@ def _snapshot() -> list[dict]:
                 "made": desk_items(sid),
                 "compacts": tc["compacts"],
                 "compactAt": tc["compactAt"],
-                "compacting": state == "working" and compacting(pane),
+                "compacting": state == "working" and compacting(pane, compact_flag),
                 "mix": tc["by"],
                 "job": job_of(tc["by"]),
                 "rank": rank_of(tc["total"]),
