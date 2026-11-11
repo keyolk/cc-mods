@@ -52,6 +52,25 @@ def epoch(v) -> float:
         return 0.0
 
 
+STATUS_STALE = 2 * 3600  # a declared block older than this is no longer trusted
+PERSON_KINDS = ("question", "permission", "auth")
+
+
+def status_blocks_person(st: dict | None, now: float) -> bool:
+    """Whether a worker's declared status (hooks/lib/status.ts) says it waits
+    on the person: blocked on a question, a permission or a login, or blocked
+    with no kind but a `needs` text. `wait` (CI, a review) is no person's
+    turn. A status that old (STATUS_STALE) is dropped: the worker may have
+    moved on without declaring it."""
+    if not isinstance(st, dict) or st.get("state") != "blocked":
+        return False
+    kind = st.get("kind")
+    if kind not in PERSON_KINDS and not (kind is None and st.get("needs")):
+        return False
+    at = epoch(st.get("at"))
+    return not at or now - at < STATUS_STALE
+
+
 def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None, held: dict[str, dict] | None = None) -> list[dict]:
     """The rows. `coords`: /command's coordinators, each with its workers. A
     waiting time not known counts as now: it has waited the least we can tell.
@@ -124,6 +143,15 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
             r = row("x:" + x["id"], name=x.get("from") or x["id"])
             r["slx"].append(x["id"])
             waited(r, epoch(x.get("at")) or now)
+    # A worker blocked on the person by its own declaration. A pane dialog
+    # (`call`) is the same wait seen from the screen: one need, not two.
+    for r in rows.values():
+        st = r.get("status")
+        if r["sid"] and r["live"] is not False and not r["call"] and status_blocks_person(st, now):
+            at = epoch(st.get("at")) or now
+            r["needKeys"].append("t:" + str(st.get("at") or ""))
+            r["byStatus"] = True
+            waited(r, at)
     for sid, h in (held or {}).items():
         info = h.get("info") or {}
         if "s:" + sid not in rows:
@@ -131,7 +159,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     out = list(rows.values())
     for r in out:
         own = r["key"].startswith("x:")
-        r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own or any(x.get("stuck") for x in r["mcp"]))
+        r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own or r.get("byStatus") or any(x.get("stuck") for x in r["mcp"]))
         r["name"] = r["name"] or (r["sid"] or "")[:8]
         defer(r, (held or {}).get(r["sid"] or ""), now)
     # Among triggers' own rows the latest receipt is on top; the other rows keep the longest wait on top.

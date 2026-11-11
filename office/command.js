@@ -290,6 +290,12 @@ function cmdClick(ev) {
     if (R) { cmdPickCall({ sid: R.row.sid, name: R.row.name, summary: R.row.summary, window: R.c?.window }); cmd.row = R.row.key; cmdRender(); crewEnd(cmd.sel) }
     return
   }
+  const cp = ev.target.closest('button[data-copy]')
+  if (cp) {
+    const R = tblAll().find((x) => x.row.key === cp.dataset.copy), c = R && tblCmd(R)
+    if (c) authCopy(c).then((ok) => toast(ok ? '📋 복사됨: ' + c : '✕ 복사하지 못했습니다'))
+    return
+  }
   const f = ev.target.closest('[data-fold]')
   if (f) return cmdFold(f.dataset.fold)
   const tr = ev.target.closest('tr[data-row]')

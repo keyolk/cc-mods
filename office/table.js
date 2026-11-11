@@ -276,16 +276,25 @@ function tblStatus(s) {
   return [head + (s.progress != null ? ' ' + s.progress + '%' : ''), s.step, tail].filter(Boolean).join(' · ').slice(0, 120)
 }
 
+// A command the session's needs text names in backticks (a login to run by
+// hand): the row offers it for copying.
+const tblCmd = (R) => {
+  const st = R.row.status
+  const m = st && st.state === 'blocked' && R.needs && !R.ds.length && !R.c ? /`([^`]+)`/.exec(st.needs || '') : null
+  return m ? m[1] : ''
+}
+
 function tblRow(R, other) {
   const r = R.row, slug = tblSlug(r), ask = tblAsk(R)
   // A trigger's own row has no session: no 창 없음 there.
   const sub = [r.isCoord ? '🎖 coordinator' : r.relation === 'adopted' ? '입양' : '', r.sid && r.live === false ? '창 없음' : ''].filter(Boolean).join(' · ')
   const end = other && r.sid && r.live !== false && !r.isCoord ? '<button class="end" data-end="' + cmdEsc(r.sid) + '" title="세션 끝내기 (옆에 열고 확인)">⏹</button>' : ''
+  const cp = tblCmd(R) ? '<button class="end" data-copy="' + cmdEsc(R.row.key) + '" title="명령 복사: ' + cmdEsc(tblCmd(R)) + '">📋</button>' : ''
   // A trigger's own row carries its mark for the slx line's bulk choices.
   const mk = String(r.key).startsWith('x:') && R.xs.length && typeof slxMk === 'function' ? slxMk(R.xs[0]) + ' ' : ''
   return '<tr data-row="' + cmdEsc(r.key) + '" class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
     + (slug || sub || ask ? '<span class="m">' + (slug ? '<span class="slug">' + cmdEsc(slug) + '</span> ' : '') + cmdEsc([sub, ask].filter(Boolean).join(' · ')) + '</span>' : '') + '</td>'
-    + '<td class="st">' + tblCells(R) + end + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
+    + '<td class="st">' + tblCells(R) + cp + end + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
 }
 
 // The table for the list: the rows that need the person, then 👷 그 밖 N.

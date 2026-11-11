@@ -37,6 +37,26 @@ class TurnTest(unittest.TestCase):
         # A status asks nothing of the person: the row does not need them for it.
         self.assertEqual(rows[OWNED]["needKeys"], [])
 
+    def test_a_worker_blocked_on_the_person_by_its_status_needs_them(self):
+        N = 1794410000
+        def need(st, **kw):
+            coords = [{"sid": COORD, "name": "c", "workers": [{"slug": "w", "sid": OWNED, "live": True, "status": st}]}]
+            return {r["sid"]: r for r in turn.table([], kw.get("calls", []), [], coords, now=N)}[OWNED]
+        auth = {"state": "blocked", "kind": "auth", "needs": "`! warren login`", "at": (N - 1000) * 1000}
+        r = need(auth)
+        self.assertTrue(r["needs"])
+        self.assertEqual(r["at"], N - 1000)
+        # CI or a review wait, working again, or a block two hours old: not the person's turn.
+        self.assertFalse(need({**auth, "kind": "wait"})["needs"])
+        self.assertFalse(need({**auth, "state": "working"})["needs"])
+        self.assertFalse(need({**auth, "at": (N - 7300) * 1000})["needs"])
+        # No kind but a needs text counts; neither does not.
+        self.assertTrue(need({"state": "blocked", "needs": "decide", "at": (N - 1000) * 1000})["needs"])
+        self.assertFalse(need({"state": "blocked", "at": (N - 1000) * 1000})["needs"])
+        # A dialog already holds the row: one need, not two.
+        r = need(auth, calls=[{"sid": OWNED, "since": N - 500}])
+        self.assertEqual([k[0] for k in r["needKeys"]], ["c"])
+
     def test_one_table_a_row_a_session_holding_its_decisions_call_and_reviews(self):
         coords = [{"sid": COORD, "name": "d9", "summary": "지휘", "state": "working", "live": True, "workers": [
             {"slug": "fix", "sid": OWNED, "summary": "office 지휘 정리", "state": "working", "live": True},
