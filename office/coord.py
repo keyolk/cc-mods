@@ -64,9 +64,13 @@ def relations() -> dict[str, dict]:
             if w.get("endedAt"):
                 continue
             auto = {"auto": True} if w.get("auto") else {}
-            crew.append({"sid": w.get("sid"), "slug": w.get("slug"), "relation": w.get("relation") or "owned", "model": w.get("model"), "effort": w.get("effort"), **auto})
+            # Instructed: the coordinator has handed it a task (an adopted
+            # session is the person's own until then). hibernate's session
+            # cap never proposes one: it sits idle between two sends.
+            told = {"instructed": True} if w.get("instructed") else {}
+            crew.append({"sid": w.get("sid"), "slug": w.get("slug"), "relation": w.get("relation") or "owned", "model": w.get("model"), "effort": w.get("effort"), **auto, **told})
             if w.get("sid"):
-                rel.setdefault(w["sid"], {})["boss"] = {"sid": d["sid"], "name": name, "relation": w.get("relation") or "owned", "slug": w.get("slug"), "model": w.get("model"), "effort": w.get("effort"), **auto}
+                rel.setdefault(w["sid"], {})["boss"] = {"sid": d["sid"], "name": name, "relation": w.get("relation") or "owned", "slug": w.get("slug"), "model": w.get("model"), "effort": w.get("effort"), **auto, **told}
         rel.setdefault(d["sid"], {}).update(name=name, crew=crew)
     return rel
 
