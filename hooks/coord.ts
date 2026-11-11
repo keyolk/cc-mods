@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -292,12 +292,18 @@ async function tick($: any) {
     // session can take its pane's name (a `claude -p` it ran, from a cc-mods
     // before register.ts kept those off the pane).
     const live = await alive($, unseen(ledger, seen, Date.now()).map((w) => w.sid))
-    const { ledger: l, changes } = observe(ledger, seen, Date.now(), live, sums)
+    const o = observe(ledger, seen, Date.now(), live, sums)
+    // MCP servers the coordinator's and its workers' cc-mods could not get
+    // back (register.ts mcpExport writes state/office/mcp/<sid>.json).
+    const files = await mcpFiles($, o.ledger)
+    const m = files ? mcpWakes(o.ledger, files, sums) : { ledger: o.ledger, changes: [] }
+    const l = m.ledger
+    const changes = [...o.changes, ...m.changes]
     let out = l
     // A quiet worker's asks are the person's own work: kept in its
     // row, not in the log the office shows.
     for (const c of changes) if (c.wake || c.kind === 'gone' || c.kind === 'back') out = logged(out, 'event', c.text, Date.now())
-    if (changes.length || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
+    if (changes.length || l.mcpDown !== ledger.mcpDown || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
     // A worker coord_close is closing: its pane went first, its endedAt
     // comes when the close saves. Not news to the coordinator that closed it.
     pending.push(...changes.filter((c) => c.wake && !closing.has(c.sid)))
@@ -311,6 +317,23 @@ async function tick($: any) {
   } finally {
     ticking = false
   }
+}
+
+// Each live session's MCP state file, by session id: the coordinator's and
+// its active workers'. One read for all (a missing file reads as nothing).
+async function mcpFiles($: any, l: Ledger): Promise<Map<string, string | undefined> | undefined> {
+  const sids = [l.sid, ...active(l).map((w) => w.sid)]
+  const d = ctx!.home() + '/.claude/state/office/mcp'
+  const r = await sh($, ['sh', '-c', 'd=$0; for s; do [ -f "$d/$s.json" ] && printf "%s\\t%s\\n" "$s" "$(tr -d "\\n" < "$d/$s.json")"; done; true', d, ...sids], { timeoutMs: 3000 })
+  // A read that failed is no news (as a failed tmux read is for observe):
+  // undefined, and the tick keeps what the ledger had.
+  if (!r.ok) return undefined
+  const m = new Map<string, string | undefined>()
+  for (const line of r.out.split('\n')) {
+    const i = line.indexOf('\t')
+    if (i > 0) m.set(line.slice(0, i), line.slice(i + 1))
+  }
+  return m
 }
 let summedAt = 0
 const SUM_EVERY_MS = 60_000

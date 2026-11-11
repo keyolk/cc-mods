@@ -64,7 +64,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
         r = rows.get(key)
         if r is None:
             r = rows[key] = {"key": key, "sid": None, "name": "", "summary": None, "coord": None, "isCoord": False, "relation": None, "state": None, "live": False,
-                             "decisions": [], "call": False, "reviews": [], "slx": [], "at": None, "needKeys": []}
+                             "decisions": [], "call": False, "reviews": [], "slx": [], "mcp": [], "at": None, "needKeys": []}
         for k, v in info.items():
             if v is not None and not r.get(k):
                 r[k] = v
@@ -73,14 +73,26 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     def waited(r: dict, at: float) -> None:
         r["at"] = at if r["at"] is None else min(r["at"], at)
 
+    def mcp_down(r: dict, m: dict | None) -> None:
+        """A session's dropped MCP servers (office.py mcp_state) on its row,
+        🔌 in its cells. One its cc-mods could not get back on its own
+        (`stuck`) needs the person: the row's 다시 연결 is theirs to press."""
+        if r["mcp"] or not m:
+            return
+        r["mcp"] = [x for x in m.get("dropped") or [] if x.get("server")]
+        for x in r["mcp"]:
+            if x.get("stuck"):
+                r["needKeys"].append("m:" + x["server"])
+                waited(r, x.get("since") or now)
+
     by_slug: dict[str, str] = {}
     for c in coords:
-        row("s:" + c["sid"], sid=c["sid"], name=c.get("name"), summary=c.get("summary"), isCoord=True, state=c.get("state"), live=c.get("live"))
+        mcp_down(row("s:" + c["sid"], sid=c["sid"], name=c.get("name"), summary=c.get("summary"), isCoord=True, state=c.get("state"), live=c.get("live")), c.get("mcp"))
         for w in c.get("workers") or []:
             if not w.get("sid"):
                 continue
             by_slug[w.get("slug") or ""] = w["sid"]
-            row("s:" + w["sid"], sid=w["sid"], name=w.get("slug"), summary=w.get("summary"), coord=c["sid"], relation=w.get("relation") or "owned", state=w.get("state"), live=w.get("live"))
+            mcp_down(row("s:" + w["sid"], sid=w["sid"], name=w.get("slug"), summary=w.get("summary"), coord=c["sid"], relation=w.get("relation") or "owned", state=w.get("state"), live=w.get("live")), w.get("mcp"))
     waiting_sids = {c["sid"] for c in calls}
     for c in calls:
         r = row("s:" + c["sid"], sid=c["sid"], name=c.get("slug") or c.get("name"), summary=c.get("summary"), live=True, state="waiting")
@@ -117,7 +129,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     out = list(rows.values())
     for r in out:
         own = r["key"].startswith("x:")
-        r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own)
+        r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own or any(x.get("stuck") for x in r["mcp"]))
         r["name"] = r["name"] or (r["sid"] or "")[:8]
         defer(r, (held or {}).get(r["sid"] or ""), now)
     # Among triggers' own rows the latest receipt is on top; the other rows keep the longest wait on top.

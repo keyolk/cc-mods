@@ -1594,9 +1594,11 @@ test('slash-command cockpit hiding can be disabled in Settings, restoring a pane
 test('MCP heal: a call failing on a dropped server reconnects that one server when the turn ends, once per gap; no timer, no reconnect all; Settings turns it off', async ($, on) => {
   const store: Record<string, unknown> = { 'cockpit-settings': {} }
   const toasts: string[] = []
+  const submitted: string[] = []
   // The server names come from the credential radar's `claude mcp list`.
   const list = ['claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected', 'portal: https://portal.acme.io/mcp (HTTP) - ✔ Connected'].join('\n')
-  baseStubs(on, { store, toasts, run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
+  // A worker's policy: auto_continue allowed, so a reconnect takes its turn up again.
+  baseStubs(on, { store, toasts, submitted, policyJson: JSON.stringify({ mode: 'custom', capabilities: { auto_continue: 'allow' } }), run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
   on('mcp.call', () => ({ value: { content: [] } }) as any)
   const clock = mock.clock(on)
   on('store.keys', () => ({ value: [] }))
@@ -1625,8 +1627,11 @@ test('MCP heal: a call failing on a dropped server reconnects that one server wh
   // Not from inside the call: at the end of the turn.
   expect(reconnects).toEqual([])
   await endTurn()
-  for (let i = 0; i < 2000 && !reconnects.length; i++) await Promise.resolve()
+  for (let i = 0; i < 2000 && !submitted.length; i++) await Promise.resolve()
+  // By the name /mcp knows, never the tool-name spelling claude_ai_Slack.
   expect(reconnects).toEqual(['reconnect claude.ai Slack'])
+  // The turn its failed call ended is taken up again.
+  expect(submitted).toEqual(['[cc-mods] MCP claude.ai Slack is reconnected: go on with what its failed call was for.'])
   // Again within the gap: nothing.
   await $.tool.call({ tool: 'mcp__claude_ai_Slack__slack_read_thread', input: {} } as any)
   await endTurn()
@@ -1651,6 +1656,194 @@ test('MCP heal: a call failing on a dropped server reconnects that one server wh
   for (let i = 0; i < 2000; i++) await Promise.resolve()
   expect(reconnects).toHaveLength(before)
   await ui.unmount()
+})
+
+test('MCP heal: a server that failed at the session start is retried with a growing gap, under its own name; stuck after 3 it goes to the office file; back, it clears', { timeoutMs: 20_000 }, async ($, on) => {
+  const store: Record<string, unknown> = { 'cockpit-settings': {} }
+  const toasts: string[] = []
+  const written: Record<string, string> = {}
+  // The radar's `claude mcp list` (its own process) connects Slack; this
+  // session never got it (ECONNRESET at start, 2026-11-11).
+  const list = ['claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected', 'portal: https://portal.acme.io/mcp (HTTP) - ✔ Connected', 'sentry: https://mcp.sentry.dev/mcp (HTTP) - ! Needs authentication'].join('\n')
+  baseStubs(on, { store, toasts, written, run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
+  on('mcp.call', () => ({ value: { content: [] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  let tools = [{ name: 'mcp__portal__x', serverName: 'portal', tokens: 1, isLoaded: true }]
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: tools } }, rateLimits: [] } }) as any)
+  const reconnects: string[] = []
+  let reply = 'Failed to reconnect to claude.ai Slack: The socket connection was closed unexpectedly (ECONNRESET)'
+  on('command.run', (_$: any, e: any) => {
+    if (e.command === 'mcp') reconnects.push(e.args)
+    return { text: e.command === 'mcp' ? reply : '' }
+  })
+  const settle = async () => {
+    for (let i = 0; i < 400; i++) await Promise.resolve()
+  }
+  const state = () => JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}')
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(0)
+  await settle()
+  // The watch runs 15 s after the start, then on the minute (60, 120, …);
+  // `to` moves the clock to that many seconds after the start.
+  let now = 0
+  const to = async (sec: number) => {
+    await clock.advance(sec * 1000 - now)
+    now = sec * 1000
+    await settle()
+  }
+  // The radar's background `claude mcp list` has run by the first check.
+  await to(15)
+  expect(reconnects).toEqual(['reconnect claude.ai Slack'])
+  expect(state().dropped).toMatchObject([{ server: 'claude.ai Slack', tries: 1, last: 'failed', atStart: true }])
+  // A gap of 1 minute after the first try (due at 75: the 120 check), 2
+  // after the second (due at 240), 4 after the third (due at 480).
+  await to(60)
+  expect(reconnects).toHaveLength(1)
+  await to(120)
+  expect(reconnects).toHaveLength(2)
+  await to(180)
+  expect(reconnects).toHaveLength(2)
+  await to(240)
+  expect(reconnects).toHaveLength(3)
+  // Three failures: stuck, for the coordinator and the office.
+  expect(state().dropped).toMatchObject([{ server: 'claude.ai Slack', tries: 3, stuck: true }])
+  // sentry needs sign-in (the radar's 🔑): never retried here.
+  expect(reconnects.every((r) => r === 'reconnect claude.ai Slack')).toBe(true)
+  // It comes up: the next try succeeds, and once live it leaves the file.
+  reply = 'Reconnected to claude.ai Slack.'
+  await to(420)
+  expect(reconnects).toHaveLength(3)
+  await to(480)
+  expect(reconnects).toHaveLength(4)
+  expect(toasts).toContain('MCP claude.ai Slack reconnected')
+  tools = [...tools, { name: 'mcp__claude_ai_Slack__slack_read_thread', serverName: 'claude_ai_Slack', tokens: 1, isLoaded: false }]
+  await to(540)
+  expect(state().dropped).toEqual([])
+  expect(reconnects).toHaveLength(4)
+})
+
+test('MCP heal: a name /mcp does not know is sent once, then reported, not repeated', { timeoutMs: 20_000 }, async ($, on) => {
+  const store: Record<string, unknown> = { 'cockpit-settings': {} }
+  const written: Record<string, string> = {}
+  baseStubs(on, { store, written })
+  on('mcp.call', () => ({ value: { content: [] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  let tools = [{ name: 'mcp__weird__x', serverName: 'weird', tokens: 1, isLoaded: true }]
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: tools } }, rateLimits: [] } }) as any)
+  const reconnects: string[] = []
+  on('command.run', (_$: any, e: any) => {
+    if (e.command === 'mcp') reconnects.push(e.args)
+    return { text: e.command === 'mcp' ? 'MCP server "weird" not found' : '' }
+  })
+  const settle = async () => {
+    for (let i = 0; i < 400; i++) await Promise.resolve()
+  }
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(15_000)
+  await settle()
+  // It was live here, then went.
+  tools = []
+  await clock.advance(60_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect weird'])
+  const st = JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}')
+  expect(st.dropped).toMatchObject([{ server: 'weird', last: 'unknown', stuck: true }])
+  await clock.advance(60 * 60_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect weird'])
+})
+
+test('MCP heal: /mcp answering with no text counts as reconnected when the server\'s tools are back', { timeoutMs: 20_000 }, async ($, on) => {
+  // Live 2026-11-11: the pane read "Successfully reconnected to claude.ai
+  // Slack" while $.command.run's text was empty.
+  const store: Record<string, unknown> = { 'cockpit-settings': {} }
+  const toasts: string[] = []
+  const written: Record<string, string> = {}
+  const list = 'claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected'
+  baseStubs(on, { store, toasts, written, run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
+  on('mcp.call', () => ({ value: { content: [] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  let tools: any[] = [{ name: 'mcp__portal__x', serverName: 'portal', tokens: 1, isLoaded: true }]
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: tools } }, rateLimits: [] } }) as any)
+  const reconnects: string[] = []
+  on('command.run', (_$: any, e: any) => {
+    if (e.command === 'mcp') {
+      reconnects.push(e.args)
+      tools = [...tools, { name: 'mcp__claude_ai_Slack__slack_read_thread', serverName: 'claude_ai_Slack', tokens: 1, isLoaded: false }]
+    }
+    return { text: '' }
+  })
+  const settle = async () => {
+    for (let i = 0; i < 400; i++) await Promise.resolve()
+  }
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(15_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect claude.ai Slack'])
+  expect(toasts).toContain('MCP claude.ai Slack reconnected')
+  await clock.advance(60_000)
+  await settle()
+  expect(JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}').dropped).toEqual([])
+  expect(reconnects).toHaveLength(1)
+})
+
+test('MCP heal: /mcp\'s answer row is read while the reconnect runs; "not found" stops the name; no prompt in a session without auto_continue', { timeoutMs: 20_000 }, async ($, on) => {
+  // Live 2026-11-11: $.command.run's text was empty; the answer was the
+  // transcript row "MCP server \"nope_x\" not found".
+  const store: Record<string, unknown> = { 'cockpit-settings': {} }
+  const written: Record<string, string> = {}
+  const submitted: string[] = []
+  baseStubs(on, { store, written, submitted })
+  on('mcp.call', () => ({ value: { content: [] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  let tools: any[] = [{ name: 'mcp__weird__x', serverName: 'weird', tokens: 1, isLoaded: true }]
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: tools } }, rateLimits: [] } }) as any)
+  const reconnects: string[] = []
+  // The command's answer row goes in while the command runs, as the engine
+  // appends it: the test appends it from outside, then lets the command end.
+  let answered: (() => void) | undefined
+  on('command.run', async (_$: any, e: any) => {
+    if (e.command === 'mcp') {
+      reconnects.push(e.args)
+      await new Promise<void>((r) => (answered = r))
+    }
+    return { text: '' }
+  })
+  on('session.append', (_$: any, _e: any, next: any) => next(_e))
+  const answer = async (text: string) => {
+    for (let i = 0; i < 2000 && !answered; i++) await Promise.resolve()
+    await $.session.append({ message: { type: 'system', name: 'local_command', content: [{ type: 'text', text }] }, door: 'command', origin: { kind: 'plugin', name: 'test' } } as any).catch(() => undefined)
+    answered?.()
+    answered = undefined
+  }
+  on('tool.call', () => ({ isError: true, result: { content: [{ type: 'text', text: 'MCP error -32000: Connection closed' }] } }) as any)
+  on('turn.start', (_$: any, e: any) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }) as any)
+  const settle = async () => {
+    for (let i = 0; i < 400; i++) await Promise.resolve()
+  }
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(15_000)
+  await settle()
+  tools = []
+  await $.tool.call({ tool: 'mcp__weird__x', input: {} } as any)
+  await $.turn.start({ turnId: 't1', text: 'x' })
+  await $.turn.complete({ turnId: 't1', answer: '', durationMs: 1, isAborted: false, usage: null } as any)
+  await answer('<local-command-stdout>MCP server "weird" not found</local-command-stdout>')
+  await settle()
+  await clock.advance(60_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect weird'])
+  expect(JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}').dropped).toMatchObject([{ server: 'weird', last: 'unknown', stuck: true }])
+  // Back on its own: the person's session (no auto_continue) gets no prompt.
+  tools = [{ name: 'mcp__weird__x', serverName: 'weird', tokens: 1, isLoaded: true }]
+  await clock.advance(60_000)
+  await settle()
+  expect(submitted.filter((t) => t.includes('[cc-mods] MCP'))).toEqual([])
 })
 
 test('the Now tab shows the Model card from ccproxy usage, and says when ccproxy is too old', async ($, on) => {

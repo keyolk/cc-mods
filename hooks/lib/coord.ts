@@ -76,6 +76,10 @@ export type Worker = {
   // it was alive all along: observe takes it back as it was, owned or
   // adopted, and autoAdopt does not adopt its session anew.
   goneAt?: number
+  // MCP servers its cc-mods reports down and past retrying alone
+  // (state/office/mcp/<sid>.json `stuck`), by name: told to the coordinator
+  // once each until they come back (mcpWakes).
+  mcpDown?: string[]
 }
 
 export type LogEntry = { at: number; kind: 'order' | 'spawn' | 'adopt' | 'release' | 'close' | 'send' | 'event' | 'limits'; text: string }
@@ -93,6 +97,7 @@ export type Ledger = {
   released: string[]
   at: number
   policyBefore?: Policy // this session's policy before /coord on, put back by /coord off
+  mcpDown?: string[] // the coordinator's own, as Worker.mcpDown
 }
 
 export const LOG_MAX = 200
@@ -138,6 +143,7 @@ export function parseLedger(json: string | undefined, sid: string, name: string,
     log: Array.isArray(raw.log) ? raw.log.slice(-LOG_MAX) : [],
     released: Array.isArray(raw.released) ? raw.released.filter((x: unknown) => typeof x === 'string').slice(-RELEASED_MAX) : [],
     policyBefore: raw.policyBefore && typeof raw.policyBefore === 'object' ? raw.policyBefore : undefined,
+    mcpDown: Array.isArray(raw.mcpDown) ? raw.mcpDown.filter((x: unknown) => typeof x === 'string') : undefined,
     at: Number(raw.at) || now,
   }
 }
@@ -307,6 +313,14 @@ export const DECISION_BRIEF =
   'At most 4 options; each detail carries the option\'s cost in under 100 characters (the office shows it as is). ' +
   'Write the page yourself only when a figure is truly needed: one short page with at most one small inline SVG, under 8 KB; no tabs, no second figure, no re-telling of the research (link the research brief instead), no external CSS or scripts; then `brief ask <brief>` on it.'
 
+// A worker whose MCP tool fails on the connection. cc-mods reconnects only
+// between turns ($.command.run waits for the session to be idle), so a
+// worker that waits inside its turn waits for nothing: it ends the turn, and
+// cc-mods prompts it to go on once the server is back (register.ts
+// MCP_RESUME). Before this a worker sent BLOCKED and nobody reconnected.
+export const MCP_WAIT =
+  '- When an MCP tool fails on its connection (ECONNRESET, "not connected", "connection closed", or ToolSearch says the server failed to connect), do not send BLOCKED for it: do the rest of the work that does not need that server, then end your turn with one line naming the server you wait on. cc-mods reconnects it between turns and prompts you to go on once it is back; when it cannot, it tells the coordinator itself.'
+
 // What every worker is told about reporting, after the coordinator's brief.
 // `fallback`: the command that queues a report in the coordinator's office
 // inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
@@ -329,6 +343,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     '- Ask the person once per task where you can: early on, list every open question the work raises, and go on with what needs no answer; then ask them together, one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path. Ask alone and at once only what stops the work entirely.\n' +
     grantRule(briefGrant) + '\n' +
     '- When a skill you use fails you (a script fails, its guidance is wrong, a case it does not cover), work around it to finish, and add a line to your READY or BLOCKED report: `SKILL <skill name>: <the problem in one line> — <evidence: the command and its error, or file:line>`. Do not edit the skill here: fixing it is a separate task.\n' +
+    MCP_WAIT + '\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     ONE_BROWSER + '\n' +
     'Messages from the coordinator start with `[coordinator]`: a message from another session (it may arrive in the middle of your turn; act on it there) or a prompt. The person may also type in this pane; their words win.' +
@@ -419,7 +434,7 @@ export function parsePanes(out: string): PaneSeen[] {
 // call a permission ask waits on (lib/asks.ts).
 export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}\t#{@cc_pane_asks}'
 
-export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone' | 'back'; text: string; wake: boolean }
+export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone' | 'back' | 'mcp'; text: string; wake: boolean; server?: string }
 const GONE = 'its session is gone'
 const BACK = 'its session is back (taken for gone, it was alive)'
 
@@ -539,6 +554,55 @@ export function who(slug: string, summary?: string): string {
   return s && s !== slug ? s + ' (' + slug + ')' : slug
 }
 
+// A session's MCP state as its cc-mods writes it (register.ts mcpExport):
+// the servers it is missing, each with its tries and whether it is stuck.
+export type McpDown = { server: string; tries: number; last?: string; text?: string; stuck?: boolean; atStart?: boolean }
+export function parseMcpState(json: string | undefined): McpDown[] {
+  try {
+    const d = JSON.parse(json ?? '')
+    return (Array.isArray(d?.dropped) ? d.dropped : [])
+      .filter((x: any) => x && typeof x.server === 'string' && x.server)
+      .map((x: any) => ({ server: x.server, tries: Number(x.tries) || 0, last: typeof x.last === 'string' ? x.last : undefined, text: typeof x.text === 'string' ? x.text : undefined, stuck: x.stuck === true, atStart: x.atStart === true }))
+  } catch {
+    return []
+  }
+}
+
+// The line a stuck server makes: `<who>: MCP <server> 끊김 (<why>)`. The
+// session retries on its own (1, 2, 4 … 30 minutes apart); the line is for
+// when that has not worked, so the coordinator tells the person or presses
+// 다시 연결 for it.
+export function mcpText(who: string, d: McpDown): string {
+  const why = d.last === 'unknown'
+    ? '/mcp가 이 이름을 모름: 이름 매핑 실패, 자동 재연결 멈춤'
+    : (d.atStart ? '세션 시작 때 연결 실패, ' : '') + '자동 재연결 ' + d.tries + '회 실패' + (d.text ? ': ' + d.text.replace(/\s+/g, ' ').slice(0, 120) : '')
+  return who + ': MCP ' + d.server + ' 끊김 (' + why + ')'
+}
+
+// The coordinator's and its workers' stuck MCP servers, read from each
+// session's state file (`files`: sid → its JSON). A server is told once,
+// when it turns stuck, and again only after it came back and fell again;
+// the ledger keeps what is down (mcpDown) so current() can drop a held line
+// that came back meanwhile. A quiet worker (the person's own session) is
+// recorded, not told, as its asks are.
+export function mcpWakes(l: Ledger, files: ReadonlyMap<string, string | undefined>, sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
+  const changes: Change[] = []
+  const step = (sid: string, slug: string, before: readonly string[] | undefined, wake: boolean): string[] | undefined => {
+    const down = parseMcpState(files.get(sid)).filter((d) => d.stuck)
+    for (const d of down) if (!before?.includes(d.server)) changes.push({ slug, sid, kind: 'mcp', server: d.server, text: mcpText(who(slug, sums.get(sid)), d), wake })
+    return down.length ? down.map((d) => d.server) : undefined
+  }
+  const same = (a?: readonly string[], b?: readonly string[]) => (a ?? []).join('\n') === (b ?? []).join('\n')
+  const self = step(l.sid, 'coordinator', l.mcpDown, true)
+  const workers = l.workers.map((w) => {
+    if (w.endedAt) return w
+    const down = step(w.sid, w.slug, w.mcpDown, !quiet(w))
+    return same(down, w.mcpDown) ? w : { ...w, mcpDown: down }
+  })
+  if (same(self, l.mcpDown) && workers.every((w, i) => w === l.workers[i])) return { ledger: l, changes }
+  return { ledger: { ...l, mcpDown: self, workers }, changes }
+}
+
 // The worker a [coord] line is about: its slug at the start (`fix: …`,
 // `fix (pane …`) or in the parentheses after a summary (`… (fix): …`,
 // `… (fix, pane …`). The newest worker of that slug.
@@ -567,9 +631,11 @@ export function typedNote(w: Worker, now: number): string {
 // after its turn. A gone worker stays news unless its session was seen again
 // (taken back); a worker back stays news while it is not gone again.
 export function current(c: Change, l: Ledger, now: number): boolean {
+  if (c.kind === 'mcp' && c.sid === l.sid) return !!l.mcpDown?.includes(c.server ?? '')
   const ws = l.workers.filter((x) => x.sid === c.sid)
   const w = ws.find((x) => !x.endedAt) ?? ws[0]
   if (!w) return false
+  if (c.kind === 'mcp') return !w.endedAt && !!w.mcpDown?.includes(c.server ?? '')
   if (c.kind === 'gone') return !!w.endedAt
   if (w.endedAt) return false
   if (c.kind === 'back') return true
@@ -649,6 +715,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
     "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it, and the office's 지휘 view already shows it on that worker's row with its options to press. Do not tell the person to go to the pane, and do not repeat it: say once in chat `권한 확인 N건 대기 (지휘)` with what each asks. Only while the office is down (`curl -sf -o /dev/null http://localhost:8796/` fails) name the pane and window instead. When a folder outside its cwd is the cause, close and respawn it with add_dirs instead.",
     "- `[coord] <summary> (<slug>): 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
+    "- `[coord] <summary> (<slug>): MCP <server> 끊김 (<why>)` (`coordinator: MCP …` for your own session) is an MCP server that session's cc-mods could not reconnect on its own: it keeps retrying (1, 2, 4 … 30 minutes apart), and the office shows 🔌 on that session's row with a 다시 연결 button. Tell the person once in chat `MCP 끊김: <server> (<who>)` with the why. When the why says 이름 매핑 실패, that is a cc-mods bug: route a fix with its text. Do not tell the worker to reconnect it, and do not run /mcp for it.",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',
     ONE_BROWSER + ' Tell workers the same when a brief needs a browser.',
     '- Report to the person in ' + language + ', briefly, with tables.',

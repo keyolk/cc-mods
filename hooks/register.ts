@@ -57,7 +57,7 @@ import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from '
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from './lib/asks'
 import { clip, hhmm } from './lib/text'
 import { INBOX_HOLD_MAX_MS, INBOX_TRIES, failWake, inboxPrompt, landed, parseInbox, putBack, resumed, type InboxMsg } from './lib/inbox'
-import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, type McpWatch } from './lib/mcpheal'
+import { displayName, healDue, healShown, healStuck, healTargets, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, type HealTry, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
 import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseOpen, parseSums, type ExpCheck } from './lib/exp'
 import { focusWindowArgv, parseBrief, parseWindows as parseTmuxWindows, type Elsewhere, type Todo } from './lib/elsewhere'
@@ -486,7 +486,7 @@ async function startTerminalLogin($: any, server: string) {
     if (g && /Status:\s*✔?\s*Connected/.test(g.stdout ?? '')) {
       await closeLoginPane($)
       const text = await reconnectMcp($, server).catch((err: unknown) => String(err))
-      const here = !/not connected|failed|error/i.test(text)
+      const here = reconnectOutcome(text) === 'ok'
       return finishMcpLogin($, server, here ? 'logged in and reconnected here' : 'logged in · /mcp → reconnect ' + server + ' to use it here')
     }
     if (Date.now() - started > 10 * 60_000) {
@@ -1618,21 +1618,61 @@ async function wake($: any): Promise<boolean> {
   activeAt = await clockNow($)
   return was
 }
-// MCP auto-reconnect (lib/mcpheal.ts): on unless Settings turned it off. Only
-// a server that was in use and dropped is retried, one at a time; servers that
-// never connected (needs sign-in, unused) are left alone.
+// MCP auto-reconnect (lib/mcpheal.ts): on unless Settings turned it off. A
+// server is retried one at a time, between turns, with a growing gap
+// (healDue): one this session had and lost, and one the radar says works
+// that this session never got (it failed at start). Servers that need
+// sign-in are the radar's 🔑, not retried here.
 let mcpHealEnabled = true
-const mcpHealTries = new Map<string, { at: number; n: number }>()
+// By normalized name (the tool-name spelling): the watch, a failed call and
+// the radar each spell a server their own way.
+const mcpHealTries = new Map<string, HealTry>()
 // Tools whose call failed on a dropped server this turn. command.run cannot run
 // from a tool.call hook (it would wait on the turn the hook holds), so the
 // reconnect happens at turn.complete.
 const mcpHealPending = new Set<string>()
-const MCP_HEAL_GAP_MS = 2 * 60_000
-const MCP_HEAL_MAX = 3
+// Servers whose failed call ended a turn: once one is back, the session is
+// told to go on with what it was doing (a worker told to end its turn and
+// wait, coord.ts reporting rule), so nobody has to prompt it.
+const mcpHealResume = new Set<string>()
 
+// /mcp's answer. Live (2026-11-11) `text` came back empty both on success
+// ("Successfully reconnected to claude.ai Slack" in the pane) and on an
+// unknown name ("MCP server \"nope_x\" not found"): the answer is only a
+// transcript row. So the rows appended while the command runs are kept
+// (mcpAnswerRows, filled by a session.append hook) and read as the answer,
+// and healServer also looks whether the server's tools came back.
+let mcpAnswerRows: string[] | null = null
 async function reconnectMcp($: any, server: string): Promise<string> {
-  const r = await $.command.run({ command: 'mcp', args: 'reconnect ' + server })
-  return String(r?.text ?? '').trim()
+  mcpAnswerRows = []
+  try {
+    const r = await $.command.run({ command: 'mcp', args: 'reconnect ' + server })
+    return [r?.text, ...(Array.isArray(r?.context) ? r.context : []), ...mcpAnswerRows].filter((x) => typeof x === 'string' && x.trim()).join('\n').trim()
+  } finally {
+    mcpAnswerRows = null
+  }
+}
+// A row's text, without the <local-command-stdout> wrapping the engine puts
+// around a command's output.
+function rowText(content: unknown): string {
+  const parts = typeof content === 'string' ? [content] : Array.isArray(content) ? content.filter((b: any) => b?.type === 'text').map((b: any) => String(b.text ?? '')) : []
+  return parts.join('\n').replace(/<\/?local-command-std(out|err)>/g, '').trim()
+}
+// Whether a server is this session's now (its tools are in the context).
+// Live, the tool list lagged a reconnect by more than 89 ms, so a `false`
+// here is not final: the watch's next look (mcpCheck) finds the server live
+// and settles it as reconnected (its record cleared, the session resumed).
+async function mcpLive($: any, server: string): Promise<boolean | undefined> {
+  const u = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
+  const tools = u?.context?.breakdown?.mcpTools
+  if (!Array.isArray(tools)) return undefined
+  return liveServers(tools).some((s) => normalizeServer(s) === normalizeServer(server))
+}
+
+
+// The servers' own names, as /mcp takes them: the radar's `claude mcp list`.
+async function mcpNames($: any) {
+  return radarNames((await read($, authA)) as AuthItem[])
 }
 
 // A call on `tool` failed because its server dropped: reconnect that server.
@@ -1640,33 +1680,62 @@ async function healMcpTool($: any, tool: string) {
   if (!mcpHealEnabled) return
   const norm = mcpServerKey(tool)
   if (!norm) return
-  const names = ((await read($, authA)) as AuthItem[]).map((i) => serverOf(i.id)).filter((x): x is string => !!x)
-  const server = names.find((n) => normalizeServer(n) === norm)
-  if (server) await healServer($, server)
+  mcpHealResume.add(norm)
+  await healServer($, norm)
 }
-async function healServer($: any, server: string) {
-  const t = mcpHealTries.get(server) ?? { at: -Infinity, n: 0 }
-  if (t.n >= MCP_HEAL_MAX || Date.now() - t.at < MCP_HEAL_GAP_MS) return
-  mcpHealTries.set(server, { at: Date.now(), n: t.n + 1 })
+// `server`: any spelling. Sent under the name /mcp knows (displayName); an
+// answer of "no server named" is kept (`unknown`) and that name is not sent
+// again. True when it came back.
+async function healServer($: any, server: string, force = false): Promise<boolean> {
+  const key = normalizeServer(server)
+  const t = mcpHealTries.get(key)
+  // The engine's clock, as the watch's timer runs on it.
+  const now = await clockNow($)
+  if (!force && !healDue(t, now)) return false
+  const name = displayName(server, (await mcpNames($)).all)
+  let text: string
   try {
-    const text = await reconnectMcp($, server)
-    $.ui.log('mcp heal ' + server + ': ' + text, { to: 'debug' })
-    if (!/not connected|failed|error/i.test(text)) $.ui.toast('MCP ' + server + ' reconnected')
+    text = await reconnectMcp($, name)
   } catch (err) {
-    $.ui.log('mcp heal ' + server + ' failed: ' + String(err), { to: 'debug' })
+    text = String(err)
   }
+  let last = reconnectOutcome(text)
+  // An answer that says nothing either way: the server's tools decide.
+  if (last === 'failed' && !/\S/.test(text) && (await mcpLive($, name))) last = 'ok'
+  $.ui.log('mcp heal ' + name + ' (' + last + '): ' + (text || '(no text; checked the session\'s tools)'), { to: 'debug' })
+  if (last === 'ok') {
+    mcpHealTries.set(key, { at: now, n: 0, last })
+    $.ui.toast('MCP ' + name + ' reconnected')
+    await mcpResume($, key, name)
+    return true
+  }
+  mcpHealTries.set(key, { at: now, n: (t?.n ?? 0) + 1, last, text: clip(text, 200), wall: t?.n ? (t.wall ?? Date.now()) : Date.now() })
+  return false
+}
+const MCP_RESUME = (name: string) => '[cc-mods] MCP ' + name + ' is reconnected: go on with what its failed call was for.'
+// A server whose failed call ended a turn is back (seen by the reconnect, or
+// by the watch when the tool list caught up later): the session goes on.
+// Only where auto_continue is allowed (every worker; lib/coord.ts
+// WORKER_CAPS): in the person's own session a prompt typed in their place
+// would start a turn they did not ask for, so there the toast is all.
+async function mcpResume($: any, key: string, name: string) {
+  if (!mcpHealResume.delete(key) || mainTurnRunning) return
+  if (((await read($, policyA)) as Policy | null)?.caps.auto_continue !== 'allow') return
+  void $.prompt.submit({ text: MCP_RESUME(name), asUser: true }).catch(() => undefined)
 }
 
 // This session's own MCP connections (lib/mcpheal.ts nextWatch), checked every
 // minute and as a turn ends: a server can drop while nothing calls it (a
-// sleep, a proxy reset), and the first sign used to be the failed call. A
-// dropped server is reconnected on its own while the session is between turns
-// (auto-reconnect on, the same gap and cap as after a failed call), and the
-// state goes to the office (office.py mcp_state), whose card can ask for a
-// reconnect by hand (officeMcp).
+// sleep, a proxy reset), and the first sign used to be the failed call. The
+// servers to retry (healTargets) are reconnected while the session is
+// between turns, and the state goes to the office (office.py mcp_state),
+// whose card and 지휘 row show it and can ask for a reconnect by hand
+// (officeMcp); a coordinator reads its workers' (coord.ts mcpWakes).
 let mcpWatch: McpWatch = MCP_WATCH_EMPTY
 let mcpWatchOut = ''
 let mcpChecking = false
+// The servers to show and retry now, by their tool-name spelling.
+let mcpDown: string[] = []
 async function mcpCheck($: any) {
   if (mcpChecking || !sid) return
   mcpChecking = true
@@ -1675,16 +1744,46 @@ async function mcpCheck($: any) {
     const u = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
     const tools = u?.context?.breakdown?.mcpTools
     if (!Array.isArray(tools)) return
-    mcpWatch = nextWatch(mcpWatch, liveServers(tools), Date.now())
-    if (mcpHealEnabled && !mainTurnRunning) for (const d of mcpWatch.dropped) await healServer($, d.server)
+    const live = liveServers(tools)
+    mcpWatch = nextWatch(mcpWatch, live, Date.now())
+    // Back on its own (or by hand): its count starts over. A reconnect's
+    // own record (ok) stays: it holds the first gap against a server that
+    // drops again at once.
+    for (const s of live) if (mcpHealTries.get(normalizeServer(s))?.last !== 'ok') mcpHealTries.delete(normalizeServer(s))
+    for (const s of live) if (mcpHealResume.has(normalizeServer(s))) await mcpResume($, normalizeServer(s), s)
+    // Servers this session never had are retried only when they are claude.ai
+    // connectors: those are the account's, in every session. A project's
+    // server in the shared radar (one `claude mcp list`, run from some
+    // session's directory) may not be this session's at all, and /mcp's
+    // "not found" for it reaches no hook as text.
+    const atStart = (await mcpNames($)).connected.filter((n) => n.startsWith('claude.ai '))
+    mcpDown = healTargets(mcpWatch.dropped.map((d) => d.server), atStart, live)
+    if (mcpHealEnabled && !mainTurnRunning) for (const s of mcpDown) await healServer($, s)
     await mcpExport($)
   } finally {
     mcpChecking = false
   }
 }
+// The file the office and a coordinator read: `dropped` holds every server
+// this session is missing and has tried (since: when it went, or the first
+// try for one that never came up), `stuck` the ones to tell the person about.
 async function mcpExport($: any) {
   if (!home || !sid) return
-  const out = JSON.stringify({ live: mcpWatch.live, dropped: mcpWatch.dropped.map((d) => ({ ...d, tries: mcpHealTries.get(d.server)?.n ?? 0 })), heal: mcpHealEnabled })
+  const seen = new Set(mcpWatch.seen.map(normalizeServer))
+  const since = new Map(mcpWatch.dropped.map((d) => [normalizeServer(d.server), d.since]))
+  const names = (await mcpNames($)).all
+  const dropped = mcpDown
+    .map((s) => ({ s, k: normalizeServer(s), t: mcpHealTries.get(normalizeServer(s)) }))
+    .filter((x) => since.has(x.k) || healShown(x.t, seen.has(x.k)))
+    .map((x) => ({
+      server: displayName(x.s, names),
+      since: since.get(x.k) ?? x.t?.wall ?? Date.now(),
+      tries: x.t?.n ?? 0,
+      ...(x.t?.last ? { last: x.t.last, text: x.t.text } : {}),
+      ...(healStuck(x.t, seen.has(x.k)) ? { stuck: true } : {}),
+      ...(seen.has(x.k) ? {} : { atStart: true }),
+    }))
+  const out = JSON.stringify({ live: mcpWatch.live, dropped, heal: mcpHealEnabled })
   if (out === mcpWatchOut) return
   const dir = home + '/.claude/state/office/mcp'
   await $.process.run(['mkdir', '-p', dir], { timeoutMs: 3000 }).catch(() => {})
@@ -1709,15 +1808,12 @@ async function officeMcp($: any) {
     }
     if (Date.now() / 1000 - Number(ask.at ?? 0) > 120) return
     const named = Array.isArray(ask.servers) ? ask.servers.filter((x): x is string => typeof x === 'string' && !!x) : []
-    const want = named.length ? named : mcpWatch.dropped.map((d) => d.server)
+    const want = named.length ? named : mcpDown
     if (!want.length) return void $.ui.toast('office: no MCP server has dropped here')
     const bad: string[] = []
-    for (const server of want) {
-      mcpHealTries.delete(server)
-      const text = await reconnectMcp($, server).catch((err: unknown) => String(err))
-      $.ui.log('office mcp reconnect ' + server + ': ' + text, { to: 'debug' })
-      if (/not connected|failed|error/i.test(text)) bad.push(server)
-    }
+    // By hand: the gap does not hold it back, and a name /mcp did not know
+    // is tried again (resolved anew from the radar).
+    for (const server of want) if (!(await healServer($, server, true))) bad.push(server)
     $.ui.toast(bad.length ? 'office: MCP ' + bad.join(', ') + ' did not reconnect' : 'office: MCP ' + want.join(', ') + ' reconnected')
     await mcpCheck($)
   } finally {
@@ -3457,6 +3553,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     mcpHealEnabled = cockpitPrefs.mcpHeal !== false
     mcpHealTries.clear()
     mcpHealPending.clear()
+    mcpHealResume.clear()
     slashHidCockpit = false
     await loadEngineRules($)
     // The palette is a one-off: a session (or a reload) starts with it closed.
@@ -3876,6 +3973,15 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         quietTexts.push(t)
       }
       if (quietTexts.length > 400) quietTexts.splice(0, quietTexts.length - 400)
+    }
+    return next(e)
+  })
+
+  // /mcp reconnect's answer row, while cc-mods runs it (reconnectMcp).
+  on('session.append', { door: ['command', 'notice', 'note'] }, async ($: any, e: any, next: any) => {
+    if (mcpAnswerRows && !e.agentId) {
+      const t = rowText(e.message?.content)
+      if (t && /mcp|reconnect/i.test(t)) mcpAnswerRows.push(t)
     }
     return next(e)
   })

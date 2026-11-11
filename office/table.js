@@ -1,7 +1,8 @@
 // The command view's table (지휘): a row a session, its cells overlaying
 // what it holds — ❓N decisions its briefs ask, 🙋 waiting on an answer or an
 // approval, 🔎N finished work put up for a look, 📨/🚨N slx triggers (a Slack
-// mention, a Meerkat incident) on it or of its own, ⚙ at work, ✓ quiet — and how
+// mention, a Meerkat incident) on it or of its own, 🔌 MCP servers it lost (a
+// stuck one needs the person: its card has 다시 연결), ⚙ at work, ✓ quiet — and how
 // long it has waited. /command's `table` (office/turn.py) gives the rows and
 // their order; each row only names what it holds, and the details come from
 // `pending`, `calls` and `reviews`, so an answer that takes one out shows at
@@ -77,7 +78,10 @@ function tblAll() {
     // Set aside: out of 내 차례 until its time or a need it did not hold
     // (office/turn.py says which); its time come: up, until it is left.
     const deferred = row.sid && tblDfr() ? dfrUntil(row) : null, woke = !deferred && row.sid && tblDfr() && dfrWoke(row)
-    return { row, ds, c, rs, xs, deferred, woke, memos: row.memos || [], needs: !deferred && !!(ds.length || c || rs.length || (own && xs.length) || woke) }
+    // MCP servers the session lost (office.py mcp_state); a stuck one is
+    // the person's to reconnect (its cc-mods gave up retrying alone).
+    const mcp = row.mcp || [], mstuck = mcp.filter((m) => m.stuck)
+    return { row, ds, c, rs, xs, mcp, mstuck, deferred, woke, memos: row.memos || [], needs: !deferred && !!(ds.length || c || rs.length || (own && xs.length) || woke || mstuck.length) }
   })
 }
 function tblLegacy(d) {
@@ -106,6 +110,13 @@ const tblNeeds = () => tblAll().filter((R) => R.needs)
 // slx.js, unless the server that sent this page has none.
 const tblSlxOn = () => typeof slxList === 'function'
 const tblFind = (key) => tblAll().find((R) => R.row.key === key)
+// One lost MCP server in words: which, and why it is still down. Its card
+// (the 🔌 tab) has the 다시 연결 button.
+function tblMcpLine(m) {
+  const name = String(m.server || '').replace(/^claude\.ai /, '')
+  const why = m.last === 'unknown' ? '이름 매핑 실패' : (m.atStart ? '시작 때 연결 실패 · ' : '') + '자동 재연결 ' + (m.tries || 0) + '회' + (m.stuck ? ' 실패' : ' 시도 중')
+  return '🔌 MCP ' + name + ' 끊김 · ' + why
+}
 
 // A row's tabs, the most urgent first.
 function tblTabs(R) {
@@ -116,8 +127,12 @@ function tblTabs(R) {
   if (R.rs.length) t.push({ k: 'rev', label: '🔎 검토 ' + R.rs.length })
   if (R.xs.length) t.push({ k: 'slx', label: R.xs[0].icon + ' slx' + (R.xs.length > 1 ? ' ' + R.xs.length : '') })
   if (R.row.sid && (R.memos.length || cmd.sel?.memos === R.row.sid)) t.push({ k: 'memo', label: '📝 메모 ' + R.memos.length })
+  // A server it could not get back: its card holds 다시 연결 (C), so the
+  // card comes before 마지막 답.
+  const card = R.row.sid && R.row.live !== false ? { k: 'card', label: R.mcp.length ? '🔌 MCP · 카드' : '🗂 카드' } : null
+  if (card && R.mstuck.length) t.push(card)
   if (R.row.sid && R.row.live !== false && !R.c) t.push({ k: 'said', label: '마지막 답' })
-  if (R.row.sid && R.row.live !== false) t.push({ k: 'card', label: '🗂 카드' })
+  if (card && !R.mstuck.length) t.push(card)
   return t
 }
 // The tab the left pane shows now, read from what it shows.
@@ -225,6 +240,7 @@ function tblCells(R) {
   if (R.c) st.push(R.c.attention === 'alert' ? '❗' : '🙋')
   if (R.rs.length) st.push('🔎' + R.rs.length)
   if (R.xs.length) st.push(R.xs[0].icon + (R.xs.length > 1 ? R.xs.length : ''))
+  if (R.mcp.length) st.push('🔌' + (R.mcp.length > 1 ? R.mcp.length : ''))
   if (R.woke) st.push('⏰')
   if (R.memos.length) st.push('📝' + R.memos.length)
   if (!st.length || (st.length === 1 && R.memos.length)) st.push(R.row.state === 'working' ? '⚙' : R.row.live === false ? '·' : '✓')
@@ -243,6 +259,7 @@ function tblAskNow(R) {
   if (q) return q.question
   if (R.rs.length) return R.rs[0].title
   if (R.xs.length) return slxLine(R.xs[0].text).slice(0, 80)
+  if (R.mcp.length) return tblMcpLine(R.mstuck[0] || R.mcp[0])
   if (R.woke) return '⏰ 다시 볼 시각' + (R.memos.length ? ' · 📝 ' + R.memos[0].text.slice(0, 60) : '')
   if (R.memos.length) return '📝 ' + R.memos[0].text.slice(0, 80)
   return ''
