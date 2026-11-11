@@ -65,6 +65,13 @@ _running = {"on": False}
 _knows: dict[str, tuple[float, str]] = {}
 
 
+# Where `make install` puts a gcl that knows -json, rsvp and find: the
+# checkout ($GCL_SRC, else ~/src/keyolk/gcl) on its main.
+def install_cmd() -> str:
+    src = os.environ.get("GCL_SRC") or "~/src/keyolk/gcl"
+    return f"cd {src} && git switch main && git pull --ff-only && make install"
+
+
 def binary() -> str | None:
     """The gcl to run: $GCL_BIN, else gcl on PATH, else ~/.local/bin/gcl (make install)."""
     for p in (os.environ.get("GCL_BIN"), shutil.which("gcl"), os.path.expanduser("~/.local/bin/gcl")):
@@ -132,9 +139,9 @@ def parse(stdout: str) -> list[dict]:
 def _fetch() -> tuple[list[dict] | None, str | None]:
     b = binary()
     if not b:
-        return None, "gcl이 없습니다 (keyolk/gcl에서 make install)"
+        return None, "gcl이 없습니다"
     if not knows_json(b):
-        return None, f"{b}는 -json을 모릅니다: gcl을 새로 설치하세요 (make install)"
+        return None, f"{b}가 옛 버전입니다 (-json 없음)"
     try:
         r = subprocess.run([b, "-json", "-days", "2"], capture_output=True, text=True, timeout=RUN_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -232,9 +239,11 @@ def view(now: float | None = None) -> dict:
     evs, err, at = read()
     b = binary()
     can = bool(b) and knows_cli(b)
+    # A gcl missing or too old: the command that fixes it, shown with a copy button.
+    fix = install_cmd() if not b or not knows_json(b) or not can else None
     if evs is None:
-        return {"events": [], "now": [], "next": None, "untilNext": None, "free": [], "at": at or None, "error": err or ("일정을 읽는 중입니다" if _running["on"] else None), "loading": _running["on"], "canWrite": can}
-    return {"events": evs, **summarize(evs, now), "at": at, "error": err, "stale": bool(err), "canWrite": can}
+        return {"events": [], "now": [], "next": None, "untilNext": None, "free": [], "at": at or None, "error": err or ("일정을 읽는 중입니다" if _running["on"] else None), "loading": _running["on"], "canWrite": can, "fix": fix}
+    return {"events": evs, **summarize(evs, now), "at": at, "error": err, "stale": bool(err), "canWrite": can, "fix": fix}
 
 
 def knows_cli(path: str) -> bool:
@@ -361,9 +370,9 @@ def _event_by_id(eid: str) -> dict | None:
 def _run_cli(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[dict | None, str | None]:
     b = binary()
     if not b:
-        return None, "gcl이 없습니다 (keyolk/gcl에서 make install)"
+        return None, "gcl이 없습니다"
     if not knows_cli(b):
-        return None, f"{b}는 rsvp/find를 모릅니다: gcl을 새로 설치하세요 (make install)"
+        return None, f"{b}가 옛 버전입니다 (rsvp/find 없음)"
     try:
         r = subprocess.run([b, *args], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
