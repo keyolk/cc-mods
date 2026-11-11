@@ -295,7 +295,8 @@ async function tick($: any) {
     const o = observe(ledger, seen, Date.now(), live, sums)
     // MCP servers the coordinator's and its workers' cc-mods could not get
     // back (register.ts mcpExport writes state/office/mcp/<sid>.json).
-    const m = mcpWakes(o.ledger, await mcpFiles($, o.ledger), sums)
+    const files = await mcpFiles($, o.ledger)
+    const m = files ? mcpWakes(o.ledger, files, sums) : { ledger: o.ledger, changes: [] }
     const l = m.ledger
     const changes = [...o.changes, ...m.changes]
     let out = l
@@ -320,10 +321,13 @@ async function tick($: any) {
 
 // Each live session's MCP state file, by session id: the coordinator's and
 // its active workers'. One read for all (a missing file reads as nothing).
-async function mcpFiles($: any, l: Ledger): Promise<Map<string, string | undefined>> {
+async function mcpFiles($: any, l: Ledger): Promise<Map<string, string | undefined> | undefined> {
   const sids = [l.sid, ...active(l).map((w) => w.sid)]
   const d = ctx!.home() + '/.claude/state/office/mcp'
   const r = await sh($, ['sh', '-c', 'd=$0; for s; do [ -f "$d/$s.json" ] && printf "%s\\t%s\\n" "$s" "$(tr -d "\\n" < "$d/$s.json")"; done; true', d, ...sids], { timeoutMs: 3000 })
+  // A read that failed is no news (as a failed tmux read is for observe):
+  // undefined, and the tick keeps what the ledger had.
+  if (!r.ok) return undefined
   const m = new Map<string, string | undefined>()
   for (const line of r.out.split('\n')) {
     const i = line.indexOf('\t')
