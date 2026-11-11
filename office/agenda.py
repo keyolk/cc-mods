@@ -65,6 +65,27 @@ _running = {"on": False}
 _knows: dict[str, tuple[float, str]] = {}
 
 
+# Where `make install` puts a gcl that knows -json, rsvp and find: the
+# checkout ($GCL_SRC, else ~/src/keyolk/gcl) on its main. One command for the
+# 일정 line and its 내 차례 row (deps). The checkout may sit on an old
+# detached HEAD, so it switches to main and pulls first; and until the gcl PRs
+# are merged, main itself is old: `make install` then would put the old gcl
+# back over a newer one. The grep stops it there (`gcl rsvp` came last, in
+# keyolk/gcl#23, which carries #22's -json) and names where the PRs wait.
+# Only && and || (no { }): the person's shell may be fish. A failed switch
+# or pull also lands on the echo, which is the right thing to read then too.
+GCL_PULLS = "https://github.com/keyolk/gcl/pulls"
+
+
+def gcl_dir() -> str:
+    return os.environ.get("GCL_SRC") or "~/src/keyolk/gcl"
+
+
+def install_cmd() -> str:
+    return (f"cd {gcl_dir()} && git switch main && git pull --ff-only && "
+            f"grep -q 'gcl rsvp' main.go && make install || echo 'main에 아직 gcl PR이 없습니다: merge 뒤 다시 ({GCL_PULLS})'")
+
+
 def binary() -> str | None:
     """The gcl to run: $GCL_BIN, else gcl on PATH, else ~/.local/bin/gcl (make install)."""
     for p in (os.environ.get("GCL_BIN"), shutil.which("gcl"), os.path.expanduser("~/.local/bin/gcl")):
@@ -132,9 +153,9 @@ def parse(stdout: str) -> list[dict]:
 def _fetch() -> tuple[list[dict] | None, str | None]:
     b = binary()
     if not b:
-        return None, "gcl이 없습니다 (keyolk/gcl에서 make install)"
+        return None, "gcl이 없습니다"
     if not knows_json(b):
-        return None, f"{b}는 -json을 모릅니다: gcl을 새로 설치하세요 (make install)"
+        return None, f"{b}가 옛 버전입니다 (-json 없음)"
     try:
         r = subprocess.run([b, "-json", "-days", "2"], capture_output=True, text=True, timeout=RUN_TIMEOUT)
     except subprocess.TimeoutExpired:
@@ -232,13 +253,13 @@ def view(now: float | None = None) -> dict:
     evs, err, at = read()
     b = binary()
     can = bool(b) and knows_cli(b)
+    # A gcl missing or too old: the command that fixes it, shown with a copy button.
+    fix = install_cmd() if not b or not knows_json(b) or not can else None
     if evs is None:
-        return {"events": [], "now": [], "next": None, "untilNext": None, "free": [], "at": at or None, "error": err or ("일정을 읽는 중입니다" if _running["on"] else None), "loading": _running["on"], "canWrite": can}
-    return {"events": evs, **summarize(evs, now), "at": at, "error": err, "stale": bool(err), "canWrite": can}
+        return {"events": [], "now": [], "next": None, "untilNext": None, "free": [], "at": at or None, "error": err or ("일정을 읽는 중입니다" if _running["on"] else None), "loading": _running["on"], "canWrite": can, "fix": fix}
+    return {"events": evs, **summarize(evs, now), "at": at, "error": err, "stale": bool(err), "canWrite": can, "fix": fix}
 
 
-GCL_DIR = "~/src/keyolk/gcl"
-GCL_PULLS = "https://github.com/keyolk/gcl/pulls"
 _since: dict[str, float] = {}
 
 
@@ -253,9 +274,9 @@ def deps(now: float | None = None) -> list[dict]:
     out = []
     b = binary()
     if not b:
-        out.append({"id": "gcl", "title": "📅 일정: gcl 없음", "text": "gcl이 없어 일정을 읽지 못합니다. 설치하세요 (거기에 -json이 든 PR이 merge돼 있어야 합니다)", "cmd": f"cd {GCL_DIR} && make install", "link": GCL_PULLS})
+        out.append({"id": "gcl", "title": "📅 일정: gcl 없음", "text": "gcl이 없어 일정을 읽지 못합니다. 설치하세요 (거기에 -json이 든 PR이 merge돼 있어야 합니다)", "cmd": install_cmd(), "link": GCL_PULLS})
     elif not knows_cli(b) or not knows_json(b):
-        out.append({"id": "gcl", "title": "📅 일정: gcl 업데이트 필요", "text": f"설치된 {b}가 옛 버전이라 -json/rsvp/find를 모릅니다. 새로 설치하세요 (안 되면 남은 PR을 merge: {GCL_PULLS})", "cmd": f"cd {GCL_DIR} && make install", "link": GCL_PULLS})
+        out.append({"id": "gcl", "title": "📅 일정: gcl 업데이트 필요", "text": f"설치된 {b}가 옛 버전이라 -json/rsvp/find를 모릅니다. 새로 설치하세요 (안 되면 남은 PR을 merge: {GCL_PULLS})", "cmd": install_cmd(), "link": GCL_PULLS})
     err = ghprs.last_error()
     if err and ("gh가 없" in err or "로그인되어 있지" in err):
         out.append({"id": "ghprs", "title": "🔗 GitHub PR 연결: gh 로그인 필요", "text": f"참석자에 PR을 붙이지 못합니다: {err}", "cmd": "brew install gh" if "gh가 없" in err else "gh auth login", "link": None})
@@ -395,9 +416,9 @@ def _event_by_id(eid: str) -> dict | None:
 def _run_cli(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[dict | None, str | None]:
     b = binary()
     if not b:
-        return None, "gcl이 없습니다 (keyolk/gcl에서 make install)"
+        return None, "gcl이 없습니다"
     if not knows_cli(b):
-        return None, f"{b}는 rsvp/find를 모릅니다: gcl을 새로 설치하세요 (make install)"
+        return None, f"{b}가 옛 버전입니다 (rsvp/find 없음)"
     try:
         r = subprocess.run([b, *args], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:

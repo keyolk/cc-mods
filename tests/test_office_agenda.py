@@ -136,7 +136,7 @@ class ReadCase(unittest.TestCase):
 
     def fake(self, knows_json=True):
         p = os.path.join(self.dir, "gcl")
-        usage = "-json" if knows_json else "-dump"
+        usage = "-json gcl rsvp gcl find" if knows_json else "-dump"
         with open(p, "w") as f:
             f.write(textwrap.dedent(f"""\
                 #!/bin/sh
@@ -157,8 +157,26 @@ class ReadCase(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GCL_BIN": self.fake(knows_json=False)}):
             evs, err, _ = agenda.read(wait=True)
         self.assertIsNone(evs)
-        self.assertIn("-json을 모릅니다", err)
+        self.assertIn("옛 버전입니다 (-json 없음)", err)
         self.assertEqual(self.runs(), 0)
+
+    def test_view_says_how_to_fix_an_old_or_missing_gcl(self):
+        # The command the person pastes: the checkout's main, then make install.
+        with mock.patch.dict(os.environ, {"GCL_BIN": self.fake(knows_json=False), "GCL_SRC": "/src/gcl"}), mock.patch.object(agenda.threading, "Thread"):
+            v = agenda.view()
+            self.assertEqual(v["fix"], agenda.install_cmd())
+            # One command for the line and its 내 차례 row.
+            self.assertEqual([d["cmd"] for d in agenda.deps() if d["id"] == "gcl"], [v["fix"]])
+        self.assertTrue(v["fix"].startswith("cd /src/gcl && git switch main && git pull --ff-only && grep -q 'gcl rsvp' main.go && make install || echo "), v["fix"])
+        # fish has no { }: only && and ||.
+        self.assertNotIn("{", v["fix"])
+        agenda._running["on"] = False
+        with mock.patch.dict(os.environ, {"GCL_BIN": self.fake()}), mock.patch.object(agenda.threading, "Thread"):
+            self.assertIsNone(agenda.view()["fix"], "a current gcl needs no fix")
+        agenda._running["on"] = False
+        with mock.patch.object(agenda, "binary", return_value=None), mock.patch.object(agenda.threading, "Thread"):
+            self.assertIsNotNone(agenda.view()["fix"])
+        agenda._running["on"] = False
 
     def test_cached_then_kept_on_failure(self):
         with open(self.out, "w") as f:
@@ -242,7 +260,7 @@ class ActCase(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GCL_BIN": self.fake(knows=False)}):
             code, out = agenda.act({"kind": "agenda_rsvp", "id": "inv", "reply": "yes"})
         self.assertEqual(code, 502)
-        self.assertIn("rsvp/find를 모릅니다", out["error"])
+        self.assertIn("옛 버전입니다 (rsvp/find 없음)", out["error"])
         self.assertEqual(self.argv(), [])
 
     def test_find_passes_people_and_work_hours(self):

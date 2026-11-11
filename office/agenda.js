@@ -25,6 +25,9 @@ const AGENDA_CSS = `
 #command .agline .t { overflow: hidden; text-overflow: ellipsis; }
 #command .agline .m, #command .agday .m { color: #6a6080; }
 #command .agline .warn { color: #c0392b; }
+#command .agline:has(.agfix) { flex-wrap: wrap; white-space: normal; }
+#command .agfix { font: 11px ui-monospace, Menlo, monospace; border: 1px solid rgba(59,42,53,.4); border-radius: 6px; background: #fff; padding: 0 5px; cursor: copy; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#command .agfix code { font: inherit; }
 #command .agday { font: 12.5px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; padding: 8px 12px; overflow: auto; flex: 1; min-height: 0; }
 #command .agday h3 { margin: 10px 0 4px; font-size: 13px; }
 #command .agday .ev { border: 2px solid rgba(59,42,53,.18); border-radius: 10px; padding: 6px 9px; margin-bottom: 6px; background: #fff; }
@@ -68,6 +71,8 @@ const agWaiting = (d) => (d.events || []).filter((e) => e.mine === 'needsAction'
 function agLineHtml() {
   const d = agData()
   if (!d) return ''
+  // A gcl to fix: a short line and the command under it (the path is in the tooltip).
+  if (d.fix && !d.events.length) return '<span class="warn" title="' + cmdEsc(d.error || '') + '">📅 gcl이 없거나 옛 버전입니다. gcl PR이 merge된 뒤 이 명령으로 설치 (merge 전이면 설치하지 않고 알려 줌):</span>' + agFixHtml(d)
   if (!d.events.length) return '<span class="m">📅 ' + cmdEsc(d.error || (d.loading ? '일정을 읽는 중…' : '오늘 일정 없음')) + '</span>'
   const now = Date.now() / 1000, parts = []
   const cur = (d.now || []).map(agEv).filter(Boolean)[0]
@@ -79,7 +84,17 @@ function agLineHtml() {
   const w = agWaiting(d).length
   if (w) parts.push('<span class="warn">응답 대기 ' + w + '</span>')
   if (d.error) parts.push('<span class="warn" title="' + cmdEsc(d.error) + '">⚠</span>')
-  return '📅 ' + (parts.join(' <span class="m">·</span> ') || '<span class="m">남은 회의 없음</span>')
+  return '📅 ' + (parts.join(' <span class="m">·</span> ') || '<span class="m">남은 회의 없음</span>') + agFixHtml(d)
+}
+
+// A gcl missing or too old: the command that installs one, a click copies it.
+function agFixHtml(d) {
+  return d.fix ? ' <button class="agfix" data-agfix="' + cmdEsc(d.fix) + '" title="눌러서 복사한 뒤 터미널에 붙여 넣기">📋 <code>' + cmdEsc(d.fix) + '</code></button>' : ''
+}
+
+async function agCopyFix(text) {
+  const ok = typeof authCopy === 'function' ? await authCopy(text) : false
+  toast(ok ? '📋 복사했습니다: 터미널에 붙여 넣으세요' : '복사하지 못했습니다: ' + text)
 }
 
 function agRenderLine() {
@@ -89,7 +104,7 @@ function agRenderLine() {
   if (!el) {
     el = Object.assign(document.createElement('div'), { className: 'agline', title: '오늘 일정 (A, ⌥A)' })
     left.insertBefore(el, left.querySelector('.list'))
-    el.onclick = () => agToggle()
+    el.onclick = (ev) => { const f = ev.target.closest('[data-agfix]'); if (f) { ev.stopPropagation(); agCopyFix(f.dataset.agfix) } else agToggle() }
   }
   el.innerHTML = agLineHtml()
   el.classList.toggle('sel', !!(cmd.sel && cmd.sel.agenda))
@@ -142,7 +157,7 @@ function agEventHtml(e, d) {
       }).join('')
     }
     if (others.length && d.canWrite) h += '<button data-agfind="1"' + (ag.busy['find:' + e.id] ? ' disabled' : '') + ' title="이 회의 사람들과 7일 안의 30분">🗓 시간 찾기</button>'
-    if (!d.canWrite) h += '<span class="m">응답·시간 찾기: gcl을 새로 설치하면 됩니다</span>'
+    if (!d.canWrite) h += '<span class="m">응답·시간 찾기: gcl이 옛 버전입니다 (위 명령으로 설치)</span>'
     h += '</div>'
   }
   const found = ag.found[e.id]
@@ -182,6 +197,7 @@ function agDayHtml(d) {
   const free = (d.free || []).map((f) => agClock(f.start) + '–' + agClock(f.end)).join(', ')
   let h = ''
   if (d.error) h += '<div class="m">⚠ ' + cmdEsc(d.error) + (d.events.length ? ' (마지막으로 읽은 일정)' : '') + '</div>'
+  if (d.fix) h += '<div class="m">고치려면: ' + agFixHtml(d) + '</div>'
   if (d.prs && d.prs.error) h += '<div class="m">⚠ PR: ' + cmdEsc(d.prs.error) + '</div>'
   h += '<h3>오늘</h3>' + (free ? '<div class="free">빈 시간 ' + cmdEsc(free) + '</div>' : '') + (days[0].map((e) => agEventHtml(e, d)).join('') || '<div class="m">일정 없음</div>')
   if (days[1].length) h += '<h3>내일</h3>' + days[1].map((e) => agEventHtml(e, d)).join('')
@@ -199,6 +215,8 @@ function agDayClick(ev) {
     return
   }
   const b = ev.target.closest('button[data-agreply], button[data-agfind]')
+  const fx = ev.target.closest('[data-agfix]')
+  if (fx) return agCopyFix(fx.dataset.agfix)
   if (!b || !id) return
   if (b.dataset.agreply) agReply(id, b.dataset.agreply)
   else agFind(id)
