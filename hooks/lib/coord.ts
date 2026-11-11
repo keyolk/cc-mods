@@ -751,6 +751,8 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     '- You are god by default (cc-mods): every capability god mode allows is yours while coordinator mode is on, with no end, until the person types /god off (then the coordinator policy: merge only in your workers\' repositories). Being allowed is not a reason: the rules here still hold, the merge rule below first.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
+    "- Do not `coord_close` (hand back) a worker whose intent is not finished. Before you close one, check that the result the person asked for is really done: the feature is usable, and the follow-up steps (a message to send to someone else, a deploy, an onboarding step) are done too. When a step is left, keep driving that worker with `coord_send`. `coord_close` on an adopted worker with status `blocked:question` or an open PR is refused unless you pass `force`; use `force` only when the person said to hand it back.",
+    "- When a worker asks `X 할까요?` / `shall I X?` about a step inside the scope the person already asked for, answer yes yourself with `coord_send`. Only a real judgment goes to the person on a brief. When you ask on a brief, put every open request of the other party (a colleague's follow-up ask, a message waiting for a reply) on it, none left out.",
     "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Add `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker. The office's 지휘 view lists every waiting decision: while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`, which covers the office's pane and its controls; only without the office does `brief show <brief>` put it in a tweb pane. In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
     '- Only a yes/no on one small step that is easy to undo goes to the person in chat alone, without a brief.',
     "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: do not ask it again; it is in the office's 지휘 view.",
@@ -776,6 +778,17 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): ' + limitsText(l.limits),
   ].join('\n')
+}
+
+// Why handing an adopted worker back now would drop work: it waits on a
+// question, or it has a PR that is not done. `openPr` is a live check by the
+// caller (gh); the status link is the fallback when gh cannot say.
+export function handbackWarning(w: Worker, openPr = false): string | undefined {
+  const st = w.status
+  const why: string[] = []
+  if (st?.state === 'blocked' && st.kind === 'question') why.push('its status is blocked:question' + (st.needs ? ' (' + st.needs + ')' : ''))
+  if (openPr || (st?.link && /\/pull\/\d+/.test(st.link) && st.state !== 'done')) why.push('it has an open PR' + (st?.link ? ' (' + st.link + ')' : ''))
+  return why.length ? why.join('; and ') : undefined
 }
 
 export function coordRoster(l: Ledger, now: number, review?: string): string {

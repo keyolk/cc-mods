@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, coordGodWanted, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, coordGodWanted, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -1014,6 +1014,12 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
   if (!w) return { deny: 'no worker ' + i.slug }
   const now = Date.now()
   if (w.relation === 'adopted') {
+    if (i.force !== true) {
+      // Best effort: gh may be missing or the cwd not a repository.
+      const pr = await sh($, ['gh', 'pr', 'list', '--state', 'open', '--author', '@me', '--head', (await sh($, ['git', '-C', w.cwd, 'branch', '--show-current'])).out || '-', '--json', 'url', '--jq', '.[0].url'], { timeoutMs: 8000, cwd: w.cwd })
+      const why = handbackWarning(w, pr.ok && pr.out !== '')
+      if (why) return { deny: 'Not handed back: ' + why + '. Its intent is not finished: keep driving it with coord_send (answer its in-scope question yourself, relay open asks). Pass force: true only when the person said to hand it back.' }
+    }
     await save($, released(ledger!, w, now))
     return { result: 'Handed ' + w.slug + ' back to the person; it keeps running in its pane and is not adopted again.' }
   }
