@@ -3,7 +3,7 @@
 // answer is kept. No model is called.
 import { expect, test } from 'claude-code/testing'
 
-import { SUM_BATCH, SUM_RETRY_MS, applied, clip, fromPerson, given, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, type SumIn } from '../hooks/lib/coordsum'
+import { SUM_BATCH, SUM_RETRY_MS, applied, clip, fromPerson, given, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, unrelay, type SumIn } from '../hooks/lib/coordsum'
 import { parsePrompts } from '../hooks/lib/coordroute'
 
 const NOW = 1_800_000_000_000
@@ -34,7 +34,8 @@ test('coordsum: the cheapest source first, the model only for what is left, in o
   expect(next.d).toBeUndefined()
   expect(ask.map((r) => r.sid)).toEqual(['c'])
   const q = sumRequest(ask)
-  expect(JSON.parse(q.prompt).sessions[0]).toMatchObject({ id: 'c', recent: ['[coordinator] 보충'] })
+  // The relay head is taken off: the model reads the work, not the hand-off.
+  expect(JSON.parse(q.prompt).sessions[0]).toMatchObject({ id: 'c', recent: ['보충'] })
   expect(q.system).toContain('JSON')
   const many = Array.from({ length: SUM_BATCH + 5 }, (_, i) => row({ sid: 'x' + i, first: 'y'.repeat(60), prompts: ['a', 'b'] }))
   expect(plan(many, {}, NOW).ask.length).toBe(SUM_BATCH)
@@ -94,4 +95,42 @@ test('coordsum: a coordinator is labelled by the person\'s words, never by its w
   expect(parsePrompts(kept).get('c')).toEqual(['office 보내기가 안 사라져'])
   // The key moves with the person's newest words, not with each report.
   expect(parseLast(kept).get('c')).toBe('2026-11-12T00:41:00Z')
+})
+
+test('coordsum: a pane label cut from the first prompt, or a relay head, is not a name the person gave', () => {
+  const first = '사람의 말(원문): "slx를 좀 개선할수 있을거 같아 무조건 다 올리는게 아니라 jev활용해서"'
+  expect(given('사람의 말(원문): "slx를 좀 개선할수…', 'slx-ask-judge', first)).toBeUndefined()
+  expect(given('worker 보고(원문): "SKILL tsc(workt…')).toBeUndefined()
+  expect(given('tweb이 coder/warren 같은 리모트 환경', undefined, 'tweb이 coder/warren 같은 리모트 환경에서도 잘돌수 있을까?')).toBeUndefined()
+  // A label the person typed stays, even beside a first prompt.
+  expect(given('Twingate relay 조사', undefined, 'relay가 자꾸 끊겨')).toBe('Twingate relay 조사')
+  expect(unrelay(first)).toBe('slx를 좀 개선할수 있을거 같아 무조건 다 올리는게 아니라 jev활용해서')
+  expect(unrelay('[coordinator] 사람의 말(원문): "warren 작업하던 세션 다시 로드해줘" 이어서 credential broker 메모')).toBe('warren 작업하던 세션 다시 로드해줘')
+  expect(unrelay('[coordinator] #130 rebase')).toBe('#130 rebase')
+  expect(unrelay('그냥 "말"')).toBe('그냥 "말"')
+})
+
+test('coordsum: a session is named by what it declared it is doing now; a new phase relabels it', () => {
+  const r = row({ sid: 'w', slug: 'warren-9c', title: '사람의 말(원문): "warren 작업하던…', first: '사람의 말(원문): "warren 작업하던 세션 다시 로드해줘"', prompts: ['[coordinator] broker 메모 마무리'], last: '2026-11-12T00:40:00Z', status: { step: 'credential broker 설계 메모', next: 'PR 열기' } })
+  const a = plan([r], {}, NOW)
+  // Until the model answers: the first prompt without the hand-off head.
+  expect(a.next.w).toMatchObject({ text: 'warren 작업하던 세션 다시 로드해줘', src: 'first' })
+  expect(a.ask.map((x) => x.sid)).toEqual(['w'])
+  const q = JSON.parse(sumRequest(a.ask).prompt).sessions[0]
+  expect(q.status).toBe('credential broker 설계 메모 → PR 열기')
+  expect(q.first).toBe('warren 작업하던 세션 다시 로드해줘')
+  expect(q.recent).toEqual(['broker 메모 마무리'])
+  expect(sumRequest(a.ask).system).toContain('NOW')
+  const done = applied(a.next, new Map([['w', 'warren credential broker 설계']]), NOW)
+  // The same phase: kept, no call. A new step: asked again.
+  expect(plan([r], done, NOW + 3_600_000)).toEqual({ next: done, ask: [] })
+  const moved = plan([{ ...r, status: { step: 'PR 리뷰 대응', next: 'merge 대기' } }], done, NOW)
+  expect(moved.ask.length).toBe(1)
+  // While that call is out, the label it had stays.
+  expect(moved.next.w!.text).toBe('warren credential broker 설계')
+  // A lone short prompt that is a relay is no label either.
+  const relay = plan([row({ sid: 'x', first: '[coordinator] 확인', prompts: ['[coordinator] 확인'] })], {}, NOW)
+  expect(relay.next.x).toMatchObject({ src: 'first', text: '확인' })
+  // A status with no prompt read yet still names it.
+  expect(plan([row({ sid: 'y', status: { step: 'slx Jev 판정' } })], {}, NOW).next.y).toMatchObject({ text: 'slx Jev 판정' })
 })

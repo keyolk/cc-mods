@@ -352,8 +352,11 @@ const READ_EACH = 'd=$0; for s; do [ -f "$d/$s.json" ] && printf "%s\\t%s\\n" "$
 // The active workers' status files, by session id. One read for all; a
 // failed read or a missing file is no news (the ledger keeps what it had).
 async function statusFiles($: any, l: Ledger): Promise<Map<string, Status>> {
+  return statusOf($, active(l).map((w) => w.sid))
+}
+async function statusOf($: any, ids: string[]): Promise<Map<string, Status>> {
   const m = new Map<string, Status>()
-  const sids = active(l).map((w) => w.sid)
+  const sids = [...new Set(ids)].filter((s) => /^[0-9a-f-]{8,64}$/.test(s))
   if (!sids.length) return m
   const r = await sh($, ['sh', '-c', READ_EACH, ctx!.home() + STATUS_DIR, ...sids], { timeoutMs: 3000 })
   if (!r.ok) return m
@@ -616,17 +619,24 @@ const sumFile = () => ctx!.home() + '/.claude/state/office/summary.json'
 let summing = false
 async function summarize($: any, seen: PaneSeen[], n: Map<string, string>, info: Info): Promise<Map<string, string>> {
   const mine = new Map(active(ledger!).map((w) => [w.sid, w]))
+  // Every seen session's declared status (a worker's, and any other session
+  // that runs the status tool): one read of the files the tick reads.
+  const declared = await statusOf($, seen.map((s) => s.sid))
+  const st = (sid: string) => {
+    const x = declared.get(sid)
+    return x && (x.step || x.next) ? { status: { ...(x.step ? { step: x.step } : {}), ...(x.next ? { next: x.next } : {}), ...(x.msg ? { msg: x.msg } : {}) } } : {}
+  }
   const rows: SumIn[] = []
   for (const s of seen) {
     if (rows.some((r) => r.sid === s.sid)) continue
     if (s.sid === ledger!.sid) {
       // Itself: what the person asked of it, never its workers' reports.
       const o = info.own
-      if (o && (o.first || o.prompts.length)) rows.push({ sid: s.sid, name: n.get(s.sid) ?? ledger!.name, ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(o.first ? { first: o.first } : {}), prompts: o.prompts, ...(o.last ? { last: o.last } : {}) })
+      if (o && (o.first || o.prompts.length)) rows.push({ sid: s.sid, name: n.get(s.sid) ?? ledger!.name, ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(o.first ? { first: o.first } : {}), prompts: o.prompts, ...(o.last ? { last: o.last } : {}), ...st(s.sid) })
       continue
     }
     const w = mine.get(s.sid)
-    rows.push({ sid: s.sid, name: n.get(s.sid) ?? s.sid.slice(0, 8), ...(w ? { slug: w.slug } : {}), ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(info.first.get(s.sid) ? { first: info.first.get(s.sid) } : {}), prompts: info.prompts.get(s.sid) ?? [], ...(info.last.get(s.sid) ? { last: info.last.get(s.sid) } : {}) })
+    rows.push({ sid: s.sid, name: n.get(s.sid) ?? s.sid.slice(0, 8), ...(w ? { slug: w.slug } : {}), ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(info.first.get(s.sid) ? { first: info.first.get(s.sid) } : {}), prompts: info.prompts.get(s.sid) ?? [], ...(info.last.get(s.sid) ? { last: info.last.get(s.sid) } : {}), ...st(s.sid) })
   }
   const cache = parseSummaries(await readText($, sumFile()))
   const now = Date.now()
