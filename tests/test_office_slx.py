@@ -298,6 +298,25 @@ class UpTest(FakeSlx):
         self.assertTrue(self.view()["canUp"])
 
 
+class DimTest(FakeSlx):
+    def test_a_dim_item_stays_in_the_view_with_why_and_is_counted(self):
+        inbox = {**INBOX, "dimmed": 1, "items": [
+            item("C1/dim", 1, dim=True, triage={"kind": "fyi", "conf": 0.98, "why": "jev fyi 0.98"}),
+            item("C1/ask", 2, triage={"kind": "ask", "conf": 0.9, "why": "jev ask 0.9"}),
+            item("C1/old", 3)]}
+        self.inbox.write_text(json.dumps(inbox, ensure_ascii=False))
+        v = self.view()
+        got = {r["id"]: (r["dim"], r["why"]) for r in v["items"]}
+        self.assertEqual(got, {"C1/dim": (True, "jev fyi 0.98"), "C1/ask": (False, "jev ask 0.9"), "C1/old": (False, "")})
+        self.assertEqual(v["dimmed"], 1)
+
+    def test_an_older_slx_without_dim_gives_no_dim(self):
+        v = self.view()
+        self.assertTrue(v["items"])
+        self.assertTrue(all(r["dim"] is False and r["why"] == "" for r in v["items"]))
+        self.assertEqual(v["dimmed"], 0)
+
+
 SLX_JS = textwrap.dedent(r"""
     var did = [], slxDoReal = slxDo
     slxDo = (s, act, extra) => { did.push([s.slx, act, extra || {}]); cmd.armed = null }
@@ -484,3 +503,42 @@ class TurnTest(unittest.TestCase):
     def test_several_items_on_one_session_are_counted(self):
         v = {"items": [{"sid": "s", "id": "a", "icon": "🚨", "from": "#1", "text": "x"}, {"sid": "s", "id": "b", "icon": "🚨", "from": "#2", "text": "y"}, {"sid": None, "id": "c"}]}
         self.assertEqual(slx.by_sid(v), {"s": {"id": "b", "icon": "🚨", "from": "#2", "text": "y", "n": 2}})
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class DimRenderTest(unittest.TestCase):
+    def run_js(self, items):
+        office = pathlib.Path(__file__).parents[1] / "office"
+        prog = textwrap.dedent(r"""
+            const vm = require('vm'), fs = require('fs')
+            const el = () => ({ appendChild() {}, querySelector: () => null, style: {} })
+            const ctx = { console, JSON, Date, document: { createElement: el, head: el(), addEventListener() {} },
+              cmdEsc: (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]),
+              cmdAgo: () => '1h', cmdPending: () => null, cmdCall: () => null, cmdRev: () => true, cmdOpen: () => [], revList: () => [], cmd: { sent: {} } }
+            vm.createContext(ctx)
+            for (const f of ['slx.js', 'table.js']) vm.runInContext(fs.readFileSync(process.argv[1] + '/' + f, 'utf8'), ctx)
+            vm.runInContext(`
+              var items = ` + process.argv[2] + `
+              cmd.data = { slx: { tui: true, items }, table: items.map((x) => ({ key: 'x:' + x.id, name: x.from, decisions: [], reviews: [], slx: [x.id], at: 1 })) }
+              var html = tblHtml(), foot = slxFoot()
+            `, ctx)
+            console.log(JSON.stringify({ html: ctx.html, foot: ctx.foot }))
+        """)
+        r = subprocess.run(["node", "-e", prog, str(office), json.dumps(items)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_dim_rows_are_faint_with_why_and_the_header_counts_them(self):
+        j = self.run_js([{"id": "a", "icon": "📨", "from": "Alice", "text": "fyi", "dim": True, "why": "jev fyi 0.98"}, {"id": "b", "icon": "📨", "from": "Bob", "text": "봐줘", "dim": False, "why": ""}])
+        rows = j["html"].split("<tr ")
+        a, b = [r for r in rows if "data-row=\"x:a\"" in r][0], [r for r in rows if "data-row=\"x:b\"" in r][0]
+        self.assertIn(" dim", a)
+        self.assertIn("흐림 · jev fyi 0.98", a)
+        self.assertNotIn("dim", b)
+        self.assertIn("흐림 1", j["html"])
+        self.assertIn("흐림 1", j["foot"])
+
+    def test_an_old_slx_without_dim_is_drawn_as_before(self):
+        j = self.run_js([{"id": "a", "icon": "📨", "from": "Alice", "text": "hi"}])
+        self.assertNotIn("dim", j["html"])
+        self.assertNotIn("흐림", j["html"] + j["foot"])
