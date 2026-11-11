@@ -72,7 +72,7 @@ function agLineHtml() {
   const d = agData()
   if (!d) return ''
   // A gcl to fix: a short line and the command under it (the path is in the tooltip).
-  if (d.fix && !d.events.length) return '<span class="warn" title="' + cmdEsc(d.error || '') + '">📅 gcl이 없거나 옛 버전입니다. 이 명령으로 설치:</span>' + agFixHtml(d)
+  if (d.fix && !d.events.length) return '<span class="warn" title="' + cmdEsc(d.error || '') + '">📅 gcl이 없거나 옛 버전입니다. gcl PR이 merge된 뒤 이 명령으로 설치 (merge 전이면 설치하지 않고 알려 줌):</span>' + agFixHtml(d)
   if (!d.events.length) return '<span class="m">📅 ' + cmdEsc(d.error || (d.loading ? '일정을 읽는 중…' : '오늘 일정 없음')) + '</span>'
   const now = Date.now() / 1000, parts = []
   const cur = (d.now || []).map(agEv).filter(Boolean)[0]

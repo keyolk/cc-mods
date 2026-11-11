@@ -164,7 +164,12 @@ class ReadCase(unittest.TestCase):
         # The command the person pastes: the checkout's main, then make install.
         with mock.patch.dict(os.environ, {"GCL_BIN": self.fake(knows_json=False), "GCL_SRC": "/src/gcl"}), mock.patch.object(agenda.threading, "Thread"):
             v = agenda.view()
-        self.assertEqual(v["fix"], "cd /src/gcl && git switch main && git pull --ff-only && make install")
+            self.assertEqual(v["fix"], agenda.install_cmd())
+            # One command for the line and its 내 차례 row.
+            self.assertEqual([d["cmd"] for d in agenda.deps() if d["id"] == "gcl"], [v["fix"]])
+        self.assertTrue(v["fix"].startswith("cd /src/gcl && git switch main && git pull --ff-only && grep -q 'gcl rsvp' main.go && make install || echo "), v["fix"])
+        # fish has no { }: only && and ||.
+        self.assertNotIn("{", v["fix"])
         agenda._running["on"] = False
         with mock.patch.dict(os.environ, {"GCL_BIN": self.fake()}), mock.patch.object(agenda.threading, "Thread"):
             self.assertIsNone(agenda.view()["fix"], "a current gcl needs no fix")

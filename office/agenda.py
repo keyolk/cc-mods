@@ -66,10 +66,24 @@ _knows: dict[str, tuple[float, str]] = {}
 
 
 # Where `make install` puts a gcl that knows -json, rsvp and find: the
-# checkout ($GCL_SRC, else ~/src/keyolk/gcl) on its main.
+# checkout ($GCL_SRC, else ~/src/keyolk/gcl) on its main. One command for the
+# 일정 line and its 내 차례 row (deps). The checkout may sit on an old
+# detached HEAD, so it switches to main and pulls first; and until the gcl PRs
+# are merged, main itself is old: `make install` then would put the old gcl
+# back over a newer one. The grep stops it there (`gcl rsvp` came last, in
+# keyolk/gcl#23, which carries #22's -json) and names where the PRs wait.
+# Only && and || (no { }): the person's shell may be fish. A failed switch
+# or pull also lands on the echo, which is the right thing to read then too.
+GCL_PULLS = "https://github.com/keyolk/gcl/pulls"
+
+
+def gcl_dir() -> str:
+    return os.environ.get("GCL_SRC") or "~/src/keyolk/gcl"
+
+
 def install_cmd() -> str:
-    src = os.environ.get("GCL_SRC") or "~/src/keyolk/gcl"
-    return f"cd {src} && git switch main && git pull --ff-only && make install"
+    return (f"cd {gcl_dir()} && git switch main && git pull --ff-only && "
+            f"grep -q 'gcl rsvp' main.go && make install || echo 'main에 아직 gcl PR이 없습니다: merge 뒤 다시 ({GCL_PULLS})'")
 
 
 def binary() -> str | None:
@@ -246,8 +260,6 @@ def view(now: float | None = None) -> dict:
     return {"events": evs, **summarize(evs, now), "at": at, "error": err, "stale": bool(err), "canWrite": can, "fix": fix}
 
 
-GCL_DIR = "~/src/keyolk/gcl"
-GCL_PULLS = "https://github.com/keyolk/gcl/pulls"
 _since: dict[str, float] = {}
 
 
@@ -262,9 +274,9 @@ def deps(now: float | None = None) -> list[dict]:
     out = []
     b = binary()
     if not b:
-        out.append({"id": "gcl", "title": "📅 일정: gcl 없음", "text": "gcl이 없어 일정을 읽지 못합니다. 설치하세요 (거기에 -json이 든 PR이 merge돼 있어야 합니다)", "cmd": f"cd {GCL_DIR} && make install", "link": GCL_PULLS})
+        out.append({"id": "gcl", "title": "📅 일정: gcl 없음", "text": "gcl이 없어 일정을 읽지 못합니다. 설치하세요 (거기에 -json이 든 PR이 merge돼 있어야 합니다)", "cmd": install_cmd(), "link": GCL_PULLS})
     elif not knows_cli(b) or not knows_json(b):
-        out.append({"id": "gcl", "title": "📅 일정: gcl 업데이트 필요", "text": f"설치된 {b}가 옛 버전이라 -json/rsvp/find를 모릅니다. 새로 설치하세요 (안 되면 남은 PR을 merge: {GCL_PULLS})", "cmd": f"cd {GCL_DIR} && make install", "link": GCL_PULLS})
+        out.append({"id": "gcl", "title": "📅 일정: gcl 업데이트 필요", "text": f"설치된 {b}가 옛 버전이라 -json/rsvp/find를 모릅니다. 새로 설치하세요 (안 되면 남은 PR을 merge: {GCL_PULLS})", "cmd": install_cmd(), "link": GCL_PULLS})
     err = ghprs.last_error()
     if err and ("gh가 없" in err or "로그인되어 있지" in err):
         out.append({"id": "ghprs", "title": "🔗 GitHub PR 연결: gh 로그인 필요", "text": f"참석자에 PR을 붙이지 못합니다: {err}", "cmd": "brew install gh" if "gh가 없" in err else "gh auth login", "link": None})
