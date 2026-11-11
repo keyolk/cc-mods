@@ -2182,7 +2182,7 @@ class Handler(BaseHTTPRequestHandler):
             cv = command.view(people, ask=ask_digest, deps=agenda.deps())
             ag = agenda.view()
             ag.update(agenda.people(ag["events"], cv))
-            return self.send(200, json.dumps({**cv, "hibernate": hibernate.view(people), "agenda": ag}).encode(), "application/json")
+            return self.send(200, json.dumps({**cv, "hibernate": command.hib_named(hibernate.view(people), people), "agenda": ag}).encode(), "application/json")
         if self.path.startswith("/coord"):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):

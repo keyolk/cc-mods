@@ -541,7 +541,7 @@ class PageTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertIn("💤 휴면 1", out["foot"])
-        self.assertIn("휴면 후보 1개 · 회수 예상 2.0 GB", out["foot"])
+        self.assertIn("휴면 후보 1개</button> · 회수 예상 2.0 GB", out["foot"])
         self.assertIn("자동 휴면 켜짐", out["foot"])
         self.assertNotIn("깨우기", out["foot"])  # folded
         self.assertIn('data-hib="wake" data-sid="a"', out["open"])
@@ -549,6 +549,55 @@ class PageTest(unittest.TestCase):
         self.assertEqual(out["coordBtn"], "")
         self.assertIn("pin on", out["pinned"])
         self.assertEqual(out["empty"], "")
+
+    def test_the_candidates_unfold_named_by_their_work_with_one_press_each(self):
+        # "휴면 후보가 2개 있다는데 볼방법이 없어서 휴면을 시킬수가 없다": the names
+        # were only in 모두 내리기's tooltip, as pane titles.
+        script = r"""
+        const vm = require('vm'), fs = require('fs')
+        const el = () => ({ style: {}, dataset: {}, appendChild() {}, querySelector: () => null, querySelectorAll: () => [] })
+        const ctx = { console, JSON, Math, Date, setTimeout: () => 0, document: { createElement: el, head: el() } }
+        vm.createContext(ctx)
+        vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx)
+        vm.runInContext(`
+          var cmdEsc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+          var posts = [], toasts = [], focused = [], renders = 0
+          var cmdPost = async (b) => { posts.push(b); return { sent: 'ok' } }, toast = (m) => toasts.push(m), cmdLoad = () => {}, cmdRender = () => { renders++ }, focusPane = (p) => focused.push(p)
+          var cmd = { data: { coordinators: [], hibernate: { cards: [], pins: ['b'], mb: 1433, candidates: [
+            { sid: 'a', name: 'agent', summary: 'Dynamic cell 준비 히스토리', pane: '%22', window: '2:1', idleH: 2.7, mb: 744, why: 'cap' },
+            { sid: 'b', name: 'rca', pane: '%629', idleH: 13, mb: 689, why: 'idle' }] } } }
+          var btn = (hibv, sid, pane) => ({ target: { closest: () => ({ dataset: { hib: hibv, sid, pane } }) } })
+          var out = { folded: hibFoot() }
+          hibClick(btn('cands'))
+          out.open = hibFoot()
+          ;(async () => {
+            hibClick(btn('one', 'a')); out.armed = hibFoot(); out.postsAfterOne = posts.length
+            await hibOne('a'); out.posts = posts.slice()
+            await hibPin("b"); out.pin = posts[posts.length - 1]
+            hibClick(btn('go', '', '%22')); out.focused = focused
+            console.log(JSON.stringify(out))
+          })()
+        `, ctx)
+        """
+        r = subprocess.run(["node", "-e", script, str(OFFICE / "hibernate.js")], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertNotIn("hiblist cand", out["folded"])
+        self.assertIn("▸ 휴면 후보 2개", out["folded"])
+        self.assertIn("▾ 휴면 후보 2개", out["open"])
+        # A row each: its work (else its name), idle, what it gives back, why.
+        self.assertIn("<b>Dynamic cell 준비 히스토리</b>", out["open"])
+        self.assertIn("2.7시간 idle · ~744 MB · 세션 상한 · 2:1", out["open"])
+        self.assertIn("<b>rca</b>", out["open"])
+        self.assertIn("13시간 idle · ~689 MB · idle", out["open"])
+        self.assertIn("📌 고정 해제", out["open"])  # b is pinned
+        self.assertIn('data-hib="go" data-pane="%22"', out["open"])
+        # 💤 휴면: the first press arms, only the second sends.
+        self.assertIn("한 번 더: 💤 휴면", out["armed"])
+        self.assertEqual(out["postsAfterOne"], 0)
+        self.assertEqual(out["posts"], [{"kind": "hibernate", "sid": "a"}])
+        self.assertEqual(out["pin"], {"kind": "hibernate_pin", "sid": "b", "on": False})
+        self.assertEqual(out["focused"], ["%22"])
 
 
 if __name__ == "__main__":

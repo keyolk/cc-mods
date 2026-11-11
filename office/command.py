@@ -264,6 +264,19 @@ def briefs() -> list[dict]:
     return out
 
 
+def hib_named(hib: dict, people: list[dict]) -> dict:
+    """/command's `hibernate` with each candidate named by what it is doing
+    (its summary, as the table names it): the office listed only '휴면 후보
+    2개', the names in a tooltip as pane titles (`agent`), and the person
+    could not tell which to put down. A copy: the view's cache is not
+    changed."""
+    cands = hib.get("candidates") or []
+    if not cands:
+        return hib
+    sums, by = coord.summaries(), {p["id"]: p for p in people}
+    return {**hib, "candidates": [{**c, "summary": label(c["sid"], sums, (by.get(c["sid"]) or {}).get("cwd"))} for c in cands]}
+
+
 def latest_by_session() -> dict[str, dict]:
     """Session id -> the newest brief it is recorded on."""
     out: dict[str, dict] = {}

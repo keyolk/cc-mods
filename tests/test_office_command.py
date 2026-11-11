@@ -657,6 +657,15 @@ class SayAndViewTest(BriefsCase):
         with mock.patch.object(command, "first_prompt", return_value='사람의 말(원문): "slx를 좀 개선할수 있을거 같아 무조건 다 올리는게 아니라"'):
             self.assertEqual(command.label(WORKER, {}, None, {"repo": "keyolk/slx"}), "slx · slx를 좀 개선할수 있을거 같아 무조건 다 올리는게…")
 
+    def test_hibernate_candidates_are_named_by_their_summary_without_touching_the_cache(self):
+        self.sums.write_text(json.dumps({WORKER: {"text": "Dynamic cell 준비", "src": "model", "key": "k", "at": 1}}))
+        coord._sums.update(at=0.0, sums={})
+        hib = {"cards": [], "candidates": [{"sid": WORKER, "name": "agent", "idleH": 2.7, "mb": 744}, {"sid": MAKER, "name": "rca", "idleH": 3, "mb": 1}]}
+        with mock.patch.object(command, "first_prompt", return_value=""):
+            got = command.hib_named(hib, [{"id": WORKER, "cwd": "/w/x"}])
+        self.assertEqual([c["summary"] for c in got["candidates"]], ["Dynamic cell 준비", None])
+        self.assertNotIn("summary", hib["candidates"][0])
+
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
         with mock.patch.object(office, "inbox_put", side_effect=self.put):
