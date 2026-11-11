@@ -12,6 +12,7 @@ import unittest
 import textwrap
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "office"))
@@ -421,6 +422,58 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual([c["name"] for c in v["calls"]], ["w"])
         self.assertEqual((v["recent"][0]["file"], v["recent"][0]["by"], v["recent"][0]["pending"]), (f, "w", True))
 
+    def test_a_brief_marked_done_is_listed_apart_from_one_only_answered(self):
+        # `brief done` writes sidecar.done; the view lists those under `done`
+        # (newest first, a day old is folded), and an answered brief is not one.
+        now = datetime.now(timezone.utc)
+        iso = lambda h: (now - timedelta(hours=h)).strftime("%Y-%m-%dT%H:%MZ")
+        fresh = self.brief("2026-11-11-fresh", sessions=(WORKER,))
+        old = self.brief("2026-11-09-old")
+        answered = self.brief("2026-11-10-answered", {"answer": {"choice": "A", "note": "", "by": "office", "at": iso(1)}})
+        empty = self.brief("2026-11-10-empty")
+        for f, done in ((fresh, {"at": iso(1), "result": "가드 17개를 데몬으로 옮김", "links": ["https://github.com/keyolk/briefs/pull/7", 3], "revert": "git revert abc"}),
+                        (old, {"at": iso(30), "result": "옛 결과", "links": []}),
+                        (empty, {"at": iso(1), "result": "  "})):
+            side = self.side(f)
+            side["done"] = done
+            (self.repo / f.replace(".html", ".brief.json")).write_text(json.dumps(side, ensure_ascii=False))
+        v = command.view([{"id": WORKER, "name": "w"}])
+        self.assertEqual([d["file"] for d in v["done"]], [fresh, old])
+        d = v["done"][0]
+        self.assertEqual((d["result"], d["links"], d["revert"], d["old"], d["by"]), ("가드 17개를 데몬으로 옮김", ["https://github.com/keyolk/briefs/pull/7"], "git revert abc", False, "w"))
+        self.assertEqual((v["done"][1]["old"], v["done"][1]["revert"]), (True, None))
+        marks = {r["file"]: r["done"] for r in v["recent"]}
+        self.assertEqual((marks[fresh], marks[old], marks[answered], marks[empty]), (True, True, False, False))
+
+    def test_the_done_group_is_drawn_with_copy_and_a_fold(self):
+        js = pathlib.Path(__file__).parents[1] / "office" / "briefline.js"
+        prog = textwrap.dedent(r"""
+            const vm = require('vm'), fs = require('fs')
+            const el = () => ({ appendChild() {}, querySelector: () => null })
+            const ctx = { console, JSON, Date, document: { createElement: el, head: el() }, cmdEl: el(),
+              cmdEsc: (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]), cmdAgo: () => '1시간 전', cmd: {} }
+            vm.createContext(ctx)
+            vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + `
+              cmd.data = { done: [
+                { file: 'a.html', path: '/b/a.html', title: 'A', at: '2026-11-11T09:39Z', result: '결과 <b>', links: ['https://x/pull/1'], revert: 'git revert 1', old: false, by: 'w' },
+                { file: 'o.html', path: '/b/o.html', title: 'O', at: '2026-11-01T09:39Z', result: '옛것', links: [], old: true } ] }
+              var h1 = doneFoot(); briefDone.open = true; var h2 = doneFoot()
+              cmd.data = { done: [] }; var h3 = doneFoot()
+            `, ctx)
+            console.log(JSON.stringify({ h1: ctx.h1, h2: ctx.h2, h3: ctx.h3 }))
+        """)
+        r = subprocess.run(["node", "-e", prog, str(js)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        self.assertIn("✅ 최근 완료", j["h1"])
+        self.assertIn("결과 &lt;b&gt;", j["h1"])
+        self.assertIn('data-drevert="git revert 1"', j["h1"])
+        self.assertIn('data-dlink="https://x/pull/1"', j["h1"])
+        self.assertNotIn("옛것", j["h1"])  # a day old: folded
+        self.assertIn("24시간 지난 완료 1", j["h1"])
+        self.assertIn("옛것", j["h2"])
+        self.assertEqual(j["h3"], "")
+
     def test_the_box_says_when_it_sent_and_the_view_carries_where_tasks_went(self):
         # The box's task is the coordinator's to place; the view finds where it
         # went from the ledger's send and spawn lines after `at`.
@@ -616,7 +669,7 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "table", "slx", "hibernate"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "done", "table", "slx", "hibernate"})
             with urllib.request.urlopen(base + "/hibernate.js") as r:
                 self.assertIn(b"function hibFoot", r.read())
             with urllib.request.urlopen(base + "/review.js") as r:

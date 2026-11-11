@@ -250,7 +250,7 @@ function cmdRender() {
   // The table scrolls on its own: a redraw keeps where it was.
   const list = cmdEl.querySelector('.list'), keep = list.scrollTop, keepT = list.querySelector('.tblwrap')?.scrollTop || 0
   // The slx line under the table: what is hidden, what runs, the bulk choices.
-  list.innerHTML = (typeof tblHtml === 'function' ? tblHtml() : '<div class="empty">table.js 를 불러오지 못했습니다. 곧 다시 불러옵니다.</div>') + (cmdHib() ? hibFoot() : '') + (cmdSlx() ? slxFoot() : '')
+  list.innerHTML = (typeof tblHtml === 'function' ? tblHtml() : '<div class="empty">table.js 를 불러오지 못했습니다. 곧 다시 불러옵니다.</div>') + (cmdHib() ? hibFoot() : '') + (cmdSlx() ? slxFoot() : '') + (typeof doneFoot === 'function' ? doneFoot() : '')
   list.scrollTop = keep
   const wrap = list.querySelector('.tblwrap')
   if (wrap) wrap.scrollTop = keepT
@@ -276,6 +276,7 @@ function cmdFold(which) {
 }
 
 function cmdClick(ev) {
+  if (typeof doneClick === 'function' && doneClick(ev)) return
   if (cmdSlx() && slxClick(ev)) return
   if (cmdHib() && hibClick(ev)) return
   // ⏹ on a row: the session opens beside the panel and its end is asked
