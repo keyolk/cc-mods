@@ -1658,7 +1658,7 @@ test('MCP heal: a call failing on a dropped server reconnects that one server wh
   await ui.unmount()
 })
 
-test('MCP heal: a claude.ai connector this session never got is tried once at start, then left quiet: no repeat, nothing reported', { timeoutMs: 20_000 }, async ($, on) => {
+test('MCP heal: a claude.ai connector this session never got is tried once, and only when the session asked for its tools; one it never asked for is never touched', { timeoutMs: 20_000 }, async ($, on) => {
   const store: Record<string, unknown> = { 'cockpit-settings': {} }
   const toasts: string[] = []
   const written: Record<string, string> = {}
@@ -1685,19 +1685,26 @@ test('MCP heal: a claude.ai connector this session never got is tried once at st
   const settle = async () => {
     for (let i = 0; i < 400; i++) await Promise.resolve()
   }
+  on('tool.call', () => ({ result: 'No matching deferred tools found' }) as any)
   const state = () => JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}')
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  // Nothing asked for yet: nothing is reconnected (live 2026-11-11: /mcp
+  // reconnect rows for servers the person never uses).
   await clock.advance(15_000)
   await settle()
-  // One try each, by the name /mcp knows; sentry (needs sign-in) and portal (live) not at all.
-  expect(reconnects.sort()).toEqual(['reconnect claude.ai Claude Data', 'reconnect claude.ai Slack'])
+  expect(reconnects).toEqual([])
+  // The model asks for Slack's tools: Slack, and only Slack, is tried once.
+  await $.tool.call({ tool: 'ToolSearch', query: 'select:mcp__claude_ai_Slack__slack_read_thread', max_results: 1 } as any)
+  await clock.advance(60_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect claude.ai Slack'])
   expect(toasts).toContain('MCP claude.ai Slack reconnected')
   // An hour on: Claude Data is not tried again, and is on no card or notice.
   for (let i = 0; i < 3; i++) {
     await clock.advance(20 * 60_000)
     await settle()
   }
-  expect(reconnects).toHaveLength(2)
+  expect(reconnects).toHaveLength(1)
   expect(state().dropped).toEqual([])
 })
 
@@ -1718,18 +1725,22 @@ test('MCP heal: a name /mcp does not know is sent once, then reported, not repea
   const settle = async () => {
     for (let i = 0; i < 400; i++) await Promise.resolve()
   }
+  on('tool.call', () => ({ result: 'ok' }) as any)
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await clock.advance(15_000)
   await settle()
-  // It was live here, then went.
+  // Used here, then it went.
+  await $.tool.call({ tool: 'mcp__weird__x', input: {} } as any)
   tools = []
   await clock.advance(60_000)
   await settle()
   expect(reconnects).toEqual(['reconnect weird'])
   const st = JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}')
   expect(st.dropped).toMatchObject([{ server: 'weird', last: 'unknown', stuck: true }])
-  await clock.advance(60 * 60_000)
-  await settle()
+  for (let i = 0; i < 3; i++) {
+    await clock.advance(20 * 60_000)
+    await settle()
+  }
   expect(reconnects).toEqual(['reconnect weird'])
 })
 
@@ -1754,10 +1765,12 @@ test('MCP heal: /mcp answering with no text counts as reconnected when the serve
     }
     return { text: '' }
   })
+  on('tool.call', () => ({ result: 'No matching deferred tools found' }) as any)
   const settle = async () => {
     for (let i = 0; i < 400; i++) await Promise.resolve()
   }
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'ToolSearch', query: 'select:mcp__claude_ai_Slack__slack_read_thread', max_results: 1 } as any)
   await clock.advance(15_000)
   await settle()
   expect(reconnects).toEqual(['reconnect claude.ai Slack'])

@@ -175,3 +175,23 @@ export function radarNames(items: readonly { id: string; state: string }[]): { a
   const mcp = items.filter((i) => i.id.startsWith('mcp:'))
   return { all: mcp.map((i) => i.id.slice(4)), connected: mcp.filter((i) => i.state === 'ok').map((i) => i.id.slice(4)) }
 }
+
+// The servers a ToolSearch query asks for by name (`select:mcp__claude_ai_Slack__slack_read_thread,…`,
+// or a bare `mcp__x__y` in keywords), by their tool-name spelling. A call to
+// a server's tool, or a search for one, is what makes a server one this
+// session uses (register.ts mcpUsed).
+export function serversNamed(query: unknown): string[] {
+  if (typeof query !== 'string') return []
+  const out = new Set<string>()
+  for (const m of query.matchAll(/mcp__(.+?)__[A-Za-z0-9_-]/g)) out.add(m[1]!)
+  return [...out]
+}
+
+// Which of the servers down are retried on their own: only the ones this
+// session used (called a tool of, or searched for one of). Live 2026-11-11
+// the person saw /mcp reconnect rows for servers they never use: a server
+// this session had and never touched is left as it is. The office card's
+// reconnect still runs for any of them, by hand.
+export function healWanted(down: readonly string[], used: ReadonlySet<string>): string[] {
+  return down.filter((s) => used.has(normalizeServer(s)))
+}
