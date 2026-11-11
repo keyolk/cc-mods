@@ -616,7 +616,9 @@ class RoutesTest(BriefsCase):
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function commandKey", r.read())
             with urllib.request.urlopen(base + "/command") as r:
-                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "table", "slx"})
+                self.assertEqual(set(json.loads(r.read())), {"at", "pending", "coordinators", "calls", "reviews", "recent", "table", "slx", "hibernate"})
+            with urllib.request.urlopen(base + "/hibernate.js") as r:
+                self.assertIn(b"function hibFoot", r.read())
             with urllib.request.urlopen(base + "/review.js") as r:
                 self.assertIn("javascript", r.headers["Content-Type"])
                 self.assertIn(b"function revKey", r.read())
