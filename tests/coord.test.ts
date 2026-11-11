@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -60,6 +60,13 @@ test('coord: a decision brief has a cost cap, the same for the coordinator and i
     expect(DECISION_BRIEF).toContain(cap)
   expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid')).toContain(DECISION_BRIEF)
   expect(coordSection(emptyLedger('sid', 'n', NOW), NOW)).toContain(DECISION_BRIEF)
+})
+
+test('workerPrompt: a worker on a cc-mods worktree is told how to set it up, others are not', () => {
+  expect(workerPrompt('fix', 'c', 'x', undefined, { cwd: '/Users/u/worktrees/cc-mods/x', addDirs: [] })).toContain(CC_MODS_WT_RULE)
+  expect(workerPrompt('fix', 'c', 'x', undefined, { cwd: '/Users/u/research/x', addDirs: [], outside: '/Users/u/worktrees/cc-mods/x' })).toContain(CC_MODS_WT_RULE)
+  expect(workerPrompt('fix', 'c', 'x', undefined, { cwd: '/Users/u/worktrees/ops-k8s/x', addDirs: [] })).not.toContain(CC_MODS_WT_RULE)
+  expect(workerPrompt('fix', 'c', 'x')).not.toContain(CC_MODS_WT_RULE)
 })
 
 test('coord: questions for the person are gathered and asked once; a skill that failed a worker is reported and fixed as its own task', () => {
