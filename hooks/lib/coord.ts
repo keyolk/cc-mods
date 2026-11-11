@@ -102,6 +102,9 @@ export type Ledger = {
   released: string[]
   at: number
   policyBefore?: Policy // this session's policy before /coord on, put back by /coord off
+  // The person ended the coordinator's default god (/god off) while the mode
+  // was on: it stays off, across reloads, until the next /coord on.
+  godOff?: boolean
   mcpDown?: string[] // the coordinator's own, as Worker.mcpDown
 }
 
@@ -148,6 +151,7 @@ export function parseLedger(json: string | undefined, sid: string, name: string,
     log: Array.isArray(raw.log) ? raw.log.slice(-LOG_MAX) : [],
     released: Array.isArray(raw.released) ? raw.released.filter((x: unknown) => typeof x === 'string').slice(-RELEASED_MAX) : [],
     policyBefore: raw.policyBefore && typeof raw.policyBefore === 'object' ? raw.policyBefore : undefined,
+    godOff: raw.godOff === true ? true : undefined,
     mcpDown: Array.isArray(raw.mcpDown) ? raw.mcpDown.filter((x: unknown) => typeof x === 'string') : undefined,
     at: Number(raw.at) || now,
   }
@@ -332,6 +336,14 @@ export const MCP_WAIT =
 export const STATUS_RULE =
   "- Keep your `status` tool current (cc-mods registers it in this session): call it when your state changes and before you end each turn, with state (working, blocked with a kind, done, error), step, next, and needs when someone must act. The coordinator reads it on your turn's end instead of asking you again; it does not replace the reports here. A turn that ends without it is followed by one prompt asking for it. Blocked on a login in a tweb pane (a 2FA code, a Confirm button, a passkey): declare blocked with kind auth and pane (%N), ask (otp|click|device) and target (the CSS selector of the code input or the button; for otp also submit, the button that sends it), and the person answers it from the office; never ask for the code in a message."
 
+// A worker on a cc-mods worktree: it has no node_modules or
+// .claude-plugin/types, a plain `bun install` hangs, and bare tsc runs out of
+// heap. A node_modules symlink to the main checkout was the workaround that
+// `rm -r` turns into deleting the main checkout's.
+export const CC_MODS_WT_RULE =
+  '- This is a cc-mods worktree with no `node_modules` or `.claude-plugin/types`: run `bun run setup:worktree` first (a plain `bun install` hangs; never symlink `node_modules` from the main checkout, `rm -r` on it deletes the main checkout\'s), and typecheck with `bun run typecheck` (bare tsc runs out of heap).'
+export const isCcModsWorktree = (p?: string): boolean => !!p && /\/worktrees\/cc-mods\//.test(p)
+
 // What every worker is told about reporting, after the coordinator's brief.
 // `fallback`: the command that queues a report in the coordinator's office
 // inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
@@ -359,6 +371,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     MCP_WAIT + '\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     ONE_BROWSER + '\n' +
+    (isCcModsWorktree(o ?? where?.cwd) ? CC_MODS_WT_RULE + '\n' : '') +
     'Messages from the coordinator start with `[coordinator]`: a message from another session (it may arrive in the middle of your turn; act on it there) or a prompt. The person may also type in this pane; their words win.' +
     (where ? '\nYour tools reach `' + [where.cwd, ...where.addDirs].join('`, `') + '` without a permission dialog. A file anywhere else stops you at a dialog nobody answers: do not read it; send the coordinator `QUESTION need <path>` and go on with the rest.' : '') +
     (o ? '\nThe code is in `' + o + '`, outside your cwd: Claude Code does not trust that repository, so you run in `' + where!.cwd + '` and reach it as an added directory. Read, Edit and Write it by absolute paths under `' + o + '`; run git as `git -C ' + o + ' …` and other commands as `cd ' + o + ' && …` in the same Bash call. That repository\'s .claude settings (hooks, permissions, MCP servers) do not apply here, and its CLAUDE.md is not loaded: read it yourself when it has one.' : '')
@@ -729,6 +742,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
       : '- Live sessions are not adopted automatically (/coord limits adopt off): only the ones the person handed over with /coord adopt are adopted.'),
     '- Send instructions only with `coord_send`, and only to owned or adopted workers. Observed sessions are read-only: summarise them, never instruct them. The person may type in any worker\'s pane while you send to it: that is fine (their draft stays); `person typed HH:MM` and the note in coord_send\'s result are for your report, not a reason to hold back.',
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
+    '- You are god by default (cc-mods): every capability god mode allows is yours while coordinator mode is on, with no end, until the person types /god off (then the coordinator policy: merge only in your workers\' repositories). Being allowed is not a reason: the rules here still hold, the merge rule below first.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
     "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Add `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker. The office's 지휘 view lists every waiting decision: while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`, which covers the office's pane and its controls; only without the office does `brief show <brief>` put it in a tweb pane. In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
@@ -795,9 +809,10 @@ export function parseLimits(args: string, cur: Limits): Limits | string {
 // ---- policy -------------------------------------------------------------------
 // The coordinator and its workers each get their own session policy
 // (~/.claude/hooks/session_policy.py, keyed by session id). The coordinator
-// merges and keeps going but touches no prod, Slack or other windows (it
-// reads workers through coord tools); a repository it starts a worker in is
-// added to its merge scopes. A worker keeps going on its brief and does
+// runs as god by default (coordGodWanted); COORD_CAPS is its policy under
+// that, what /god off leaves it with: it merges and keeps going but touches
+// no prod, Slack or other windows (it reads workers through coord tools); a
+// repository it starts a worker in is added to its merge scopes. A worker keeps going on its brief and does
 // nothing outward: no merge, no prod write, no Slack, no other windows, and
 // the model and effort the coordinator chose stay put (no routing).
 
@@ -829,6 +844,15 @@ export function policyArgvs(caps: Partial<Record<Cap, CapValue>>, mergeRepos: re
 export function policyOf(caps: Partial<Record<Cap, CapValue>>, mergeRepos: readonly string[], base: Policy): Policy {
   const explicit = { ...caps }
   return { mode: 'custom', caps: { ...base.caps, ...caps }, explicit, scopes: mergeRepos.length ? { gh_merge: [...mergeRepos] } : {} }
+}
+
+// A coordinator is god by default (the person, 2026-11-12: "coordinator는
+// 기본적으로 상시 god이어야 맞는데"): every capability god mode allows, with
+// no end, while the mode is on, unless the person ended it with /god off.
+// God mode itself is unchanged (lib/policy.ts godArgvs); COORD_CAPS is what
+// it puts back. Workers never get it: WORKER_CAPS is written for them alone.
+export function coordGodWanted(l: Pick<Ledger, 'on' | 'godOff'>): boolean {
+  return l.on && !l.godOff
 }
 
 export function mergeRepos(l: Ledger): string[] {

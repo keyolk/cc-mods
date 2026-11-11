@@ -90,6 +90,11 @@ FMT = "|".join(
         # Set by cc-mods (register.ts session.compact): 1 compacting, 0 not,
         # empty for a session on an older cc-mods (see compacting()).
         "#{@cc_pane_compacting}",
+        # What the pane asks the person through a call (register.ts: a drawn
+        # dialog, a permission); empty when attention is only a turn that
+        # ended on a question. command.view keeps a coordinator out of the
+        # waiting sessions unless it is this kind of ask.
+        "#{@cc_pane_asks}",
         "#{pane_current_path}",
     ]
 )
@@ -513,18 +518,18 @@ def _snapshot() -> list[dict]:
     except (OSError, subprocess.TimeoutExpired):
         return []
     rows = [line.split("|") for line in out.splitlines()]
-    _live_panes = {p[0] for p in rows if len(p) >= 13}
+    _live_panes = {p[0] for p in rows if len(p) >= 14}
     alive = alive_sessions()
     seen, people = set(), []
     rel = coord.relations()
     for p in rows:
-        if len(p) < 13 or not p[4] or p[4] in seen:
+        if len(p) < 14 or not p[4] or p[4] in seen:
             continue
         if alive is not None and p[4] not in alive:
             continue  # the pane still names a session that has ended
         seen.add(p[4])
-        pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid, compact_flag = p[:13]
-        cwd = "|".join(p[13:])  # last, so a "|" in the path stays in it
+        pane, sess, idx, wname, sid, state, since, attn, title, agents, ctx, wid, compact_flag, pane_asks = p[:14]
+        cwd = "|".join(p[14:])  # last, so a "|" in the path stays in it
         t = last_tool(sid)
         where, doing = room(state, attn, t, int(since) if since.isdigit() else None)
         tc = tool_counts(sid)
@@ -538,6 +543,7 @@ def _snapshot() -> list[dict]:
                 "title": title,
                 "state": state,
                 "attention": attn,
+                "asks": pane_asks,
                 "since": int(since) if since.isdigit() else None,
                 "agents": int(agents) if agents.isdigit() else 0,
                 "ctx": int(ctx) if ctx.isdigit() else None,
@@ -1690,7 +1696,7 @@ def act(body: dict) -> tuple[int, dict]:
     if kind in command.KINDS:
         # A brief answer, a worker instruction or a review verdict must reach the coordinator
         # even after it was away for a while.
-        return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
+        return command.act(body, lambda s, t: inbox_put(s, t, keep=True), alive_sessions())
     if kind in crew.KINDS:
         return crew.act(body, snapshot(), inbox_put)
     if kind in agenda.KINDS:
@@ -2092,7 +2098,13 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The page went away mid-answer (a reload, a 2 s /state poll
+            # overtaken by the next): nothing to tell it, and the traceback
+            # filled server.log next to the errors that matter.
+            self.close_connection = True
 
     def local(self) -> bool:
         host = self.headers.get("Host", "")

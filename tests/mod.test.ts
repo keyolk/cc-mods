@@ -3686,10 +3686,129 @@ test('coordinator: /coord on registers the tools; a spawn reads its arguments of
   const workerPol = policyEnvs.filter((x) => x.sid === 'abc-1')
   expect(workerPol.map((x) => x.argv.join(' '))).toContain('block slack_send')
   expect(workerPol.every((x) => x.at < nwAt)).toBe(true)
-  // The coordinator: its own policy, and a merge scope for the worker's repository.
+  // The coordinator: god by default; its own policy, with a merge scope for
+  // the worker's repository, waits as what god puts back (the god test below).
   const mine = policyEnvs.filter((x) => x.sid === 'sid-1').map((x) => x.argv.join(' '))
-  expect(mine).toContain('allow auto_continue')
-  expect(mine).toContain('allow gh_merge --repo keyolk/tmc')
+  expect(mine).toContain('allow gh_merge')
+  expect(mine).toContain('allow slack_send')
+  expect(mine).not.toContain('block gh_merge')
+  // The worker is not god: nothing outward is allowed under its session id.
+  expect(workerPol.map((x) => x.argv.join(' ')).filter((a) => a.startsWith('allow') && a !== 'allow auto_continue')).toEqual([])
   expect(runs.filter((a) => pol(a) && a[2] !== 'show').length).toBe(policyEnvs.length)
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})
+
+test('coordinator: /coord on makes it god with no end and no question; /god off leaves the coordinator policy; /coord off puts back the policy from before', async ($, on) => {
+  const box = { json: JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] }) }
+  const store: Record<string, unknown> = {}
+  const written: Record<string, string> = {}
+  const runs = baseStubs(on, { policyBox: box, store, written })
+  const asked: string[] = []
+  on('tool.call', (_$: any, e: any) => (e.tool === 'AskUserQuestion' ? (asked.push('q'), { result: { answers: {} } } as any) : ({ result: {} } as any)))
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const policyRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py') && a[2] !== 'show').map((a) => a.slice(2).join(' '))
+  const secretRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('secret_read_unlock.py'))
+  const cmd = (command: string, args: string) => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any) as any
+  const ledger = () => JSON.parse(written['/home/u/.claude/state/office/coord/sid-1.json']!)
+  const r = await cmd('coord', 'on')
+  expect(JSON.stringify(r)).toContain('as god by default')
+  expect(asked).toEqual([])
+  for (const cap of ['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'tmux_window_escape', 'auto_continue', 'auto_effort', 'auto_model']) expect(policyRuns()).toContain('allow ' + cap)
+  // Not applied over god: COORD_CAPS waits as what god puts back.
+  expect(policyRuns()).not.toContain('block gh_merge')
+  // The machine-wide secret unlock would reach every worker: not for this god.
+  expect(secretRuns()).toEqual([])
+  expect(store['god:sid-1']).toMatchObject({ until: 0, coord: true })
+  box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
+  // No end: hours later it is still on.
+  const n0 = policyRuns().length
+  // Past any timed god's longest end (2 × GOD_MS).
+  for (let i = 0; i < 13; i++) await clock.advance(5 * 60_000)
+  expect(policyRuns().slice(n0)).toEqual([])
+  // /god with minutes does not give it an end.
+  expect(JSON.stringify(await cmd('god', '15'))).toContain('coordinator default')
+  expect(policyRuns().slice(n0)).toEqual([])
+  // /god off: the coordinator policy, and it stays off (the ledger says so).
+  await cmd('god', 'off')
+  expect(policyRuns().slice(n0)).toEqual(['mode default', 'block gh_merge', 'block prod_eks_write', 'block slack_send', 'block tmux_window_escape', 'allow auto_continue'])
+  expect(store['god:sid-1']).toBeNull()
+  expect(ledger().godOff).toBe(true)
+  expect(secretRuns()).toEqual([])
+  // /coord off: the policy from before /coord on.
+  const n1 = policyRuns().length
+  await cmd('coord', 'off')
+  expect(policyRuns().slice(n1)).toEqual(['mode pr-merge', 'allow gh_merge --repo acme/infra'])
+  expect(ledger().godOff).toBeUndefined()
+  // The stub CLI does not write: the file says what the restore made it.
+  box.json = JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] })
+  // /coord on again: god again; /coord off straight from god puts back the same.
+  await cmd('coord', 'on')
+  expect(store['god:sid-1']).toMatchObject({ coord: true })
+  const n2 = policyRuns().length
+  await cmd('coord', 'off')
+  expect(policyRuns().slice(n2)).toEqual(['mode pr-merge', 'allow gh_merge --repo acme/infra'])
+  expect(store['god:sid-1']).toBeNull()
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})
+
+test('coordinator: after a reload the default god is taken back as it was, with no end', async ($, on) => {
+  const all = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
+  const before = { mode: 'custom', caps: {}, explicit: { gh_merge: 'block' }, scopes: {} }
+  const store: Record<string, unknown> = { 'god:sid-1': { until: 0, before, coord: true } }
+  const ledgerAt = '.claude/state/office/coord/sid-1.json'
+  const files: Record<string, string> = { [ledgerAt]: JSON.stringify({ on: true, sid: 'sid-1', name: 'c', limits: {}, workers: [], log: [], at: 1 }) }
+  const runs = baseStubs(on, { policyBox: { json: all }, store, files })
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const policyRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py') && a[2] !== 'show').map((a) => a.slice(2).join(' '))
+  // Already god in the file: nothing to run, and no expiry put it back.
+  await clock.advance(60 * 60_000)
+  expect(policyRuns()).toEqual([])
+  expect(store['god:sid-1']).toMatchObject({ until: 0, coord: true })
+  const cmd = (command: string, args: string) => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any) as any
+  await cmd('god', 'off')
+  expect(policyRuns()).toEqual(['mode default', 'block gh_merge'])
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})
+
+test('coordinator: after a reload with /god off in the ledger, god stays off', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  const files: Record<string, string> = { '.claude/state/office/coord/sid-1.json': JSON.stringify({ on: true, godOff: true, sid: 'sid-1', name: 'c', limits: {}, workers: [], log: [], at: 1 }) }
+  const runs = baseStubs(on, { policyJson: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }), store, files })
+  mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  expect(runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py') && a[2] === 'allow')).toEqual([])
+  expect(store['god:sid-1']).toBeUndefined()
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})
+
+test('coordinator: a timed /god already on becomes the coordinator default on /coord on; /god off then leaves the coordinator policy', async ($, on) => {
+  const box = { json: JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] }) }
+  const store: Record<string, unknown> = {}
+  const runs = baseStubs(on, { policyBox: box, store })
+  on('tool.call', () => ({ result: {} }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const policyRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py') && a[2] !== 'show').map((a) => a.slice(2).join(' '))
+  const cmd = (command: string, args: string) => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any) as any
+  await cmd('god', '15')
+  box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
+  await cmd('coord', 'on')
+  expect(store['god:sid-1']).toMatchObject({ until: 0, coord: true })
+  // Its 15 minutes pass: nothing is put back.
+  const n = policyRuns().length
+  for (let i = 0; i < 4; i++) await clock.advance(5 * 60_000)
+  expect(policyRuns().slice(n)).toEqual([])
+  await cmd('god', 'off')
+  expect(policyRuns().slice(n)).toEqual(['mode default', 'block gh_merge', 'block prod_eks_write', 'block slack_send', 'block tmux_window_escape', 'allow auto_continue'])
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
 })

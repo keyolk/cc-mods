@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, coordGodWanted, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -21,16 +21,22 @@ import { clip } from './lib/text'
 import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
-import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
+import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
 
 // What register.ts lends: the session, and its policy. God mode keeps "the
 // policy before" and puts it back when it ends, so while god is on the
-// coordinator's policy goes there instead of being applied over god.
+// coordinator's policy goes there instead of being applied over god. The
+// coordinator is god by default (lib/coord.ts coordGodWanted): coordGod says
+// whether that one is on, startCoordGod turns it on (no end, no question),
+// dropCoordGod lets go of it for /coord off and hands back its "before".
 export type CoordPolicy = {
   now: () => Promise<Policy | null>
   run: (argv: string[], sessionId?: string) => Promise<boolean>
   godBefore: () => Policy | undefined
   setGodBefore: (p: Policy) => Promise<void>
+  coordGod: () => boolean
+  startCoordGod: () => Promise<void>
+  dropCoordGod: () => Promise<Policy | undefined>
   reload: () => Promise<void>
 }
 // busy: the coordinator's own turn is running (a prompt submitted then waits
@@ -265,9 +271,19 @@ async function turnOn($: any, fresh: boolean) {
     // What /coord off puts back: god's "before" while god is on, else now.
     const before = ctx!.policy.godBefore() ?? (await ctx!.policy.now())
     if (before) next = { ...next, policyBefore: before }
+    next = { ...next, godOff: undefined }
     await save($, logged(next, 'order', 'coordinator mode on', Date.now()))
+    // God by default; coordPolicy then makes COORD_CAPS what it puts back on
+    // /god off.
+    await ctx!.policy.startCoordGod()
     await coordPolicy($)
-  } else await save($, next)
+  } else {
+    // /coord on again: a god the person ended with /god off comes back.
+    if (fresh) next = { ...next, godOff: undefined }
+    await save($, next)
+    // After a reload the stored god is taken back as it was.
+    if (coordGodWanted(next)) await ctx!.policy.startCoordGod()
+  }
   await registerTools($)
   watch?.cancel()
   watch = $.clock.every(10_000, () => void tick($))
@@ -421,6 +437,13 @@ export function coordRecheck(text: string): string | undefined {
   return ledger && text.startsWith(WAKE_PREFIX) ? recheck(text, ledger, Date.now(), sent) : text
 }
 
+// register.ts, when the person ended the coordinator's default god (/god
+// off, the Policy tab): it stays off until the next /coord on.
+export async function coordGodEnded($: any) {
+  if (!ledger?.on || ledger.godOff) return
+  await save($, logged({ ...ledger, godOff: true }, 'order', 'god mode off (coordinator policy until /coord on)', Date.now()))
+}
+
 // register.ts: the coordinator's turn ended.
 export async function coordIdle($: any) {
   if (ledger?.on) await flush($)
@@ -443,13 +466,17 @@ export async function coordCommand($: any, args: string): Promise<string> {
   const now = Date.now()
   if (verb === 'on') {
     await turnOn($, true)
-    return 'Coordinator mode on as `' + ledger.name + '`, with its own policy: merge only in its workers\' repositories, auto-continue, no prod write, Slack or other windows' + (ctx.policy.godBefore() ? ' (applied when god mode ends)' : '') + '. Limits: ' + limitsText(ledger.limits) + ' (/coord limits to change)' + (ledger.limits.autoAdopt ? ' Every live session becomes an adopted worker within 10 s; /coord release <slug> hands one back for good.' : '') + ' The coord_* tools are there from the next prompt.'
+    return 'Coordinator mode on as `' + ledger.name + '`, as god by default: every capability allowed with no end' + (ctx.policy.coordGod() ? '' : ' (not started: see /policy)') + '. /god off leaves it the coordinator policy: merge only in its workers\' repositories, auto-continue, no prod write, Slack or other windows. Limits: ' + limitsText(ledger.limits) + ' (/coord limits to change)' + (ledger.limits.autoAdopt ? ' Every live session becomes an adopted worker within 10 s; /coord release <slug> hands one back for good.' : '') + ' The coord_* tools are there from the next prompt.'
   }
   if (verb === 'off') {
     watch?.cancel()
     watch = undefined
-    const before = ledger.policyBefore
-    await save($, logged({ ...ledger, on: false, policyBefore: undefined }, 'order', 'coordinator mode off', now))
+    const kept = ledger.policyBefore
+    await save($, logged({ ...ledger, on: false, policyBefore: undefined, godOff: undefined }, 'order', 'coordinator mode off', now))
+    // The coordinator's own god ends with the mode; a god the person started
+    // with /god keeps running and puts back the policy from before /coord on.
+    const godBefore = await ctx.policy.dropCoordGod()
+    const before = kept ?? godBefore
     if (before) {
       if (ctx.policy.godBefore()) await ctx.policy.setGodBefore(before)
       else for (const argv of restoreArgvs(before)) await ctx.policy.run(argv)
@@ -546,22 +573,39 @@ const PROMPT_JQ = '\'fromjson? | select(.type == "user" and (.isMeta | not)) | (
 const PROMPTS_SH =
   'h=$0; for s in "$@"; do f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || continue; ' +
   'tail -c 300000 "$f" | tail -n +2 | jq -Rc --arg s "$s" ' + PROMPT_JQ + ' 2>/dev/null | tail -n 12; done'
+// The coordinator's own prompts, further back: the person's words are a few
+// among many worker reports (coordsum personLines keeps them).
+const OWN_SH =
+  'h=$0; s=$1; f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || exit 0; ' +
+  'tail -c 3000000 "$f" | tail -n +2 | jq -Rc --arg s "$s" ' + PROMPT_JQ + ' 2>/dev/null | tail -n 400'
 // The first prompts, off the head: what the session was started for.
 const FIRST_SH =
   'h=$0; for s in "$@"; do f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || continue; ' +
   'head -c 200000 "$f" | jq -Rc --arg s "$s" ' + PROMPT_JQ + ' 2>/dev/null | head -n 4; done'
 
-type Info = { titles: Map<string, string>; prompts: Map<string, string[]>; first: Map<string, string>; last: Map<string, string> }
+type Info = { titles: Map<string, string>; prompts: Map<string, string[]>; first: Map<string, string>; last: Map<string, string>; own?: { prompts: string[]; first?: string; last?: string } }
 
-// Pane labels and prompts of every live session but this one.
+// Pane labels and prompts of every live session; this one's own (`own`,
+// the person's words only) when it is among them.
 async function sessionInfo($: any, seen: PaneSeen[]): Promise<Info> {
-  const sids = [...new Set(seen.filter((s) => s.sid !== ledger!.sid).map((s) => s.sid))]
-  const [titles, tail, head] = await Promise.all([
+  const me = ledger!.sid
+  const sids = [...new Set(seen.filter((s) => s.sid !== me).map((s) => s.sid))]
+  const self = seen.some((s) => s.sid === me)
+  const [titles, tail, head, own, ownHead] = await Promise.all([
     sh($, ['tmux', 'list-panes', '-a', '-F', '#{@cc_pane_session}\t#{@title}'], { timeoutMs: 3000 }).then((r) => new Map(r.out.split('\n').map((x) => x.split('\t') as [string, string]).filter(([s, t]) => s && t))),
     sids.length ? sh($, ['sh', '-c', PROMPTS_SH, ctx!.home(), ...sids], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
     sids.length ? sh($, ['sh', '-c', FIRST_SH, ctx!.home(), ...sids], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
+    self ? sh($, ['sh', '-c', OWN_SH, ctx!.home(), me], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
+    self ? sh($, ['sh', '-c', FIRST_SH, ctx!.home(), me], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
   ])
-  return { titles, prompts: parsePrompts(tail.out), first: parseFirst(head.out), last: parseLast(tail.out) }
+  const mine = personLines(own.out)
+  return {
+    titles,
+    prompts: parsePrompts(tail.out),
+    first: parseFirst(head.out),
+    last: parseLast(tail.out),
+    ...(self ? { own: { prompts: parsePrompts(mine).get(me) ?? [], first: parseFirst(personLines(ownHead.out)).get(me), last: parseLast(mine).get(me) } } : {}),
+  }
 }
 
 // What each live session was doing (lib/coordsum.ts), kept in the office's
@@ -574,7 +618,13 @@ async function summarize($: any, seen: PaneSeen[], n: Map<string, string>, info:
   const mine = new Map(active(ledger!).map((w) => [w.sid, w]))
   const rows: SumIn[] = []
   for (const s of seen) {
-    if (s.sid === ledger!.sid || rows.some((r) => r.sid === s.sid)) continue
+    if (rows.some((r) => r.sid === s.sid)) continue
+    if (s.sid === ledger!.sid) {
+      // Itself: what the person asked of it, never its workers' reports.
+      const o = info.own
+      if (o && (o.first || o.prompts.length)) rows.push({ sid: s.sid, name: n.get(s.sid) ?? ledger!.name, ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(o.first ? { first: o.first } : {}), prompts: o.prompts, ...(o.last ? { last: o.last } : {}) })
+      continue
+    }
     const w = mine.get(s.sid)
     rows.push({ sid: s.sid, name: n.get(s.sid) ?? s.sid.slice(0, 8), ...(w ? { slug: w.slug } : {}), ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(info.first.get(s.sid) ? { first: info.first.get(s.sid) } : {}), prompts: info.prompts.get(s.sid) ?? [], ...(info.last.get(s.sid) ? { last: info.last.get(s.sid) } : {}) })
   }
@@ -935,8 +985,8 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
 }
 
 // The coordinator's own policy: COORD_CAPS plus a merge scope for each
-// repository its live workers are in. Under god mode, it becomes what god
-// puts back.
+// repository its live workers are in. Under god mode (the coordinator's
+// default god included), it becomes what god puts back.
 async function coordPolicy($: any) {
   const l = ledger!
   const repos = mergeRepos(l)

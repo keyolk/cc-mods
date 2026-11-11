@@ -1103,10 +1103,18 @@ started before the flag turned off (see *Verified*); do not edit
 
 ```bash
 bun install
-bun run check        # tsc + claude plugin validate + eslint
+bun run check        # tsc (8 GB heap: the default OOMs) + claude plugin validate + eslint
 bun run test:lib     # pure functions, runs anywhere (bun, with a shim for claude-code/testing)
 claude plugin test   # engine-backed tests in tests/mod.test.ts (needs the rollout on)
 ```
+
+In a git worktree (`~/worktrees/cc-mods/<slug>`) run `bun run setup:worktree`
+first. It copies the gitignored `.claude-plugin/types` and `bun.lock` from the
+main checkout and runs `bun install --frozen-lockfile`. A plain `bun install`
+hangs at "Resolving dependencies" without a lockfile, and tsc without `types`
+fails with ~390 errors. Do not symlink `node_modules` from the main checkout:
+`rm -r` on the symlink deletes the main checkout's `node_modules`. Run tsc as
+`bun run typecheck`; bare `tsc` hits the default heap limit (OOM).
 
 Layout: `hooks/register.ts` wires events and owns every `$` call (validation
 only allows `$` in top-level functions of the module file); `hooks/lib/*` and

@@ -12,6 +12,8 @@
   "scripts": {
     "test": "claude plugin test",
     "test:lib": "bun test lib.test.ts",
-    "check": "tsc -p . && claude plugin validate . && eslint hooks"
+    "typecheck": "NODE_OPTIONS=--max-old-space-size=8192 tsc -p .",
+    "setup:worktree": "sh scripts/worktree-setup.sh",
+    "check": "bun run typecheck && claude plugin validate . && eslint hooks"
   }
 }

@@ -38,6 +38,8 @@ const TABLE_CSS = `
 #command table.turn tr.sel td { background: #fff3c4; }
 #command table.turn tr.more td { color: #7a7090; text-decoration: underline; }
 #command table.turn tr.other td { opacity: .8; }
+#command table.turn tr.dim td { opacity: .5; }
+#command table.turn tr.dim.sel td { opacity: .85; }
 #command table.turn td.who .slug { margin-left: 0; }
 #command table.turn .end { font: 11px -apple-system, sans-serif; border: 1px solid rgba(59,42,53,.4); border-radius: 8px; background: #fff; padding: 0 5px; cursor: pointer; margin-left: 4px; }
 #command table.turn tr.relay td { cursor: default; padding: 2px 6px 6px 14px; box-shadow: inset 4px 0 0 #e0793a; }
@@ -329,10 +331,14 @@ const tblCmd = (R) => {
   return m ? m[1] : ''
 }
 
+// A trigger's own row that slx judged to ask nothing of the person: drawn faint.
+const tblDim = (R) => tblOwnSlx(R) && R.xs.length > 0 && !!R.xs[0].dim && typeof slxWhy === 'function'
+
 function tblRow(R, other) {
   const r = R.row, slug = tblSlug(r), ask = tblAsk(R)
   // A trigger's own row has no session: no 창 없음 there.
-  const sub = [r.isCoord ? '🎖 coordinator' : r.relation === 'adopted' ? '입양' : '', r.sid && r.live === false ? '창 없음' : ''].filter(Boolean).join(' · ')
+  const faint = tblDim(R)
+  const sub = [faint ? slxWhy(R.xs[0]) : '', r.isCoord ? '🎖 coordinator' : r.relation === 'adopted' ? '입양' : '', r.sid && r.live === false ? '창 없음' : ''].filter(Boolean).join(' · ')
   const end = other && r.sid && r.live !== false && !r.isCoord ? '<button class="end" data-end="' + cmdEsc(r.sid) + '" title="세션 끝내기 (옆에 열고 확인)">⏹</button>' : ''
   const cp = tblCmd(R) ? '<button class="end" data-copy="' + cmdEsc(R.row.key) + '" title="명령 복사: ' + cmdEsc(tblCmd(R)) + '">📋</button>' : ''
   // A trigger's own row carries its mark for the slx line's bulk choices.
@@ -345,7 +351,7 @@ function tblRow(R, other) {
       + '<span class="m">' + cmdEsc(who) + '</span></td>'
       + '<td class="st">' + tblCells(R) + cp + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
   }
-  return '<tr data-row="' + cmdEsc(r.key) + '" class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + (R.needs && tblIsAct(R) ? ' act' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
+  return '<tr data-row="' + cmdEsc(r.key) + '"' + (faint ? ' title="' + cmdEsc(slxWhy(R.xs[0])) + '"' : '') + ' class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + (faint ? ' dim' : '') + (R.needs && tblIsAct(R) ? ' act' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
     + (slug || sub || ask ? '<span class="m">' + (slug ? '<span class="slug">' + cmdEsc(slug) + '</span> ' : '') + cmdEsc([sub, ask].filter(Boolean).join(' · ')) + '</span>' : '') + '</td>'
     + '<td class="st">' + tblCells(R) + cp + end + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
 }
@@ -361,7 +367,7 @@ function tblHtml() {
   const picked = !tbl.othersOpen && others.find((R) => R.row.key === cmd.row)
   const out = []
   // 내 차례 counts what sessions and briefs wait on; triggers are candidates, counted on their own line.
-  if (needs.length || slxRows.length) out.push('<h3>✋ 내 차례 ' + needs.length + (slxRows.length ? ' <span class="m">+ 📨 ' + slxRows.length + '</span>' : '') + ' <span class="m">오래 기다린 순 · j/k 행 · Tab 탭</span></h3>')
+  if (needs.length || slxRows.length) out.push('<h3>✋ 내 차례 ' + needs.length + (slxRows.length ? ' <span class="m">+ 📨 ' + slxRows.length + (slxRows.filter(tblDim).length ? ' · 흐림 ' + slxRows.filter(tblDim).length : '') + '</span>' : '') + ' <span class="m">오래 기다린 순 · j/k 행 · Tab 탭</span></h3>')
   const grp = (t) => '<tr class="grp"><td colspan="3">' + t + '</td></tr>'
   const rows = []
   if (g.act.length) rows.push(grp('🔶 지금 내가 해야 할 것 ' + g.act.length))
