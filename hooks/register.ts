@@ -84,6 +84,7 @@ import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
 import { noteText, sentDigests, userTexts, type NoteBlock } from './lib/notes'
+import { SELF_CHECK_PROMPT, STATUS_DIR, STATUS_TOOL, parseStatus, selfCheckDue, workerOf } from './lib/status'
 import { coordCommand, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
@@ -1569,6 +1570,18 @@ async function resumeHeldWatches($: any) {
 }
 
 let mainTurnAt = 0
+// A worker's status tool (lib/status.ts). `statusTool`: when it was
+// registered (a worker gets it once a coordinator's ledger lists it; a
+// session that never is gets nothing). `statusAt`: the last status call.
+// `turnStartedAt`: when this main turn started, by the wall clock the two
+// above use. `selfTurn`: the running turn is the self-check prompt;
+// `selfStreak`: self-checks in a row that got no status call.
+let statusTool: number | undefined
+let statusAt: number | undefined
+let turnStartedAt = 0
+let selfTurn = false
+let selfStreak = 0
+let workerCoord: { coord: string; slug: string } | undefined
 // What the previous main step was sent with (routing's cache gate, lib/route.ts).
 let routeLast: RouteLast | undefined
 let mainTurnRunning = false
@@ -1944,6 +1957,61 @@ async function resumeProbe($: any) {
   ownResume = true
   ownResumeAt = now
   await $.prompt.submit({ text: 'keep going', asUser: true }).catch(() => undefined)
+}
+
+// ---- worker status (lib/status.ts) ------------------------------------------
+
+// Whether a coordinator that is on lists this session as a worker it gave
+// work to; registers the status tool the first time it does. Read on the
+// session's start and every minute: a worker is written into the ledger just
+// before its claude starts, an adopted one when it is first instructed.
+async function statusWorker($: any) {
+  if (!home || !sid) return
+  const r = await $.process.run(['sh', '-c', 'for f in "$0"/*.json; do [ -f "$f" ] && tr -d "\\n" < "$f" && echo; done; true', home + '/.claude/state/office/coord'], { timeoutMs: 3000 }).catch(() => undefined)
+  if (!r || r.exitCode !== 0) return
+  workerCoord = workerOf(String(r.stdout ?? '').split('\n').filter(Boolean), sid)
+  if (!workerCoord || statusTool !== undefined) return
+  try {
+    await $.tool.register({ ...STATUS_TOOL, isDeferred: false })
+    statusTool = Date.now()
+  } catch (err) {
+    $.ui.log('status: could not register the tool: ' + String(err))
+  }
+}
+
+// The status tool's call: the record written whole over the last one
+// (state/office/status/<sid>.json), read by the coordinator's tick and the
+// office. Its arguments arrive spread on the event, as coord_*'s do.
+async function statusCall($: any, e: any): Promise<{ result: string } | { deny: string }> {
+  const now = Date.now()
+  const st = parseStatus(e, now)
+  if (typeof st === 'string') return { deny: 'status: ' + st }
+  const dir = home + STATUS_DIR
+  await $.process.run(['mkdir', '-p', dir], { timeoutMs: 3000 }).catch(() => {})
+  try {
+    await $.fs.write(dir + '/' + sid + '.json', JSON.stringify(st))
+  } catch (err) {
+    return { deny: 'status: could not write ' + dir + '/' + sid + '.json: ' + String(err) }
+  }
+  statusAt = now
+  selfStreak = 0
+  return { result: 'status recorded: ' + st.state + (st.kind ? ':' + st.kind : '') + (workerCoord ? ' (the coordinator sees it on its next look)' : '') }
+}
+
+// At a worker's main turn's end: when it declared no status in it, one
+// prompt asking for it, as a turn of its own. True when sent. The
+// self-check's own turn never asks again, and SELF_CHECK_MAX of them in a
+// row without a status call stop the asking until the worker calls it.
+async function statusSelfCheck($: any, aborted: boolean): Promise<boolean> {
+  const wasSelf = selfTurn
+  selfTurn = false
+  if (wasSelf && (statusAt === undefined || statusAt < turnStartedAt)) selfStreak++
+  if (!selfCheckDue({ worker: !!workerCoord, toolAt: statusTool, turnAt: turnStartedAt, statusAt, selfTurn: wasSelf, aborted, streak: selfStreak })) return false
+  selfTurn = true
+  await update($, flowA, (fs) => [...fs, { at: Date.now(), turnId: '', kind: 'decision' as const, text: 'status · the turn ended with no status call; asked for one' }].slice(-FLOW_CAP))
+  // The prompt runs once this turn is over. A refused submit: no self turn.
+  void $.prompt.submit({ text: SELF_CHECK_PROMPT, asUser: true }).catch(() => (selfTurn = false))
+  return true
 }
 
 // auto_continue: a turn that ended on a plain "shall I go on?" gets "go on"
@@ -3594,6 +3662,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     setOrg(parseOrg(await readText($, home + ORG_PATH)))
     pane = await $.env.get('TMUX_PANE')
     sid = await $.session.id()
+    void statusWorker($)
     // The office reads this instead of capturing the pane (session.compact
     // below); a pane where it is unset runs an older cc-mods.
     if (pane) void publish($, undefined, null, { '@cc_pane_compacting': '0' }).catch(() => {})
@@ -3720,6 +3789,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
         if (!(await quiet($))) void refreshNeighbors($)
       })
       $.clock.every(2_000, () => void officeInbox($))
+      $.clock.every(60_000, () => void statusWorker($))
       void officeFixOn($)
       $.clock.every(60_000, () => void mcpCheck($))
       $.clock.after(15_000, () => void mcpCheck($))
@@ -3788,6 +3858,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($: any, e: any, next: any) => {
     // /clear and friends reset $.state and change the session id.
     sid = await $.session.id()
+    void statusWorker($)
     if (typeof e.transcript_path === 'string') transcript = e.transcript_path
     const saved = dropUnsourcedTickets(((await $.store.get(K.outputs(sid))) ?? []) as Output[])
     if (saved.length) await update($, outputsA, (cur) => (cur.length ? cur : saved))
@@ -3855,6 +3926,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       if (ownResume) ownResume = false
       else mainTurnAt = await clockNow($)
       mainTurnRunning = true
+      turnStartedAt = Date.now()
+      if (e.text === SELF_CHECK_PROMPT) selfTurn = true
       await update($, turnA, () => ({ turnId: e.turnId, at: Date.now() }))
     }
     const ev = !e.agentId && e.text ? parseMonitor(e.text) : undefined
@@ -3988,6 +4061,13 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const autoOn = ((await read($, policyA)) as Policy | null)?.caps.auto_continue === 'allow'
     const att = e.isAborted ? { attention: 'none' } : await bridge($, 'attention', { message: e.answer ?? '', proceed: autoOn })
     const attention: Attention = att.attention === 'ask' || att.attention === 'action' ? att.attention : 'none'
+    // A worker that ended its turn without declaring a status is asked for
+    // one before anything else goes on; its pane stays working meanwhile.
+    if (await statusSelfCheck($, !!e.isAborted)) {
+      await publish($, 'working', 'none')
+      void exportOutputs($)
+      return result
+    }
     if (autoOn && att.proceed === true && !e.isAborted && (await proceedFor($, e.turnId, e.answer ?? ''))) {
       void exportOutputs($)
       return result
@@ -4618,6 +4698,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // The coord_* tools (coord.ts), registered when the person turns the mode on.
   // A tool's arguments arrive spread on the event itself (as Bash's command
   // does), not under `input`.
+  // The worker status tool (lib/status.ts), registered by statusWorker.
+  on('tool.call', { tool: /^mcp__cc-mods__status$/ }, async ($: any, e: any) => statusCall($, e))
+
   on('tool.call', { tool: /coord_(roster|route|spawn|send|close|review)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
 
   // The coordinator's [coord] wakes, looked at again where they leave the

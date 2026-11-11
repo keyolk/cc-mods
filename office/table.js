@@ -98,7 +98,7 @@ function tblLegacy(d) {
   }
   const seen = new Set(rows.map((r) => r.key))
   for (const c of d.coordinators || []) {
-    for (const r of [{ sid: c.sid, name: c.name, summary: c.summary, isCoord: true, state: c.state, live: c.live }, ...(c.workers || []).filter((w) => w.sid).map((w) => ({ sid: w.sid, name: w.slug, summary: w.summary, relation: w.relation || 'owned', state: w.state, live: w.live, coord: c.sid }))]) {
+    for (const r of [{ sid: c.sid, name: c.name, summary: c.summary, isCoord: true, state: c.state, live: c.live }, ...(c.workers || []).filter((w) => w.sid).map((w) => ({ sid: w.sid, name: w.slug, summary: w.summary, relation: w.relation || 'owned', state: w.state, live: w.live, coord: c.sid, status: w.status }))]) {
       if (seen.has('s:' + r.sid)) continue
       seen.add('s:' + r.sid)
       rows.push({ key: 's:' + r.sid, decisions: [], reviews: [], ...r })
@@ -262,7 +262,18 @@ function tblAskNow(R) {
   if (R.mcp.length) return tblMcpLine(R.mstuck[0] || R.mcp[0])
   if (R.woke) return '⏰ 다시 볼 시각' + (R.memos.length ? ' · 📝 ' + R.memos[0].text.slice(0, 60) : '')
   if (R.memos.length) return '📝 ' + R.memos[0].text.slice(0, 80)
+  if (R.row.status) return tblStatus(R.row.status)
   return ''
+}
+
+// A worker's declared status (hooks/lib/status.ts) in a few words: its state,
+// the phase, and what it waits on or does next.
+const TBL_STATUS = { working: '⚙', blocked: '⏸', done: '✅', error: '⚠', idle: '·' }
+const TBL_KIND = { question: '결정 대기', permission: '권한 대기', auth: '로그인 대기', wait: '외부 대기' }
+function tblStatus(s) {
+  const head = (TBL_STATUS[s.state] || '') + ' ' + (s.kind ? TBL_KIND[s.kind] || s.kind : s.state)
+  const tail = s.state === 'blocked' ? s.needs : s.state === 'done' ? s.link || s.msg : s.next
+  return [head + (s.progress != null ? ' ' + s.progress + '%' : ''), s.step, tail].filter(Boolean).join(' · ').slice(0, 120)
 }
 
 function tblRow(R, other) {

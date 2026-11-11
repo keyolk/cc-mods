@@ -563,3 +563,47 @@ test('coord: where prompt.compose never runs, the coordinator rules and roster g
   expect(notes()[1]).not.toContain('# Coordinator mode')
   expect(notes()[1]).not.toContain('# Session policy')
 })
+
+// A worker's status tool (lib/status.ts) through the engine: registered once
+// a coordinator's ledger lists this session as its worker, a call written to
+// its status file, and a turn that ended without one asked for it once.
+test('status: a worker gets the tool, a call is written whole, and a turn without one is asked for it once', async ($, on) => {
+  const COORD = '/home/u/.claude/state/office/coord/c9.json'
+  const STATUS = '/home/u/.claude/state/office/status/sid-1.json'
+  const files: Record<string, string> = { [COORD]: JSON.stringify({ on: true, sid: 'c9', name: 'cc-mods-d9', workers: [{ slug: 'program-status', sid: 'sid-1', relation: 'owned', at: OLD }], log: [] }) }
+  const submitted: string[] = []
+  stubs(on, {
+    files,
+    submitted,
+    panes: () => '',
+    // statusWorker reads every ledger with one shell; the stub hands back the files.
+    run: (argv) => (argv[0] === 'sh' && String(argv[2] ?? '').includes('for f in') ? Object.entries(files).filter(([k]) => k.startsWith(argv[3] + '/')).map(([, v]) => v).join('\n') + '\n' : undefined),
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await clock.advance(10)
+
+  // A turn that declares a status: written, and nothing asked after it.
+  await clock.advance(1_000)
+  await $.turn.start({ turnId: 't1', text: 'implement design A' })
+  const bad: any = await $.tool.call({ tool: 'mcp__cc-mods__status', state: 'blocked' } as any)
+  expect(bad.deny).toContain('blocked needs a kind')
+  const ok: any = await $.tool.call({ tool: 'mcp__cc-mods__status', state: 'blocked', kind: 'wait', step: 'CI', next: 'READY' } as any)
+  expect(ok.result).toContain('status recorded: blocked:wait')
+  expect(JSON.parse(files[STATUS]!)).toMatchObject({ state: 'blocked', kind: 'wait', step: 'CI', next: 'READY' })
+  await $.turn.complete({ turnId: 't1', answer: 'waiting on CI', durationMs: 5, isAborted: false, usage: null } as any)
+  await clock.advance(1_000)
+  expect(submitted.filter((t) => t.startsWith('[cc-mods] Your turn ended without'))).toEqual([])
+
+  // A turn that does not: one self-check prompt. Its own turn, again without
+  // a call, is not followed by another.
+  await $.turn.start({ turnId: 't2', text: 'go on' })
+  await $.turn.complete({ turnId: 't2', answer: 'did more', durationMs: 5, isAborted: false, usage: null } as any)
+  await clock.advance(1_000)
+  const asks = submitted.filter((t) => t.startsWith('[cc-mods] Your turn ended without'))
+  expect(asks.length).toBe(1)
+  await $.turn.start({ turnId: 't3', text: asks[0]! })
+  await $.turn.complete({ turnId: 't3', answer: 'ok', durationMs: 5, isAborted: false, usage: null } as any)
+  await clock.advance(1_000)
+  expect(submitted.filter((t) => t.startsWith('[cc-mods] Your turn ended without')).length).toBe(1)
+})

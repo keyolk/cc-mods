@@ -422,6 +422,38 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual([c["name"] for c in v["calls"]], ["w"])
         self.assertEqual((v["recent"][0]["file"], v["recent"][0]["by"], v["recent"][0]["pending"]), (f, "w", True))
 
+    def test_a_worker_row_carries_the_status_it_declared(self):
+        # hooks/lib/status.ts: the coordinator's tick copies a worker's status
+        # file into its ledger row; the view hands its fields to the 지휘 table.
+        st = {"state": "blocked", "kind": "question", "step": "설계", "needs": "~/briefs/x.html", "progress": 40, "msg": "", "at": 1}
+        self.ledger([{"slug": "w", "sid": WORKER, "status": st}, {"slug": "v", "sid": "v1", "status": {"state": "paused"}}, {"slug": "u", "sid": "u1"}])
+        ws = {w["slug"]: w for w in command.view([{"id": WORKER, "name": "w"}])["coordinators"][0]["workers"]}
+        self.assertEqual(ws["w"]["status"], {"state": "blocked", "kind": "question", "step": "설계", "needs": "~/briefs/x.html", "progress": 40, "at": 1})
+        # A state it does not know, or none declared: no status.
+        self.assertIsNone(ws["v"]["status"])
+        self.assertIsNone(ws["u"]["status"])
+
+    def test_the_table_says_a_workers_status_under_its_name(self):
+        js = pathlib.Path(__file__).parents[1] / "office" / "table.js"
+        prog = textwrap.dedent(r"""
+            const vm = require('vm'), fs = require('fs')
+            const el = () => ({ appendChild() {}, querySelector: () => null })
+            const ctx = { console, JSON, Date, cmd: {}, document: { createElement: el, head: el(), addEventListener() {} } }
+            vm.createContext(ctx)
+            vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + `
+              var a = tblStatus({ state: 'blocked', kind: 'question', step: '설계', needs: '~/briefs/x.html', progress: 40 })
+              var b = tblStatus({ state: 'working', step: 'tests', next: 'PR 열기' })
+              var c = tblStatus({ state: 'done', link: 'https://github.com/keyolk/cc-mods/pull/121', msg: 'merged' })
+            `, ctx)
+            console.log(JSON.stringify({ a: ctx.a, b: ctx.b, c: ctx.c }))
+        """)
+        r = subprocess.run(["node", "-e", prog, str(js)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        self.assertEqual(j["a"], "⏸ 결정 대기 40% · 설계 · ~/briefs/x.html")
+        self.assertEqual(j["b"], "⚙ working · tests · PR 열기")
+        self.assertEqual(j["c"], "✅ done · https://github.com/keyolk/cc-mods/pull/121")
+
     def test_a_brief_marked_done_is_listed_apart_from_one_only_answered(self):
         # `brief done` writes sidecar.done; the view lists those under `done`
         # (newest first, a day old is folded), and an answered brief is not one.

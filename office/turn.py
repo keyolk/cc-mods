@@ -92,7 +92,9 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
             if not w.get("sid"):
                 continue
             by_slug[w.get("slug") or ""] = w["sid"]
-            mcp_down(row("s:" + w["sid"], sid=w["sid"], name=w.get("slug"), summary=w.get("summary"), coord=c["sid"], relation=w.get("relation") or "owned", state=w.get("state"), live=w.get("live")), w.get("mcp"))
+            # status: what the worker declared (hooks/lib/status.ts), drawn
+            # under its name when nothing else is asked of the person there.
+            mcp_down(row("s:" + w["sid"], sid=w["sid"], name=w.get("slug"), summary=w.get("summary"), coord=c["sid"], relation=w.get("relation") or "owned", state=w.get("state"), live=w.get("live"), status=w.get("status")), w.get("mcp"))
     waiting_sids = {c["sid"] for c in calls}
     for c in calls:
         r = row("s:" + c["sid"], sid=c["sid"], name=c.get("slug") or c.get("name"), summary=c.get("summary"), live=True, state="waiting")
