@@ -3706,7 +3706,10 @@ async function tick() {
   }
 }
 setSkin(savedSkin(), false)
-resize(); tick(); setInterval(tick, 2000); requestAnimationFrame(frame)
+// The next poll after this one answers, not on a fixed beat: a slow /state
+// (a cold office reading long transcripts) piled one request on another.
+async function tickLoop() { await tick(); setTimeout(tickLoop, 2000) }
+resize(); tickLoop(); requestAnimationFrame(frame)
 </script>
 </body>
 </html>

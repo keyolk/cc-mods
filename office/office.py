@@ -22,6 +22,7 @@ import hashlib
 from datetime import datetime
 import html
 import json
+import mmap
 import os
 import re
 import secrets
@@ -178,22 +179,23 @@ def born(sid: str) -> float | None:
     return None
 
 
-def tool_counts(sid: str) -> dict:
-    path = transcript(sid)
-    if not path:
-        return {"total": 0, "by": {}, "compacts": 0, "compactAt": None, "preTokens": None}
-    st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0, "compacts": 0, "compactAt": None, "preTokens": None})
-    try:
-        size = os.path.getsize(path)
-        if size < st["off"]:
-            st.update(off=0, by={}, total=0, compacts=0, compactAt=None, preTokens=None)
-        with open(path, "rb") as f:
-            f.seek(st["off"])
-            chunk = f.read()
-    except OSError:
-        return {k: st[k] for k in ("total", "by", "compacts", "compactAt", "preTokens")}
-    end = chunk.rfind(b"\n") + 1  # a half-written last line waits for next time
-    for line in chunk[:end].splitlines():
+# A transcript is read forward in steps: a cold office meets transcripts of
+# 200 MB, and one read of a whole one (plus its lines) cost the process GBs.
+# Each call reads at most COUNT_STEP, COUNT_CHUNK at a time, so a long one
+# catches up over a few polls. One call per transcript at a time: two /state
+# polls that overlapped both added what they read to the same offset, which
+# then lay past the file's end, so the next call took it for rewritten and
+# read it whole again, poll after poll.
+COUNT_STEP = 32_000_000
+COUNT_CHUNK = 4_000_000
+COUNT_LINE_MAX = 8_000_000  # a longer line is a tool result, never a tool call: skipped unread
+_count_locks: dict[str, threading.Lock] = {}
+_count_guard = threading.Lock()
+COUNT_KEYS = ("total", "by", "compacts", "compactAt", "preTokens")
+
+
+def _count_lines(sid: str, st: dict, buf: bytes) -> None:
+    for line in buf.splitlines():
         # A compaction leaves a compact_boundary entry: how many, the last
         # one's time and how full it was before.
         if b'"compact_boundary"' in line:
@@ -222,8 +224,39 @@ def tool_counts(sid: str) -> dict:
                 st["total"] += 1
                 if b.get("name") == "SendMessage":
                     note_talk(sid, b, d.get("timestamp"))
-    st["off"] += end
-    return {"total": st["total"], "by": st["by"], "compacts": st["compacts"], "compactAt": st["compactAt"], "preTokens": st["preTokens"]}
+
+
+def tool_counts(sid: str) -> dict:
+    path = transcript(sid)
+    if not path:
+        return {"total": 0, "by": {}, "compacts": 0, "compactAt": None, "preTokens": None}
+    with _count_guard:
+        lock = _count_locks.setdefault(path, threading.Lock())
+    with lock:
+        st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0, "compacts": 0, "compactAt": None, "preTokens": None})
+        try:
+            if os.path.getsize(path) < st["off"]:
+                st.update(off=0, by={}, total=0, compacts=0, compactAt=None, preTokens=None)
+            with open(path, "rb") as f:
+                f.seek(st["off"])
+                left, carry = COUNT_STEP, b""
+                while left > 0:
+                    chunk = f.read(min(COUNT_CHUNK, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    buf = carry + chunk
+                    end = buf.rfind(b"\n") + 1  # a half-written last line waits for next time
+                    _count_lines(sid, st, buf[:end])
+                    carry = buf[end:]
+                    if len(carry) > COUNT_LINE_MAX:
+                        # Past the line's start; the rest of it, read next,
+                        # fails to parse and is skipped like any bad line.
+                        end, carry = len(buf), b""
+                    st["off"] += end
+        except OSError:
+            pass
+        return {k: st[k] for k in COUNT_KEYS}
 
 
 # Sessions talking to each other: every SendMessage a session sends, read
@@ -452,7 +485,7 @@ def compacting(pane: str) -> bool:
     return bool(re.search(r"Compacting conversation", out, re.I))
 
 
-def snapshot() -> list[dict]:
+def _snapshot() -> list[dict]:
     global _live_panes
     try:
         out = subprocess.run(["tmux", "list-panes", "-a", "-F", FMT], capture_output=True, text=True, timeout=3).stdout
@@ -506,7 +539,51 @@ def snapshot() -> list[dict]:
                 **coord.place(rel, sid),
             }
         )
+    if alive is not None:
+        forget_ended(alive)
     return people
+
+
+# One snapshot at a time: /state polls every 2 s without waiting for the last
+# one, and /command, /detail and the acts ask too. Each reads every session's
+# transcript, so callers that overlap share the one in flight (it began before
+# they asked: at most one poll old) instead of reading them all again beside it.
+_snap_lock = threading.Lock()
+_snap: dict = {"flight": None, "last": []}
+SNAP_WAIT = 60
+
+
+def snapshot() -> list[dict]:
+    with _snap_lock:
+        flight, lead = _snap["flight"], False
+        if flight is None:
+            flight = _snap["flight"] = {"done": threading.Event(), "out": None}
+            lead = True
+    if not lead:
+        if not flight["done"].wait(SNAP_WAIT) or flight["out"] is None:
+            return list(_snap["last"])
+        return list(flight["out"])
+    try:
+        out = _snapshot()
+        flight["out"] = _snap["last"] = out
+        return list(out)
+    finally:
+        with _snap_lock:
+            _snap["flight"] = None
+        flight["done"].set()
+
+
+def forget_ended(alive: set[str]) -> None:
+    """Drop what was kept on sessions that have ended: their transcript paths,
+    counts and the rest grew by one entry per session the office ever saw."""
+    gone = [sid for sid in list(_paths) if sid not in alive]
+    for sid in gone:
+        path = _paths.pop(sid, None)
+        for d in (_counts, _born, _count_locks):
+            d.pop(path, None)
+    for d in (_spoke, _proposals):
+        for sid in [k for k in list(d) if k not in alive]:
+            d.pop(sid, None)
 
 
 # ---- MCP connections, per session ----------------------------------------
@@ -864,15 +941,19 @@ VIEW_MAX = paths.VIEW_MAX
 NO_FRAME = {"Content-Security-Policy": "frame-ancestors 'none'", "X-Frame-Options": "DENY"}
 
 
-def _said(sid: str) -> bytes:
+def _said(sid: str):
     # The session's whole transcript, for paths.mentioned: a path it never
-    # wrote is not one the page may ask for. Read per request (tens of ms for
-    # a long one); a session that is gone has none.
+    # wrote is not one the page may ask for. Mapped, not read: a transcript of
+    # 200 MB copied onto the heap for every /paths and /file call was a large
+    # part of what the office held; mapped pages are the file's, the kernel
+    # drops them. A session that is gone (or a transcript still empty) has none.
     t = transcript(sid) if re.fullmatch(r"[0-9a-f-]{8,64}", sid or "") else None
     try:
         with open(t, "rb") as f:
-            return f.read()
-    except (OSError, TypeError):
+            if os.fstat(f.fileno()).st_size == 0:
+                return b""
+            return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    except (OSError, TypeError, ValueError):
         return b""
 
 
@@ -1008,12 +1089,16 @@ def _gist(text: str) -> str:
     return ""
 
 
-def _turns(lines: list[str]) -> list[dict]:
+def _turns(lines) -> list[dict]:
     turns: list[dict] = []
     for line in lines:
         # Most of a transcript is tool calls and results; skip those lines
         # unparsed, or a long session's tail takes seconds to read.
-        if '"type":"text"' not in line and '"content":"' not in line:
+        if isinstance(line, bytes):
+            if b'"type":"text"' not in line and b'"content":"' not in line:
+                continue
+            line = line.decode("utf-8", "replace")
+        elif '"type":"text"' not in line and '"content":"' not in line:
             continue
         try:
             d = json.loads(line)
@@ -1053,8 +1138,12 @@ def history(sid: str, limit: int = HISTORY_TURNS) -> list[dict]:
             while True:
                 start = max(0, size - tail)
                 f.seek(start)
-                lines = f.read(size - start).decode("utf-8", "replace").splitlines()
-                turns = _turns(lines[1:] if start else lines)  # a seek cuts the first line
+                if start:
+                    f.readline()  # a seek cuts the first line
+                # Line by line, not read whole and decoded: a window of 64 MB
+                # held as bytes, text and a list of lines cost the office
+                # several times that for every card opened.
+                turns = _turns(line for line in iter(f.readline, b"") if f.tell() <= size)
                 if len(turns) > limit or not start or tail >= HISTORY_MAX:
                     break
                 tail *= 4
@@ -1824,6 +1913,67 @@ def muted() -> dict:
     return d
 
 
+# ---- the office's own memory ---------------------------------------------
+#
+# What the system charges this process (macOS phys_footprint: resident plus
+# compressed), not RSS: the office that thrashed the machine showed 13 MB
+# resident and 845 MB of footprint, the rest compressed. Over MEM_WARN it says
+# so once in the server log (stderr), and again only after it came back under.
+MEM_WARN = int(os.environ.get("OFFICE_MEM_WARN_MB") or 1024) * 1_000_000
+MEM_EVERY = 30
+_mem = {"over": False}
+
+
+def footprint() -> int | None:
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+
+            class RUsage(ctypes.Structure):  # rusage_info_v2, enough for ri_phys_footprint
+                _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(n, ctypes.c_uint64) for n in (
+                    "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups", "pageins", "wired_size", "resident_size", "phys_footprint",
+                    "start_abstime", "exit_abstime", "child_user_time", "child_system_time", "child_pkg_idle_wkups", "child_interrupt_wkups",
+                    "child_pageins", "child_elapsed_abstime", "diskio_bytesread", "diskio_byteswritten")]
+
+            lib = ctypes.CDLL("/usr/lib/libproc.dylib")
+            ru = RUsage()
+            if lib.proc_pid_rusage(os.getpid(), 2, ctypes.byref(ru)) == 0:
+                return int(ru.phys_footprint)
+        except (OSError, AttributeError):
+            return None
+        return None
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
+
+
+def _warn(text: str) -> None:
+    print(text, file=sys.stderr, flush=True)
+
+
+def mem_check() -> None:
+    n = footprint()
+    if n is None:
+        return
+    if n > MEM_WARN and not _mem["over"]:
+        _warn(f"cc-office: memory footprint {n // 1_000_000} MB is over {MEM_WARN // 1_000_000} MB (pid {os.getpid()}, {threading.active_count()} threads, {len(_paths)} transcripts kept)")
+    _mem["over"] = n > MEM_WARN
+
+
+def _mem_watch() -> None:
+    while True:
+        time.sleep(MEM_EVERY)
+        try:
+            mem_check()
+        except Exception as e:  # the watch must not end the office; say why it failed
+            _warn(f"cc-office: memory check failed: {e!r}")
+
+
 # `prefix O` (tmux) bumps this; the page sees the bump and opens the next one.
 NEXT = {"n": 1}
 
@@ -1954,6 +2104,7 @@ def main():
         port = int(sys.argv[sys.argv.index("--port") + 1])
     # Channels a previous office opened for a redeemed send and never closed.
     grants.close_leftovers()
+    threading.Thread(target=_mem_watch, name="mem-watch", daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
     srv.serve_forever()
