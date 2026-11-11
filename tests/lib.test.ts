@@ -1849,6 +1849,8 @@ test('mcp heal: /mcp takes the server by its own name, never its tool-name spell
 
 test('mcp heal: what /mcp reconnect answered', () => {
   expect(reconnectOutcome('Reconnected to claude.ai Slack.')).toBe('ok')
+  // What the live engine printed (2026-11-11).
+  expect(reconnectOutcome('Successfully reconnected to claude.ai Slack')).toBe('ok')
   expect(reconnectOutcome('Reconnected 1 of 1 MCP servers')).toBe('ok')
   expect(reconnectOutcome('MCP server "claude_ai_Slack" not found')).toBe('unknown')
   expect(reconnectOutcome('There\'s no MCP server named "claude_ai_Slack". Run `/mcp` in the terminal to see configured servers.')).toBe('unknown')

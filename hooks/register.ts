@@ -1636,9 +1636,19 @@ const mcpHealPending = new Set<string>()
 // wait, coord.ts reporting rule), so nobody has to prompt it.
 const mcpHealResume = new Set<string>()
 
+// /mcp's answer. Live (2026-11-11), `text` came back empty while the pane
+// read "Successfully reconnected to claude.ai Slack": the answer may sit in
+// `context`, or nowhere, so healServer also looks whether the server is up.
 async function reconnectMcp($: any, server: string): Promise<string> {
   const r = await $.command.run({ command: 'mcp', args: 'reconnect ' + server })
-  return String(r?.text ?? '').trim()
+  return [r?.text, ...(Array.isArray(r?.context) ? r.context : [])].filter((x) => typeof x === 'string' && x.trim()).join('\n').trim()
+}
+// Whether a server is this session's now (its tools are in the context).
+async function mcpLive($: any, server: string): Promise<boolean | undefined> {
+  const u = await $.session.usage({ breakdown: 'summary' }).catch(() => null)
+  const tools = u?.context?.breakdown?.mcpTools
+  if (!Array.isArray(tools)) return undefined
+  return liveServers(tools).some((s) => normalizeServer(s) === normalizeServer(server))
 }
 
 // The servers' own names, as /mcp takes them: the radar's `claude mcp list`.
@@ -1670,8 +1680,10 @@ async function healServer($: any, server: string, force = false): Promise<boolea
   } catch (err) {
     text = String(err)
   }
-  const last = reconnectOutcome(text)
-  $.ui.log('mcp heal ' + name + ' (' + last + '): ' + text, { to: 'debug' })
+  let last = reconnectOutcome(text)
+  // An answer that says nothing either way: the server's tools decide.
+  if (last === 'failed' && !/\S/.test(text) && (await mcpLive($, name))) last = 'ok'
+  $.ui.log('mcp heal ' + name + ' (' + last + '): ' + (text || '(no text; checked the session\'s tools)'), { to: 'debug' })
   if (last === 'ok') {
     mcpHealTries.set(key, { at: now, n: 0, last })
     $.ui.toast('MCP ' + name + ' reconnected')

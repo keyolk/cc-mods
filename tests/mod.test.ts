@@ -1754,6 +1754,41 @@ test('MCP heal: a name /mcp does not know is sent once, then reported, not repea
   expect(reconnects).toEqual(['reconnect weird'])
 })
 
+test('MCP heal: /mcp answering with no text counts as reconnected when the server\'s tools are back', { timeoutMs: 20_000 }, async ($, on) => {
+  // Live 2026-11-11: the pane read "Successfully reconnected to claude.ai
+  // Slack" while $.command.run's text was empty.
+  const store: Record<string, unknown> = { 'cockpit-settings': {} }
+  const toasts: string[] = []
+  const written: Record<string, string> = {}
+  const list = 'claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected'
+  baseStubs(on, { store, toasts, written, run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
+  on('mcp.call', () => ({ value: { content: [] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  let tools: any[] = [{ name: 'mcp__portal__x', serverName: 'portal', tokens: 1, isLoaded: true }]
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: tools } }, rateLimits: [] } }) as any)
+  const reconnects: string[] = []
+  on('command.run', (_$: any, e: any) => {
+    if (e.command === 'mcp') {
+      reconnects.push(e.args)
+      tools = [...tools, { name: 'mcp__claude_ai_Slack__slack_read_thread', serverName: 'claude_ai_Slack', tokens: 1, isLoaded: false }]
+    }
+    return { text: '' }
+  })
+  const settle = async () => {
+    for (let i = 0; i < 400; i++) await Promise.resolve()
+  }
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(15_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect claude.ai Slack'])
+  expect(toasts).toContain('MCP claude.ai Slack reconnected')
+  await clock.advance(60_000)
+  await settle()
+  expect(JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}').dropped).toEqual([])
+  expect(reconnects).toHaveLength(1)
+})
+
 test('the Now tab shows the Model card from ccproxy usage, and says when ccproxy is too old', async ($, on) => {
   const runs: string[][] = []
   let usageOut = ''
