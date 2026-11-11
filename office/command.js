@@ -296,6 +296,8 @@ function cmdClick(ev) {
     if (c) authCopy(c).then((ok) => toast(ok ? '📋 복사됨: ' + c : '✕ 복사하지 못했습니다'))
     return
   }
+  // A link in a row's text opens its page, not the row.
+  if (ev.target.closest('a[href]')) return
   const f = ev.target.closest('[data-fold]')
   if (f) return cmdFold(f.dataset.fold)
   const tr = ev.target.closest('tr[data-row]')
