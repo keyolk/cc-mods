@@ -437,7 +437,6 @@ export function coordRecheck(text: string): string | undefined {
   return ledger && text.startsWith(WAKE_PREFIX) ? recheck(text, ledger, Date.now(), sent) : text
 }
 
-// register.ts: the coordinator's turn ended.
 // register.ts, when the person ended the coordinator's default god (/god
 // off, the Policy tab): it stays off until the next /coord on.
 export async function coordGodEnded($: any) {
@@ -445,6 +444,7 @@ export async function coordGodEnded($: any) {
   await save($, logged({ ...ledger, godOff: true }, 'order', 'god mode off (coordinator policy until /coord on)', Date.now()))
 }
 
+// register.ts: the coordinator's turn ended.
 export async function coordIdle($: any) {
   if (ledger?.on) await flush($)
 }
