@@ -84,6 +84,7 @@ import { parsePending, type Decision } from './lib/coord'
 import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
 import { noteText, sentDigests, userTexts, type NoteBlock } from './lib/notes'
+import { ASKS_DIR, askedProperly, endsAsking } from './lib/headsup'
 import { SELF_CHECK_PROMPT, STATUS_DIR, STATUS_TOOL, parseStatus, selfCheckDue, workerOf } from './lib/status'
 import { coordCommand, coordGodEnded, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
 
@@ -1622,6 +1623,9 @@ let turnStartedAt = 0
 let selfTurn = false
 let selfStreak = 0
 let workerCoord: { coord: string; slug: string } | undefined
+// The main turn's tool calls (name and arguments): whether a worker's turn
+// that ends on a question already asked it on a brief or a status (lib/headsup.ts).
+let turnTools: { name: string; input: unknown }[] = []
 // What the previous main step was sent with (routing's cache gate, lib/route.ts).
 let routeLast: RouteLast | undefined
 let mainTurnRunning = false
@@ -2036,6 +2040,27 @@ async function statusCall($: any, e: any): Promise<{ result: string } | { deny: 
   statusAt = now
   selfStreak = 0
   return { result: 'status recorded: ' + st.state + (st.kind ? ':' + st.kind : '') + (workerCoord ? ' (the coordinator sees it on its next look)' : '') }
+}
+
+// At a worker's main turn's end: the question its answer ends on, when it
+// asked the person in words only (no decision brief, no blocked:question
+// status, no QUESTION report), written to state/office/asks/<sid>.json for
+// the coordinator's tick. A regex on the last paragraph: no model call. A
+// turn that asked properly, or asked nothing, clears the file.
+async function askExport($: any, turnId: string, answer: string) {
+  if (!home || !sid || !workerCoord || selfTurn) return
+  const q = askedProperly(turnTools) ? undefined : endsAsking(answer)
+  const f = home + ASKS_DIR + '/' + sid + '.json'
+  try {
+    if (!q) {
+      await $.process.run(['rm', '-f', f], { timeoutMs: 3000 })
+      return
+    }
+    await $.process.run(['mkdir', '-p', home + ASKS_DIR], { timeoutMs: 3000 })
+    await $.fs.write(f, JSON.stringify({ text: q, at: Date.now(), turnId }))
+  } catch (err) {
+    $.ui.log('asks: could not write ' + f + ': ' + String(err))
+  }
 }
 
 // At a worker's main turn's end: when it declared no status in it, one
@@ -3970,6 +3995,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       else mainTurnAt = await clockNow($)
       mainTurnRunning = true
       turnStartedAt = Date.now()
+      turnTools = []
       if (e.text === SELF_CHECK_PROMPT) selfTurn = true
       await update($, turnA, () => ({ turnId: e.turnId, at: Date.now() }))
     }
@@ -4104,6 +4130,10 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     const autoOn = ((await read($, policyA)) as Policy | null)?.caps.auto_continue === 'allow'
     const att = e.isAborted ? { attention: 'none' } : await bridge($, 'attention', { message: e.answer ?? '', proceed: autoOn })
     const attention: Attention = att.attention === 'ask' || att.attention === 'action' ? att.attention : 'none'
+    // A worker whose turn ends asking the person in words only: the
+    // coordinator hears it (hooks/coord.ts asksWakes) instead of the
+    // question sitting in a pane nobody looks at.
+    if (!e.isAborted) await askExport($, e.turnId, e.answer ?? '')
     // A worker that ended its turn without declaring a status is asked for
     // one before anything else goes on; its pane stays working meanwhile.
     if (await statusSelfCheck($, !!e.isAborted)) {
@@ -4185,6 +4215,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   })
 
   on('tool.call', async ($: any, e: any, next: any) => {
+    if (!e.agentId && turnTools.length < 400) turnTools.push({ name: String(e.tool ?? ''), input: e })
     if (quietTurn && !e.agentId) {
       if (e.tool_use_id) {
         quietTurn.tools.push(e.tool_use_id)

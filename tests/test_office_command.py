@@ -1868,3 +1868,10 @@ class CommandKeysTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeadsUpOfTest(unittest.TestCase):
+    def test_the_ledger_band_is_kept_small_and_a_bad_one_is_none(self):
+        self.assertEqual(command.heads_up_of({"headsUp": {"text": "x" * 300, "at": 5}}), {"text": "x" * 240, "at": 5})
+        for bad in ({}, {"headsUp": None}, {"headsUp": {"text": "  "}}, {"headsUp": "text"}, {"headsUp": {"text": 3}}):
+            self.assertIsNone(command.heads_up_of(bad))
