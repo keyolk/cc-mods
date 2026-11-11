@@ -102,6 +102,9 @@ export type Ledger = {
   released: string[]
   at: number
   policyBefore?: Policy // this session's policy before /coord on, put back by /coord off
+  // The person ended the coordinator's default god (/god off) while the mode
+  // was on: it stays off, across reloads, until the next /coord on.
+  godOff?: boolean
   mcpDown?: string[] // the coordinator's own, as Worker.mcpDown
 }
 
@@ -148,6 +151,7 @@ export function parseLedger(json: string | undefined, sid: string, name: string,
     log: Array.isArray(raw.log) ? raw.log.slice(-LOG_MAX) : [],
     released: Array.isArray(raw.released) ? raw.released.filter((x: unknown) => typeof x === 'string').slice(-RELEASED_MAX) : [],
     policyBefore: raw.policyBefore && typeof raw.policyBefore === 'object' ? raw.policyBefore : undefined,
+    godOff: raw.godOff === true ? true : undefined,
     mcpDown: Array.isArray(raw.mcpDown) ? raw.mcpDown.filter((x: unknown) => typeof x === 'string') : undefined,
     at: Number(raw.at) || now,
   }
@@ -729,6 +733,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
       : '- Live sessions are not adopted automatically (/coord limits adopt off): only the ones the person handed over with /coord adopt are adopted.'),
     '- Send instructions only with `coord_send`, and only to owned or adopted workers. Observed sessions are read-only: summarise them, never instruct them. The person may type in any worker\'s pane while you send to it: that is fine (their draft stays); `person typed HH:MM` and the note in coord_send\'s result are for your report, not a reason to hold back.',
     '- Before relaying a report, re-check the claims the decision rides on (file:line, counts, "already merged") and label the rest unverified.',
+    '- You are god by default (cc-mods): every capability god mode allows is yours while coordinator mode is on, with no end, until the person types /god off (then the coordinator policy: merge only in your workers\' repositories). Being allowed is not a reason: the rules here still hold, the merge rule below first.',
     '- Merge only when the head equals the READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, the bot review is clean, and the head contains origin/main. Admin merge only on the person\'s typed order.',
     '- After a merge, close the worker with `coord_close` (it kills the pane it made, or its fallback window, and removes the worktree).',
     "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Add `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker. The office's 지휘 view lists every waiting decision: while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`, which covers the office's pane and its controls; only without the office does `brief show <brief>` put it in a tweb pane. In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
@@ -795,9 +800,10 @@ export function parseLimits(args: string, cur: Limits): Limits | string {
 // ---- policy -------------------------------------------------------------------
 // The coordinator and its workers each get their own session policy
 // (~/.claude/hooks/session_policy.py, keyed by session id). The coordinator
-// merges and keeps going but touches no prod, Slack or other windows (it
-// reads workers through coord tools); a repository it starts a worker in is
-// added to its merge scopes. A worker keeps going on its brief and does
+// runs as god by default (coordGodWanted); COORD_CAPS is its policy under
+// that, what /god off leaves it with: it merges and keeps going but touches
+// no prod, Slack or other windows (it reads workers through coord tools); a
+// repository it starts a worker in is added to its merge scopes. A worker keeps going on its brief and does
 // nothing outward: no merge, no prod write, no Slack, no other windows, and
 // the model and effort the coordinator chose stay put (no routing).
 
@@ -829,6 +835,15 @@ export function policyArgvs(caps: Partial<Record<Cap, CapValue>>, mergeRepos: re
 export function policyOf(caps: Partial<Record<Cap, CapValue>>, mergeRepos: readonly string[], base: Policy): Policy {
   const explicit = { ...caps }
   return { mode: 'custom', caps: { ...base.caps, ...caps }, explicit, scopes: mergeRepos.length ? { gh_merge: [...mergeRepos] } : {} }
+}
+
+// A coordinator is god by default (the person, 2026-11-12: "coordinator는
+// 기본적으로 상시 god이어야 맞는데"): every capability god mode allows, with
+// no end, while the mode is on, unless the person ended it with /god off.
+// God mode itself is unchanged (lib/policy.ts godArgvs); COORD_CAPS is what
+// it puts back. Workers never get it: WORKER_CAPS is written for them alone.
+export function coordGodWanted(l: Pick<Ledger, 'on' | 'godOff'>): boolean {
+  return l.on && !l.godOff
 }
 
 export function mergeRepos(l: Ledger): string[] {

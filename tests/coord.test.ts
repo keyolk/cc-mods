@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, DECISION_BRIEF, MCP_WAIT, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -351,6 +351,18 @@ test('coord: the coordinator merges only in its workers\' repositories; a worker
   expect(p.caps.gh_merge).toBe('block')
   expect(p.caps.prod_eks_access).toBe('allow')
   expect(p.scopes).toEqual({ gh_merge: ['keyolk/tmc'] })
+})
+
+test('coord: the coordinator is god by default until /god off; the ledger keeps that across a reload; workers never are', () => {
+  expect(coordGodWanted({ on: true })).toBe(true)
+  expect(coordGodWanted({ on: true, godOff: true })).toBe(false)
+  expect(coordGodWanted({ on: false })).toBe(false)
+  const l = parseLedger(JSON.stringify({ on: true, godOff: true }), 'sid-1', 'c', NOW)
+  expect(l.godOff).toBe(true)
+  expect(parseLedger(JSON.stringify({ on: true, godOff: 'yes' }), 'sid-1', 'c', NOW).godOff).toBeUndefined()
+  // The worker's policy stays outward-blocked: god is the coordinator's alone.
+  expect(WORKER_CAPS).toMatchObject({ gh_merge: 'block', slack_send: 'block', prod_eks_write: 'block', tmux_window_escape: 'block' })
+  expect(coordRules(on({}))).toContain('You are god by default')
 })
 
 test('coord: pending decisions from command.py keep only what the tab can draw', () => {
