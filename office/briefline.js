@@ -26,7 +26,7 @@ const BRIEF_CSS = `
 /* One line each, scrolling sideways (as the brief line does): the panel is short beside the table. */
 #command .blib .gr { margin-top: 6px; padding: 6px 8px 4px; background: #fff; border: 1px solid #e6e5e1; border-radius: 10px; }
 #command .blib .gr:empty { display: none; }
-#command .blib .gscroll { overflow-x: auto; direction: rtl; scrollbar-width: thin; }
+#command .blib .gscroll { overflow-x: auto; overflow-y: hidden; direction: rtl; scrollbar-width: thin; }
 #command .blib .gwrap { direction: ltr; display: inline-grid; padding-right: 4px; grid-template-columns: auto auto; gap: 3px 4px; }
 #command .blib .gdays, #command .blib .gmon { font-size: 9px; color: #9b9ba3; }
 #command .blib .gdays { display: grid; grid-template-rows: repeat(7, 8px); gap: 2px; line-height: 8px; }
