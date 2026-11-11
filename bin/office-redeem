@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""cc-mods' side of a one-shot grant (office/grants.py): POST the request on
+stdin to the office's /redeem with the office token, print the answer.
+
+Run by a worker's cc-mods after slack_send_guard.py denied a send, never by a
+model: cc-mods refuses a Bash command that names this script, the office
+token or the office's /act and /redeem (hooks/lib/grant.ts). The token is read
+here, so it never rides on a command line.
+
+    echo '{"sid": …, "kind": "slack_send", "channel": …, "thread": …, "text": …}' | office-redeem
+"""
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+PORT = int(os.environ.get("CC_OFFICE_PORT") or 8796)
+
+
+def main() -> int:
+    try:
+        with open(os.path.expanduser("~/.claude/state/office/token")) as f:
+            token = f.read().strip()
+    except OSError:
+        print(json.dumps({"status": 0, "error": "no office token (is the office running?)"}))
+        return 1
+    body = sys.stdin.buffer.read()[:20_000]
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/redeem", data=body, method="POST", headers={"Content-Type": "application/json", "X-Office-Token": token})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            out = json.loads(r.read() or b"{}")
+            out["status"] = r.status
+    except urllib.error.HTTPError as e:
+        try:
+            out = json.loads(e.read() or b"{}")
+        except ValueError:
+            out = {"error": str(e)}
+        out["status"] = e.code
+    except (OSError, ValueError) as e:
+        out = {"status": 0, "error": "office not reachable: " + str(e)}
+    print(json.dumps(out))
+    return 0 if out.get("status") == 200 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

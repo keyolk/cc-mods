@@ -18,6 +18,7 @@ Usage: office.py [--port 8787]
 """
 
 import glob
+import hashlib
 from datetime import datetime
 import html
 import json
@@ -38,13 +39,14 @@ import command  # noqa: E402 - office/command.py, briefs waiting on a decision
 import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 import crew  # noqa: E402 - office/crew.py, ending a session or releasing it from the command view
 import paths  # noqa: E402 - office/paths.py, which files the office may show
+import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes and a worker redeems
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py")
 
 
 def code_stamp() -> str:
@@ -586,7 +588,13 @@ def dialog(lines: list[str]) -> dict | None:
     if len(opts) < 2 or not cursor or first is None:
         return None
     question = next((tail[j].strip(FRAME) for j in range(first - 1, -1, -1) if tail[j].strip(FRAME) and not OPTION.match(tail[j])), "")
-    return {"question": question[:160], "options": opts}
+    # What it asks about: the box above the question (a permission dialog's
+    # tool and command). Two Bash dialogs in a row share their question and
+    # options, so a press is bound to this, by its digest (act, kind key).
+    about = [tail[j].strip(FRAME) for j in range(max(0, first - 9), first) if tail[j].strip(FRAME) and not OPTION.match(tail[j])]
+    about = [x for x in about if x != question][-6:]
+    digest = hashlib.sha256("\n".join([*about, question, *(o["label"] for o in opts)]).encode()).hexdigest()[:16]
+    return {"question": question[:160], "about": [x[:160] for x in about], "options": opts, "digest": digest}
 
 
 def last_text(sid: str) -> str:
@@ -1463,8 +1471,14 @@ def act(body: dict) -> tuple[int, dict]:
     pane = me["pane"]  # from tmux, never from the request
     if kind == "key":
         d = dialog(capture(pane))
-        if not d or not any(str(o["n"]) == str(value) for o in d["options"]):
+        o = next((o for o in (d or {}).get("options") or [] if str(o["n"]) == str(value)), None)
+        if not d or not o:
             return 409, {"error": "no dialog with that choice on its screen now"}
+        # The press approves what the page drew: a permission dialog that
+        # changed since (the next tool call's, with the same question and
+        # options) gets nothing.
+        if body.get("digest") != d["digest"] or body.get("label") != o["label"]:
+            return 409, {"error": "the dialog on its screen changed since the page drew it: look again", "dialog": d}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
@@ -1774,7 +1788,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/next":
             NEXT["n"] += 1
             return self.send(204, b"", "text/plain")
-        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs", "/paths"):
+        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs", "/paths", "/redeem"):
             return self.send(403, b"forbidden", "text/plain")
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 20_000)) or b"{}")
@@ -1787,6 +1801,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/prefs":
             ok = isinstance(body, dict) and set_pref(body.get("key"), body.get("value"))
             return self.send(204 if ok else 400, b"", "text/plain")
+        if self.path == "/redeem":
+            # A worker's cc-mods, after the guard denied a send a press may
+            # have allowed (office/grants.py). Never a press: it spends one.
+            code, out = grants.redeem(body if isinstance(body, dict) else {})
+            return self.send(code, json.dumps(out).encode(), "application/json")
         code, out = act(body)
         self.send(code, json.dumps(out).encode(), "application/json")
 
@@ -1870,6 +1889,8 @@ def main():
     port = 8787
     if "--port" in sys.argv:
         port = int(sys.argv[sys.argv.index("--port") + 1])
+    # Channels a previous office opened for a redeemed send and never closed.
+    grants.close_leftovers()
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
     srv.serve_forever()

@@ -1718,9 +1718,9 @@ async function openCard(sid, kind = null) {
   }
   card.reply = null
   if (d.dialog) {
-    add('div', 'q', '🗳 ' + esc(d.dialog.question || '선택지'))
+    add('div', 'q', '🗳 ' + esc(d.dialog.question || '선택지') + (d.dialog.about && d.dialog.about.length ? '<br><small>' + d.dialog.about.map(esc).join('<br>') + '</small>' : ''))
     const row = add('div', 'row')
-    for (const o of d.dialog.options) { const b = document.createElement('button'); b.className = 'act pick'; b.innerHTML = '<span class="key">' + o.n + '</span>' + esc(o.label); b.onclick = () => send({ kind: 'key', value: String(o.n) }, o.n + '번 선택'); row.appendChild(b); card.keys[o.n] = b }
+    for (const o of d.dialog.options) { const b = document.createElement('button'); b.className = 'act pick'; b.innerHTML = '<span class="key">' + o.n + '</span>' + esc(o.label); b.onclick = () => send({ kind: 'key', value: String(o.n), digest: d.dialog.digest, label: o.label }, o.n + '번 선택'); row.appendChild(b); card.keys[o.n] = b }
   }
   if (!d.dialog) {
     const row = add('div', 'row')

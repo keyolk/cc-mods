@@ -48,6 +48,7 @@ import { capAnswers, isHumanPrompt, parseStamps, rebuild, transcriptPath, type B
 import { agentFlow, flowOf } from './lib/flow'
 import { HELD_PREFIX, firstLine, heldNotification, holdDeadline, isWrite, parseExpiry, parseMonitor, shouldRearm, splitLines, startedTaskId, turnMattered, watchInput, weigh, type MonitorState, type WatchInput, type Weight } from './lib/monitor'
 import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
+import { BYPASS_DENY, SLACK_SENDS, heldDeny, noGrantText, officeBypass, officeTokenPath, parseRedeem, redeemRequest } from './lib/grant'
 import { CAPS, GOD_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, ghAsAccount, ghAsAccountDeny, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
 import { parseWindows } from './lib/iac'
@@ -3976,6 +3977,8 @@ export function register(on: any, options: Record<string, unknown> = {}) {
           'Do not suggest running the script with `!` either: that path bypasses the timed, scoped grant.',
       }
     }
+    const bypass = officeBypass(command)
+    if (bypass) return { deny: bypass + BYPASS_DENY }
     // One tweb pane per window (lib/webpane.ts): the panes are listed only
     // for a command that would open one.
     if (paneOpens(command).length) {
@@ -4056,12 +4059,18 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // Fail closed only for the one thing this hook must never let through: a
     // self-grant. Anything else falls back to running the call as-is.
     if (next.called) return next(e)
-    const grant = isSelfGrant(String(e.command ?? ''))
+    const grant = isSelfGrant(String(e.command ?? '')) ?? officeBypass(String(e.command ?? ''))
     return grant ? { deny: grant + ' changes a safety gate; only the user may run it.' } : next(e)
   })
 
   on('tool.call', { tool: /^(?!Bash$|AskUserQuestion$)/ }, async ($: any, e: any, next: any) => {
-    const result = await approveGuard($, e, await next(e), () => next(e))
+    if (officeTokenPath(e)) return { deny: 'the office token' + BYPASS_DENY }
+    // While a redeemed send's channel is open to this session, any other
+    // Slack send there is refused before the guard sees it (the guard checks
+    // the channel only): the press allowed one message.
+    const held = SLACK_SENDS.test(String(e.tool ?? '')) ? heldDeny(redeeming, String(e.channel_id ?? '')) : undefined
+    if (held) return { deny: held }
+    const result = await redeemGrant($, e, await approveGuard($, e, await next(e), () => next(e)), () => next(e))
     void addOutputs($, [...toolOutputs(e.tool, e, result, Date.now()), ...(result?.deny ? [] : expFromTool(e.tool, e, Date.now()))].map((o) => ({ ...o, turnId: currentTurn, agentId: e.agentId })))
     // A Slack send to a target outside the allow list is a candidate for it
     // (the guard asked or denied); the review channel never needs one.
@@ -4474,7 +4483,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // asks for routes it does not have (live: resources.js 404, an empty
     // office). The stamp is office.py's code_stamp(); an old server has no
     // /version and answers 404, which also counts as old.
-    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py', 'review.py', 'slx.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
+    const want = (await Promise.all(['office.py', 'resources.py', 'coord.py', 'command.py', 'review.py', 'slx.py', 'turn.py', 'defer.py', 'grants.py'].map((n) => $.fs.stat($.plugin.root + '/office/' + n).then((st: any) => n + ':' + Math.floor((st?.mtimeMs ?? 0) / 1000)).catch(() => n + ':?')))).join(',')
     const ver = (await $.process.run(['/usr/bin/curl', '-s', '-m', '2', url + 'version'], { timeoutMs: 4000 }).catch(() => ({ stdout: '' }))).stdout
     let running: { stamp?: string; pid?: number } | undefined
     try { running = JSON.parse(ver) } catch { running = undefined }
@@ -5536,6 +5545,38 @@ async function approveGuard($: any, e: any, result: any, retry: () => Promise<an
   }
   $.ui.toast(u.label + ' (' + u.minutes + 'm)')
   return retry()
+}
+
+// A Slack send the session policy refused, retried once when the person's
+// press in the office allowed exactly it (lib/grant.ts, office/grants.py).
+// The office opens the channel to this session for a few seconds; it is
+// closed again right after the retry, whatever the retry did.
+// Channels a redeemed send holds open, for heldDeny: set before the office
+// opens one, cleared once it is closed.
+const redeeming = new Set<string>()
+
+async function redeemGrant($: any, e: any, result: any, retry: () => Promise<any>): Promise<any> {
+  if (typeof result?.deny !== 'string') return result
+  const req = redeemRequest(sid, String(e.tool ?? ''), (e.input ?? e) as Record<string, unknown>, result.deny)
+  if (!req) return result
+  const brief = $.plugin.root + '/bin/brief-grant'
+  if (redeeming.has(req.channel)) return { ...result, deny: noGrantText(result.deny, 'another approved send to ' + req.channel + ' is going out now', brief) }
+  const ask = async (body: object) => parseRedeem((await $.process.run(['python3', $.plugin.root + '/bin/office-redeem'], { stdin: JSON.stringify(body), timeoutMs: 12_000 }).catch(() => ({ stdout: '' }))).stdout)
+  redeeming.add(req.channel)
+  const r = await ask(req).catch(() => ({ ok: false, error: 'office-redeem failed' }) as const)
+  if (!r.ok) {
+    redeeming.delete(req.channel)
+    return { ...result, deny: noGrantText(result.deny, r.error, brief) }
+  }
+  try {
+    const again = await retry()
+    $.ui.toast('승인된 Slack 전송 1건을 보냈습니다 → ' + req.channel)
+    return again
+  } finally {
+    const c = await ask({ sid, kind: 'slack_send', channel: req.channel, done: true })
+    redeeming.delete(req.channel)
+    if (!c.ok) $.ui.log('grant: could not close ' + req.channel + ': ' + (c.error ?? '?'), { to: 'debug' })
+  }
 }
 
 async function publishAgents($: any) {

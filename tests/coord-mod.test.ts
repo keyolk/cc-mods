@@ -99,7 +99,7 @@ test('coord: a [coord] prompt taken from the queue after its worker closed is dr
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   await $.tool.call({ tool: 'mcp__cc-mods__coord_close', slug: 'brief-decision-4' } as any)
-  const text = '[coord] brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; a dialog there only the person can answer)'
+  const text = '[coord] brief-decision-4 (pane %365, window @134): asks: Read ~/r/prompt.txt (a permission ask still unsettled; if a dialog stays, the person answers it in the office 지휘 view)'
   const out: any = await $.prompt.submit({ text, origin: { kind: 'plugin', name: 'cc-mods' }, wait: false } as any)
   expect(out.drop).toContain('ended')
   expect(submitted).toEqual([])
