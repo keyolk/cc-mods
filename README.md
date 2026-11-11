@@ -229,6 +229,10 @@ sessions from Bash, which the tmux guard keeps in its own window):
   put a folder it needs in `add_dirs`.
 - `coord_send`: an instruction to an owned or adopted worker, through the
   office inbox (it arrives as `[coordinator] …`).
+- `coord_answer`: presses an option's number in an owned or adopted worker's
+  pane, only while a permission dialog with that option is on its screen and,
+  given `expect`, shows that text (the command the coordinator checked);
+  refused otherwise, with what the screen shows.
 - `coord_close`: kills the pane `coord_spawn` made for an owned worker (or
   its fallback window), never the coordinator's own pane or window or any pane
   it did not make, and removes its worktree (refused with uncommitted
@@ -262,8 +266,11 @@ seats its built-in `cc-plugin-sec-default` outermost, and it sends every
 run there (the transcript says `its classic.PermissionRequest hook was
 skipped`); command hooks still do. Each worker's cc-mods names the call it waits on in
 `@cc_pane_asks`, so the coordinator hears `[coord] <slug> (pane %358, window
-@132): asks: Read ~/worktrees/…/brief.py`, which pane and window to go to and
-what to answer, instead of "finished its turn". Parallel asked calls are kept
+@132): asks: Read ~/worktrees/…/brief.py` instead of "finished its turn", and
+answers it itself: it reads the pane (`tmux capture-pane`), checks what the
+command really does, and presses option 1 with `coord_answer`; only a call
+that is the person's (a prod write, a send, deleting real data, credentials,
+a policy change) goes to them on a decision brief. Parallel asked calls are kept
 apart: one that runs does not clear another's dialog. While the
 coordinator's own turn runs these wait: the next coord tool result carries
 them, and at the turn's end the ones still true arrive as one prompt. That the

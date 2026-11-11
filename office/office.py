@@ -2144,6 +2144,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps({"stamp": STAMP, "pid": os.getpid()}).encode(), "application/json")
         if self.path.startswith("/next"):
             return self.send(200, json.dumps({"n": NEXT["n"]}).encode(), "application/json")
+        if self.path == "/briefs.json":
+            # The 📚 전체 브리프 panel (briefline.js): every brief and where it stands.
+            return self.send(200, json.dumps(command.library()).encode(), "application/json")
         if self.path == "/briefs" or self.path.startswith("/briefs/"):  # not /briefline.js
             from urllib.parse import unquote, urlparse
 

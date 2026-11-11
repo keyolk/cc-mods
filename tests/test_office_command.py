@@ -647,6 +647,33 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual(command.repo_name(str(self.tmp / "slug-wt")), "main")
         self.assertIsNone(command.label(None, {}))
 
+    def test_the_library_lists_every_brief_newest_first_with_where_it_stands(self):
+        # 📚 전체 브리프: the office could reach only the newest 8 briefs.
+        self.brief("2026-11-08-old", {"coordinator": COORD}, title="옛 결정")
+        self.brief("2026-11-10-done", {"coordinator": COORD, "answer": {"choice": "A"}}, title="끝난 것")
+        side = self.side("2026-11-10-done.html")
+        side["done"] = {"at": "2026-11-10T01:00Z", "result": "merge 완료"}
+        (self.repo / "2026-11-10-done.brief.json").write_text(json.dumps(side, ensure_ascii=False))
+        self.brief("2026-11-11-ans", {"coordinator": COORD, "answer": {"choice": "B"}}, title="답한 것")
+        (self.repo / "2026-11-12-plain.html").write_text("<html><head><title>사이드카 없음</title></head></html>")
+        (self.repo / "index.html").write_text("<html></html>")
+        command._side.clear()
+        d = command.library()
+        self.assertEqual([(b["date"], b["title"], b["state"]) for b in d["items"]],
+                         [("2026-11-12", "사이드카 없음", "read"), ("2026-11-11", "답한 것", "answered"), ("2026-11-10", "끝난 것", "done"), ("2026-11-08", "옛 결정", "pending")])
+        self.assertEqual((d["total"], d["counts"]), (4, {"pending": 1, "done": 1, "answered": 1, "read": 1}))
+        self.assertEqual(d["items"][2]["result"], "merge 완료")
+        self.assertEqual(d["items"][3]["ask"], "어느 쪽?")
+    def test_a_first_prompt_handed_on_by_a_coordinator_names_the_work_not_the_hand_off(self):
+        # slx-ask-judge showed as `사람의 말(원문): "slx를 좀 개선할수…`.
+        self.assertEqual(command.unrelay('사람의 말(원문): "slx를 좀 개선할수 있을거 같아" (office-x): 이어서'), "slx를 좀 개선할수 있을거 같아")
+        self.assertEqual(command.unrelay('[coordinator] 사람의 말(원문, 앞선 요청): "warren 다시 로드"'), "warren 다시 로드")
+        self.assertEqual(command.unrelay("worker 보고(원문): \"SKILL tsc(worktree)\" 고쳐"), "SKILL tsc(worktree)")
+        self.assertEqual(command.unrelay('[coordinator] #130 rebase'), "#130 rebase")
+        self.assertEqual(command.unrelay('그냥 "말" 그대로'), '그냥 "말" 그대로')
+        with mock.patch.object(command, "first_prompt", return_value='사람의 말(원문): "slx를 좀 개선할수 있을거 같아 무조건 다 올리는게 아니라"'):
+            self.assertEqual(command.label(WORKER, {}, None, {"repo": "keyolk/slx"}), "slx · slx를 좀 개선할수 있을거 같아 무조건 다 올리는게…")
+
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
         with mock.patch.object(office, "inbox_put", side_effect=self.put):
@@ -1290,6 +1317,34 @@ class CommandKeysTest(unittest.TestCase):
             })()
         """)
         self.assertEqual(got, [{"refused": "no live worker w to allow this for", "why": "worker", "worker": "w"}, None, ["✕ busy"]])
+
+    def test_the_brief_line_has_no_fold_toggle_and_its_library_button_opens_every_brief(self):
+        # The person: the line's 전체/접기 meant nothing (three more chips on a
+        # line that scrolls sideways); every brief needed a way in.
+        got = self.run_js("""
+            const recent = Array.from({ length: 8 }, (_, i) => ({ file: 'f' + i + '.html', path: '/b/f' + i + '.html', title: 'T' + i, pending: i === 0, done: i === 1 }))
+            cmd.data = { pending: [], coordinators: [], recent }
+            press('c')
+            let html = ''
+            const line = { scrollLeft: 0, clientWidth: 300, dataset: {}, querySelector: () => null, set innerHTML(v) { html = v }, get innerHTML() { return html } }
+            const q0 = cmdEl.querySelector
+            cmdEl.querySelector = (q) => (q === '.briefs' ? line : q0.call(cmdEl, q))
+            blib.data = { total: 3, counts: { pending: 1, done: 1, answered: 0, read: 1 }, items: [
+              { file: 'a.html', path: '/b/a.html', title: '결정 하나', date: '2026-11-12', state: 'pending', ask: '어느 쪽?' },
+              { file: 'b.html', path: '/b/b.html', title: '끝난 일', date: '2026-11-12', state: 'done', result: 'merge 완료' },
+              { file: 'c.html', path: '/b/c.html', title: '조사 메모', date: '2026-11-10', state: 'read' }] }
+            cmdRenderBriefs()
+            const chips = (html.match(/data-brief=/g) || []).length
+            cmdBriefClick({ target: { closest: () => ({ dataset: { lib: '1' } }) } })
+            const opened = JSON.stringify(cmd.sel), about = cmdAbout()
+            const all = blibHtml()
+            blib.only = 'done'; const done = blibHtml(); blib.only = ''
+            blib.q = '조사'; const found = blibHtml(); blib.q = ''
+            blibClick({ target: { closest: (q) => (q === '[data-lbrief]' ? { dataset: { lbrief: '/b/b.html', title: '끝난 일' } } : null) } })
+            return [/전체 8|접기|data-all/.test(html), /📚 전체 브리프 3/.test(html), chips, opened, (all.match(/data-lbrief=/g) || []).length, /2026-11-10/.test(all), all.includes('❓ 어느 쪽?'), /merge 완료/.test(all),
+              (done.match(/data-lbrief=/g) || []).length, (found.match(/data-lbrief=/g) || []).length, cmd.sel, about]
+        """)
+        self.assertEqual(got, [False, True, 5, '{"library":true}', 3, True, True, True, 1, 1, {"file": "b.html", "path": "/b/b.html", "title": "끝난 일", "fromLib": True}, None])
 
     def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
         got = self.run_js("""

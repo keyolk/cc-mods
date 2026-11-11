@@ -264,6 +264,32 @@ def briefs() -> list[dict]:
     return out
 
 
+LIB_MAX = 400  # the 📚 list: every brief there is (~300 today), at most this many
+
+
+def library() -> dict:
+    """Every brief for the 📚 전체 브리프 panel, newest first (the date in its
+    name, then its last change): its title, and where it stands: `pending`
+    (a question open), `done` (`brief done`, with its result), `answered`
+    (every question answered, not marked done) or `read` (asks nothing).
+    A brief with no sidecar is listed too: ~/briefs/index.html lists them."""
+    rows = []
+    sides = {b["file"]: b for b in briefs()}
+    for path in glob.glob(os.path.join(root(), "*.html")):
+        file = os.path.basename(path)
+        if not NAME.match(file):
+            continue
+        b = sides.get(file)
+        qs = b["questions"] if b else []
+        done = b["done"] if b else None
+        state = "pending" if _open(qs) else "done" if done else "answered" if qs else "read"
+        rows.append({"file": file, "path": path, "title": title(file), "date": file[:10], "at": _mtime(path), "state": state,
+                     "result": done["result"] if done else None, "ask": next((q["question"] for q in _open(qs)), None)})
+    rows.sort(key=lambda r: (r["date"], r["at"]), reverse=True)
+    counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("pending", "done", "answered", "read")}
+    return {"at": time.time(), "total": len(rows), "counts": counts, "items": rows[:LIB_MAX]}
+
+
 def latest_by_session() -> dict[str, dict]:
     """Session id -> the newest brief it is recorded on."""
     out: dict[str, dict] = {}
@@ -460,6 +486,19 @@ def repo_name(cwd: str | None, w: dict | None = None) -> str:
     return _repo[cwd]
 
 
+# The head a coordinator puts on what it hands a worker (hooks/lib/coordsum.ts
+# unrelay): `사람의 말(원문): "…"`, `[coordinator] …`. A name made of it
+# names the hand-off, not the work.
+RELAY_HEAD = re.compile(r'^\s*(?:\[(?:coordinator|coord|office→coord)\]\s*)?(?:(?:사람의 말|worker 보고)\s*\([^)]*\)\s*:\s*)?"?')
+
+
+def unrelay(text: str) -> str:
+    t = text or ""
+    out = RELAY_HEAD.sub("", t, count=1).strip()
+    # The quote the head opened closes at the first `"`; what follows is the coordinator's.
+    return out.split('"', 1)[0].strip() if out != t.strip() and '"' in out else out
+
+
 def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict | None = None) -> str | None:
     """What the view calls a session: its cached summary, else its
     repository and the start of its first prompt; None when neither is known."""
@@ -467,7 +506,7 @@ def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict
         return None
     if sums.get(sid):
         return sums[sid]
-    first = first_prompt(sid)
+    first = unrelay(first_prompt(sid))
     first = first if len(first) <= FIRST_CHARS else first[: FIRST_CHARS - 1] + "…"
     out = " · ".join(x for x in (repo_name(cwd, w), first) if x)
     return out or None

@@ -216,7 +216,8 @@ function cmdActive(p) {
   return open.find((q) => q.id === cmd.q) || open[0]
 }
 // A pick from anywhere but the table leaves no row open; tblShow sets it again after.
-function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title }; cmd.armed = null; cmd.q = null; cmd.row = null }
+// fromLib: opened from 📚 전체 브리프, whose bar then leads back to it.
+function cmdPick(p) { cmd.sel = { file: p.file, path: p.path, title: p.title, ...(p.fromLib ? { fromLib: true } : {}) }; cmd.armed = null; cmd.q = null; cmd.row = null }
 const cmdCall = (sid) => (cmd.data?.calls || []).find((c) => c.sid === sid)
 // `summary`: what the session was doing, the name the person knows it by;
 // `name` (its slug) stays for the small tag beside it.
@@ -357,7 +358,7 @@ function cmdWhere(c, at) {
 function cmdAbout() {
   const s = cmd.sel
   // The day (agenda.js) is not a thing to instruct about: the box goes to the coordinator plain.
-  if (!s || s.agenda) return null
+  if (!s || s.agenda || s.library) return null
   const key = s.sid ? 'sid:' + s.sid : s.memos ? 'sid:' + s.memos : s.review ? 'review:' + s.review : s.revs ? 'revs:' + s.revs : s.slx ? 'slx:' + s.slx : 'brief:' + s.file
   // A ✕ holds for the thing it was pressed on; opening another brings the chip back.
   if (cmd.aboutSeen !== key) { cmd.aboutSeen = key; cmd.aboutOff = null }
@@ -453,10 +454,12 @@ function cmdRenderSay() {
 // ↗ 밖으로 opens this brief alone in the browser (the server's `open`); the
 // office page is the person's screen and never moves.
 function cmdBriefBar(bar, s) {
-  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>' + (cmdHib() ? hibBriefButton(s.file) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
+  bar.innerHTML = (s.fromLib ? '<button class="act back" title="📚 전체 브리프로">← 📚</button>' : '') + '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>' + (cmdHib() ? hibBriefButton(s.file) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
   if (cmdHib()) hibBriefWire(bar)
   bar.querySelector('.out').onclick = async () => { const j = await cmdPost({ kind: 'brief_open', file: s.file, via: lastPlace(s.path) }); if (j) toast('↗ ' + (j.sent || '열었습니다')) }
   bar.querySelector('.shut').onclick = cmdShut
+  const back = bar.querySelector('.back')
+  if (back) back.onclick = () => { cmd.sel = { library: true }; cmdRender() }
 }
 
 // The frame told which page it shows now (office/command.py FRAME_NOTE): a link
@@ -491,6 +494,7 @@ function cmdRenderDoc() {
   if (s.slx) return cmdSlx() ? slxRenderDoc(bar, doc, dec, s) : cmdShut()
   if (s.memos) return typeof dfrRenderMemos === 'function' ? dfrRenderMemos(bar, doc, dec, s) : cmdShut()
   if (s.agenda) return cmdAgenda() ? agRenderDoc(bar, doc, dec) : cmdShut()
+  if (s.library) return typeof blibRenderDoc === 'function' ? blibRenderDoc(bar, doc, dec) : cmdShut()
   // The frame is made once per brief: the 3 s refresh must not reload it.
   // It loads /briefs/<name>, not /file?path=: a link inside the brief
   // (← 모든 브리프, another brief) then resolves beside it in ~/briefs. Against

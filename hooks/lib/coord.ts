@@ -87,7 +87,7 @@ export type Worker = {
   status?: Status
 }
 
-export type LogEntry = { at: number; kind: 'order' | 'spawn' | 'adopt' | 'release' | 'close' | 'send' | 'event' | 'limits'; text: string }
+export type LogEntry = { at: number; kind: 'order' | 'spawn' | 'adopt' | 'release' | 'close' | 'send' | 'answer' | 'event' | 'limits'; text: string }
 
 export type Ledger = {
   on: boolean
@@ -576,13 +576,14 @@ export function statusTail(s: Status | undefined, now: number): string {
   return ' — status ' + statusLine(s) + old
 }
 
-// The person must answer the worker: the text says which pane and window,
-// and the call when it is a permission ask. The office's 지휘 view draws the
-// dialog's options on the worker's row (office.py asking/dialog, kind key),
-// so the person answers there, not in the pane.
+// The worker waits on an answer: the text says which pane and window, and
+// the call when it is a permission ask. A permission dialog is the
+// coordinator's to answer (coord_answer, after reading the pane and checking
+// the command); only a call that is truly the person's goes to a brief. The
+// office's 지휘 view still draws the dialog on the worker's row.
 export function askText(slug: string, s: Pick<PaneSeen, 'pane' | 'window' | 'attention' | 'asks'>, summary?: string): string {
   const where = (summary ? summary + ' (' + slug + ', ' : slug + ' (') + 'pane ' + s.pane + ', window ' + s.window + ')'
-  if (s.asks) return where + ': asks: ' + s.asks + (s.attention === 'ask' ? ' (a permission dialog: the person answers it on its row in the office 지휘 view)' : ' (a permission ask still unsettled; if a dialog stays, the person answers it in the office 지휘 view)')
+  if (s.asks) return where + ': asks: ' + s.asks + (s.attention === 'ask' ? ' (a permission dialog: read its pane, check the command, answer it with coord_answer)' : ' (a permission ask still unsettled; if a dialog stays, read its pane, check the command, answer it with coord_answer)')
   return where + ': waiting on ' + (s.attention === 'ask' ? 'an answer' : 'an approval') + ' in its pane'
 }
 
@@ -762,7 +763,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- A rule the person teaches you in feedback about how you run things is not left in project memory alone. Save the memory, and in the same turn give a worker the task of putting the rule into this coordinator prompt (hooks/lib/coord.ts) or the skill it belongs to, so every coordinator session has it. Tell the person in one line.",
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
-    "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it, and the office's 지휘 view already shows it on that worker's row with its options to press. Do not tell the person to go to the pane, and do not repeat it: say once in chat `권한 확인 N건 대기 (지휘)` with what each asks. Only while the office is down (`curl -sf -o /dev/null http://localhost:8796/` fails) name the pane and window instead. When a folder outside its cwd is the cause, close and respawn it with add_dirs instead.",
+    "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane, and it is yours to answer, not the person's: never hand it on as `권한 확인 N건 대기`. 1. Read the dialog and its full command: `tmux capture-pane -p -J -t %N`. 2. Check what the command really does: `rm` of a symlink removes only the link; a commit or push of its own branch inside its own worktree is safe; a read or write inside its cwd, ~/research/<slug> or ~/briefs is safe. 3. When it is safe, call `coord_answer` with the slug, option 1 (yes, this time only; never an \"always allow\" option) and expect = a piece of the command you checked, then say in chat in one line what you allowed. 4. Ask the person on a decision brief instead, and leave the dialog up, when it writes to prod, sends anything outside this machine (Slack, mail, a PR comment on someone else's repository), deletes real data, touches credentials or secrets, or changes a session policy. When a folder outside its cwd is the cause, answer this one and close and respawn it with add_dirs before its next task.",
     "- `[coord] <summary> (<slug>): 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
     "- `[coord] <summary> (<slug>): MCP <server> 끊김 (<why>)` (`coordinator: MCP …` for your own session) is an MCP server that session's cc-mods could not reconnect on its own: it keeps retrying (1, 2, 4 … 30 minutes apart), and the office shows 🔌 on that session's row with a 다시 연결 button. Tell the person once in chat `MCP 끊김: <server> (<who>)` with the why. When the why says 이름 매핑 실패, that is a cc-mods bug: route a fix with its text. Do not tell the worker to reconnect it, and do not run /mcp for it.",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',

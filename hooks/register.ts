@@ -4745,7 +4745,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   // The worker status tool (lib/status.ts), registered by statusWorker.
   on('tool.call', { tool: /^mcp__cc-mods__status$/ }, async ($: any, e: any) => statusCall($, e))
 
-  on('tool.call', { tool: /coord_(roster|route|spawn|send|close|review)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
+  on('tool.call', { tool: /coord_(roster|route|spawn|send|answer|close|review)$/ }, async ($: any, e: any, next: any) => (isCoordTool(e.tool) ? coordTool($, e.tool, e) : next(e)))
 
   // The coordinator's [coord] wakes, looked at again where they leave the
   // queue (a plugin's prompt runs once the session is idle): a worker closed
