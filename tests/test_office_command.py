@@ -1393,6 +1393,56 @@ class CommandKeysTest(unittest.TestCase):
         self.assertEqual(got, [False, True, 5, '{"library":true}', None, 3, True, True, True, True, True, True,
                                True, True, 2, True, True, True, 1, 1, True, {"file": "b.html", "path": "/b/b.html", "title": "끝난 일", "fromLib": True}])
 
+    def test_the_library_grass_picks_a_range_and_a_type_and_esc_clears_the_range_first(self):
+        # The person: pick a range on the grass (as ~/briefs/index.html), and a
+        # type filter; search, state, topic, type and range all AND; Esc takes
+        # the range off before 📚 closes (the layers.js step, command.js cmdEscStep).
+        got = self.run_js("""
+            press('c')
+            const today = new Date(), iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+            const day = (n) => iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() - n))
+            const mk = (file, date, type, topic, state) => ({ file, path: '/b/' + file, title: file, date, type, topic, state, search: (file + ' ' + topic).toLowerCase() })
+            blib.data = { total: 5, counts: {}, types: { decision: 2, result: 1, review: 1, research: 1 }, topics: [['결정', 3], ['인프라', 2]], items: [
+              mk('a', day(0), 'decision', '결정', 'pending'), mk('b', day(0), 'review', '결정', 'read'), mk('c', day(1), 'decision', '인프라', 'read'),
+              mk('d', day(5), 'result', '결정', 'done'), mk('e', day(40), 'research', '인프라', 'read')] }
+            cmd.sel = { library: true }
+            const n = () => blibItems().length
+            const g = blibGrass()
+            const cells = (g.match(/class="c[ "]/g) || []).length, days = (g.match(/data-d=/g) || []).length
+            const lv = (d) => (new RegExp('class="c( l[1-4])?" data-d="' + d + '"').exec(g) || [])[1] || ''
+            const lvls = [lv(day(0)), lv(day(2)), lv(day(1))]
+            const out = [n()]
+            blibSetRange(day(1), day(0)); out.push(n())           // two days: a, b, c
+            blib.ty = 'decision'; out.push(n())                   // AND type: a, c
+            blib.topic = '결정'; out.push(n())                    // AND topic: a
+            blib.topic = ''; blib.ty = ''; blibSetRange(day(0), day(1)); out.push(blib.from === day(1) && blib.to === day(0))  // reversed pair is ordered
+            blibClearRange(); blib.ty = 'review'; out.push(n()); blib.ty = ''
+            // shift+click extends from the anchor, a click on the lone day clears it
+            blibRangeChanged = () => {}
+            const cell = (d) => ({ dataset: { d } })
+            blibGridClick(cell(day(5)), { detail: 0 }); out.push([blib.from, blib.to, blib.anc].join() === [day(5), day(5), day(5)].join())
+            blibGridClick(cell(day(0)), { detail: 0, shiftKey: true }); out.push(blib.from === day(5) && blib.to === day(0))
+            blibClearRange(); blibGridClick(cell(day(2)), { detail: 0 }); blibGridClick(cell(day(2)), { detail: 0 }); out.push(blib.from === '')
+            // touch: tap the start, tap the end
+            blibGridClick(cell(day(3)), { pointerType: 'touch' }); const waiting = blib.wait; blibGridClick(cell(day(1)), { pointerType: 'touch' })
+            out.push(waiting, blib.wait, blib.from === day(3) && blib.to === day(1))
+            // Esc: the range first, then 📚 itself closes
+            const a = cmdEscStep(), left = [!!blib.from, !!cmd.sel?.library]
+            const b = cmdEscStep(), after = cmd.sel
+            return [cells, days, lvls, out, [a, left], [b, after]]
+        """)
+        cells, days, lvls, out, first, second = got
+        # 53 weeks x 7 cells (the future ones of this week are blank), plus the legend's 5.
+        self.assertEqual(cells, 53 * 7 + 5)
+        self.assertTrue(53 * 7 - 6 <= days <= 53 * 7)
+        # the index's scale, 1 + (n-1)*4//peak: two briefs on the busiest day is l3, one is l1, none stays plain
+        self.assertEqual(lvls, [" l3", "", " l1"])
+        self.assertEqual(out[:4], [5, 3, 2, 1])
+        self.assertEqual(out[4:6], [True, 1])
+        self.assertEqual(out[6:], [True, True, True, True, False, True])
+        self.assertEqual(first, [True, [False, True]])
+        self.assertEqual(second[0], True)
+
     def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
         got = self.run_js("""
             return (async () => {

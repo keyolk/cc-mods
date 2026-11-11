@@ -24,6 +24,22 @@ const BRIEF_CSS = `
 #command .blib .search input:focus { border-color: #3b5bdb; box-shadow: 0 0 0 3px #e8edfd; }
 #command .blib .kbd { position: absolute; right: 8px; top: 50%; translate: 0 -50%; font: 11px ui-monospace, Menlo, monospace; color: #9b9ba3; border: 1px solid #e6e5e1; border-radius: 6px; padding: 0 5px; }
 /* One line each, scrolling sideways (as the brief line does): the panel is short beside the table. */
+#command .blib .gr { margin-top: 6px; padding: 6px 8px 4px; background: #fff; border: 1px solid #e6e5e1; border-radius: 10px; }
+#command .blib .gr:empty { display: none; }
+#command .blib .gscroll { overflow-x: auto; overflow-y: hidden; direction: rtl; scrollbar-width: thin; }
+#command .blib .gwrap { direction: ltr; display: inline-grid; padding-right: 4px; grid-template-columns: auto auto; gap: 3px 4px; }
+#command .blib .gdays, #command .blib .gmon { font-size: 9px; color: #9b9ba3; }
+#command .blib .gdays { display: grid; grid-template-rows: repeat(7, 8px); gap: 2px; line-height: 8px; }
+#command .blib .gmon { display: grid; grid-auto-flow: column; grid-auto-columns: 8px; gap: 2px; height: 11px; white-space: nowrap; }
+#command .blib .grid { display: grid; grid-template-rows: repeat(7, 8px); grid-auto-flow: column; grid-auto-columns: 8px; gap: 2px; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+#command .blib .c { width: 8px; height: 8px; border-radius: 2px; background: #ebedf0; }
+#command .blib .grid .c[data-d] { cursor: pointer; }
+#command .blib .c.l1 { background: #c6e48b; } #command .blib .c.l2 { background: #7bc96f; } #command .blib .c.l3 { background: #239a3b; } #command .blib .c.l4 { background: #196127; }
+#command .blib .c.rng { outline: 2px solid #3b5bdb; outline-offset: -1px; }
+#command .blib .c.out { visibility: hidden; }
+#command .blib .gfoot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #9b9ba3; margin-top: 4px; }
+#command .blib .gleg { display: inline-flex; gap: 2px; align-items: center; }
+#command .blib .gsel .gclr { background: none; border: 0; color: #3b5bdb; cursor: pointer; font: 11px -apple-system, sans-serif; padding: 0 0 0 6px; }
 #command .blib .facets { display: flex; gap: 5px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-top: 6px; align-items: center; }
 #command .blib .facets > * { flex: 0 0 auto; }
 #command .blib .facet { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border: 1px solid #e6e5e1; border-radius: 999px; background: #fff; color: #6b6b73; font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; cursor: pointer; }
@@ -136,9 +152,13 @@ function cmdBriefClick(ev) {
 // the index is made of, and the match is the index's: the search text
 // contains the words, the topic is the one pressed. The office adds one
 // thing the index puts at its top instead: a state filter (⏳ 결정 대기 N,
-// ✅ 완료 N), since the person comes here for those. A card opens that brief
+// ✅ 완료 N), since the person comes here for those. The grass (a day per
+// cell, 53 weeks) picks a date range as the index's does (see blibGrass) and
+// the type row (결정 · 결과 · 리뷰 요청 · 리서치) filters by kind; search, state,
+// topic, type and range all AND. A card opens that brief
 // where a brief opens; ← 📚 on its bar comes back.
-const blib = { data: null, at: 0, q: '', topic: '', only: '', more: false, key: null, loading: false }
+const blib = { data: null, at: 0, q: '', topic: '', only: '', ty: '', from: '', to: '', anc: '', wait: false, more: false, key: null, gkey: null, loading: false }
+const BLIB_TYPES = { decision: '결정', result: '결과', review: '리뷰 요청', research: '리서치' }
 const BLIB_STATE = { pending: ['⏳', '결정 대기'], done: ['✅', '완료'], answered: ['☑', '답함'], read: ['📄', '읽기'] }
 const BLIB_FACETS = 12  // topics on the line before 더 보기 (it scrolls sideways); the index shows all
 async function blibLoad(force = false) {
@@ -158,9 +178,10 @@ function blibToggle() {
 function blibMatch(b) {
   const v = blib.q.trim().toLowerCase()
   return (!v || String(b.search || '').includes(v)) && (!blib.topic || b.topic === blib.topic) && (!blib.only || b.state === blib.only)
+    && (!blib.ty || b.type === blib.ty) && (!blib.from || (b.date >= blib.from && b.date <= blib.to))
 }
 const blibItems = (d = blib.data) => (d?.items || []).filter(blibMatch)
-const blibFiltered = () => !!(blib.q.trim() || blib.topic || blib.only)
+const blibFiltered = () => !!(blib.q.trim() || blib.topic || blib.only || blib.ty || blib.from)
 // 오늘, 어제, 11월 10일 (월), or 2025. 3. 1. for another year: the index's day_label.
 function blibDay(iso, today = new Date()) {
   const [y, m, d] = iso.split('-').map(Number), dd = new Date(y, m - 1, d)
@@ -170,6 +191,114 @@ function blibDay(iso, today = new Date()) {
   if (delta === 1) return '어제'
   return y === today.getFullYear() ? m + '월 ' + d + '일 (' + '일월화수목금토'[dd.getDay()] + ')' : y + '. ' + m + '. ' + d + '.'
 }
+// The grass, as the index's (bin/brief.py grass_html), smaller: a column a
+// week (Mon..Sun), 53 weeks, a cell a day shaded by that day's briefs against
+// the busiest day (the grass counts every brief, filters do not thin it).
+// Pick a range: drag, shift+click, or on touch tap the start and the end; a
+// plain click is one day, and clicking it again clears. The range rides in
+// the URL hash (#r=YYYY-MM-DD or #r=from..to) as on the index; 지우기 and Esc
+// (cmdEscStep) clear it.
+const BLIB_WEEKS = 53
+const blibIso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+function blibGrass(d = blib.data, today = new Date()) {
+  const days = {}
+  for (const b of d?.items || []) days[b.date] = (days[b.date] || 0) + 1
+  const peak = Math.max(1, ...Object.values(days)), t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const start = new Date(t0.getFullYear(), t0.getMonth(), t0.getDate() - ((t0.getDay() + 6) % 7) - 7 * (BLIB_WEEKS - 1))
+  let cells = '', months = '', last = -1, total = 0
+  for (let w = 0; w < BLIB_WEEKS; w++) {
+    const mon = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7 * w)
+    months += '<span>' + (mon.getMonth() !== last ? (mon.getMonth() + 1) + '월' : '') + '</span>'
+    last = mon.getMonth()
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i), iso = blibIso(day), n = days[iso] || 0
+      if (day > t0) cells += '<span class="c out"></span>'
+      else { total += n; cells += '<span class="c' + (n ? ' l' + Math.min(4, 1 + Math.floor((n - 1) * 4 / peak)) : '') + '" data-d="' + iso + '" data-n="' + n + '" title="' + iso + ' · ' + n + '개"></span>' }
+    }
+  }
+  return '<div class="gscroll"><div class="gwrap"><span></span><div class="gmon">' + months + '</div>'
+    + '<div class="gdays"><span>월</span><span></span><span>수</span><span></span><span>금</span><span></span><span>일</span></div>'
+    + '<div class="grid">' + cells + '</div></div></div>'
+    + '<div class="gfoot"><span>최근 ' + BLIB_WEEKS + '주 ' + total + '개 · <span class="gsel"></span></span><span class="gleg">적음 <span class="c"></span><span class="c l1"></span><span class="c l2"></span><span class="c l3"></span><span class="c l4"></span> 많음</span></div>'
+}
+const BLIB_RE = /^#r=([0-9]{4}-[0-9][0-9]-[0-9][0-9])(?:[.][.]([0-9]{4}-[0-9][0-9]-[0-9][0-9]))?$/
+function blibReadHash() {
+  const m = BLIB_RE.exec(typeof location === 'undefined' ? '' : location.hash)
+  if (m) { blibSetRange(m[1], m[2] || m[1]); blib.anc = blib.from }
+}
+function blibWriteHash() {
+  try { history.replaceState(null, '', location.pathname + location.search + (blib.from ? (blib.from === blib.to ? '#r=' + blib.from : '#r=' + blib.from + '..' + blib.to) : '')) } catch {}
+}
+function blibSetRange(a, b) { if (a > b) [a, b] = [b, a]; blib.from = a; blib.to = b }
+function blibClearRange() { blib.from = blib.to = blib.anc = ''; blib.wait = false }
+// Range, then the page: the cells shaded, the footer's label, the list drawn again.
+function blibRangeChanged() {
+  blib.key = null; blibWriteHash(); blibPaint()
+  if (typeof cmdRenderDoc === 'function') cmdRenderDoc()
+}
+function blibPaint(root = typeof cmdEl === 'undefined' ? null : cmdEl) {
+  if (!root) return
+  const f = blib.from, t = blib.to
+  root.querySelectorAll('.blib .c.rng').forEach((c) => c.classList.remove('rng'))
+  if (f) root.querySelectorAll('.blib .c[data-d]').forEach((c) => { if (c.dataset.d >= f && c.dataset.d <= t) c.classList.add('rng') })
+  const sel = root.querySelector('.blib .gsel')
+  if (!sel) return
+  if (!f) { sel.textContent = '칸을 누르거나 끌어서 날짜 범위를 고릅니다'; return }
+  const y = f.slice(0, 4) !== t.slice(0, 4), md = (d) => (y ? d : d.slice(5).replace('-', '/'))
+  sel.innerHTML = cmdEsc((f === t ? md(f) : md(f) + '–' + md(t)) + ' · ' + blibItems().length + '개' + (blib.wait ? ' · 끝 날짜를 누르세요' : '')) + '<button type="button" class="gclr" data-lgclr="1">지우기</button>'
+}
+// Esc, before the panel closes (command.js cmdEscStep): the range first.
+function blibEsc() {
+  blib.drag = null
+  if (!cmd.sel?.library || !blib.from) return false
+  blibClearRange(); blibRangeChanged()
+  return true
+}
+const blibCellAt = (x, y) => document.elementFromPoint(x, y)?.closest?.('.blib .c[data-d]')
+// Mouse: press starts (shift extends from the anchor), moving over cells drags,
+// release on the press cell is a click. Touch: taps, in blibGridClick.
+function blibGridDown(e) {
+  const c = e.target.closest('.c[data-d]')
+  if (!c || e.button || e.pointerType !== 'mouse') return
+  e.preventDefault()
+  blib.drag = { a: e.shiftKey && blib.anc ? blib.anc : c.dataset.d, moved: false, shift: e.shiftKey && !!blib.anc }
+}
+function blibGridMove(e) {
+  const g = blib.drag
+  if (!g) return
+  const c = blibCellAt(e.clientX, e.clientY)
+  if (!c) return
+  if (c.dataset.d !== g.a || g.moved) { g.moved = true; blib.wait = false; blibSetRange(g.a, c.dataset.d); blib.anc = g.a; blibRangeChanged() }
+}
+function blibGridUp(e) {
+  const g = blib.drag
+  if (!g) return
+  blib.drag = null
+  const c = blibCellAt(e.clientX, e.clientY)
+  if (!c || g.moved) return
+  const x = c.dataset.d
+  blib.wait = false
+  if (g.shift) blibSetRange(g.a, x)
+  else if (blib.from === x && blib.to === x) blibClearRange()
+  else { blibSetRange(x, x); blib.anc = x }
+  blibRangeChanged()
+}
+function blibGridClick(c, e) {
+  const x = c.dataset.d
+  if (e.pointerType === 'mouse' && e.detail) return
+  if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+    if (blib.wait && blib.anc) { if (x === blib.anc) blibClearRange(); else blibSetRange(blib.anc, x); blib.wait = false } else { blibSetRange(x, x); blib.anc = x; blib.wait = true }
+  } else if (e.shiftKey && blib.anc) blibSetRange(blib.anc, x)
+  else if (blib.from === x && blib.to === x) blibClearRange()
+  else { blibSetRange(x, x); blib.anc = x }
+  blibRangeChanged()
+}
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('pointermove', blibGridMove)
+  document.addEventListener('pointerup', blibGridUp)
+  document.addEventListener('pointercancel', () => { blib.drag = null })
+}
+blibReadHash()
 function blibCard(b, sel) {
   const badge = b.state === 'pending' ? '<span class="pend">결정 대기</span>' : b.state === 'done' ? '<span class="donebadge">✅ 완료</span>' : b.state === 'answered' ? '<span class="answered">답함</span>' : ''
   const sub = b.state === 'pending' && b.ask ? '<p class="ask">❓ ' + cmdEsc(b.ask) + '</p>' : b.state === 'done' && b.result ? '<p class="res">✅ ' + cmdEsc(b.result) + '</p>' : b.desc ? '<p class="ds">' + cmdEsc(b.desc) + '</p>' : ''
@@ -195,7 +324,9 @@ function blibFacets(d = blib.data) {
   const shown = blib.more ? topics : topics.slice(0, BLIB_FACETS)
   if (blib.topic && !shown.some(([k]) => k === blib.topic)) shown.push(topics.find(([k]) => k === blib.topic) || [blib.topic, 0])
   const n = d ? blibItems(d).length : 0
-  return '<div class="facets">' + ['pending', 'done'].map((k) => '<button class="facet st" data-lonly="' + k + '" aria-pressed="' + (blib.only === k) + '">' + BLIB_STATE[k][0] + ' ' + BLIB_STATE[k][1] + '<small>' + (c[k] || 0) + '</small></button>').join('')
+  const tc = d?.types || {}
+  const tys = '<div class="facets">' + Object.entries(BLIB_TYPES).filter(([k]) => tc[k] || blib.ty === k).map(([k, v]) => '<button class="facet ty" data-lty="' + k + '" aria-pressed="' + (blib.ty === k) + '">' + v + '<small>' + (tc[k] || 0) + '</small></button>').join('') + '</div>'
+  return tys + '<div class="facets">' + ['pending', 'done'].map((k) => '<button class="facet st" data-lonly="' + k + '" aria-pressed="' + (blib.only === k) + '">' + BLIB_STATE[k][0] + ' ' + BLIB_STATE[k][1] + '<small>' + (c[k] || 0) + '</small></button>').join('')
     + '<span class="sep"></span>'
     + shown.map(([k, v]) => '<button class="facet" data-ltopic="' + cmdEsc(k) + '" aria-pressed="' + (blib.topic === k) + '">' + cmdEsc(k) + '<small>' + v + '</small></button>').join('')
     + (topics.length > BLIB_FACETS ? '<button class="facet more" data-lmore="1">' + (blib.more ? '접기' : '주제 ' + (topics.length - BLIB_FACETS) + '개 더') + '</button>' : '') + '</div>'
@@ -208,13 +339,14 @@ function blibRenderDoc(bar, doc, dec) {
     bar.innerHTML = '<b>📚 전체 브리프</b><span class="m">날짜순 · / 로 찾기</span><button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
-    doc.innerHTML = '<div class="blib"><div class="head"><label class="search"><input type="search" placeholder="제목, 주제, 요약, 세션 ID" autocomplete="off"><span class="kbd">/</span></label><div class="fx"></div></div><div class="list"></div></div>'
+    doc.innerHTML = '<div class="blib"><div class="head"><label class="search"><input type="search" placeholder="제목, 주제, 요약, 세션 ID" autocomplete="off"><span class="kbd">/</span></label><div class="gr"></div><div class="fx"></div></div><div class="list"></div></div>'
     const input = doc.querySelector('input')
     input.value = blib.q
     input.oninput = () => { blib.q = input.value; blib.key = null; blibRenderDoc(bar, doc, dec) }
     // Esc in the box: the index's (clear what is typed, then leave the box).
     input.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (input.value) { input.value = ''; blib.q = ''; blib.key = null; blibRenderDoc(bar, doc, dec) } else input.blur() } }
     doc.onclick = blibClick
+    doc.onpointerdown = (e) => { if (e.target.closest('.gr')) blibGridDown(e) }
     dec.dataset.key = ''
     dec.innerHTML = ''
     dec.style.display = 'none'
@@ -225,6 +357,9 @@ function blibRenderDoc(bar, doc, dec) {
     blib.loading = true
     blibLoad(true).finally(() => { blib.loading = false; if (cmd.sel?.library) { cmdRenderDoc(); cmdRenderBriefs() } })
   }
+  const gr = doc.querySelector('.gr'), gh = blib.data ? blibGrass() : ''
+  if (gr.dataset.key !== gh) { const sc = gr.querySelector('.gscroll'), left = sc ? sc.scrollLeft : null; gr.dataset.key = gh; gr.innerHTML = gh; const n = gr.querySelector('.gscroll'); if (n && left != null) n.scrollLeft = left; blibPaint() }
+  else blibPaint()
   const fx = doc.querySelector('.fx'), fh = blibFacets()
   if (fx.dataset.key !== fh) { fx.dataset.key = fh; fx.innerHTML = fh }
   const h = blibHtml()
@@ -244,13 +379,18 @@ function blibSlash(e) {
 }
 function blibClick(ev) {
   const t = ev.target
+  const cell = t.closest('.c[data-d]')
+  if (cell && t.closest('.gr')) return blibGridClick(cell, ev)
+  if (t.closest('[data-lgclr]')) { blibClearRange(); blibRangeChanged(); return }
+  const ty = t.closest('[data-lty]')
+  if (ty) { blib.ty = blib.ty === ty.dataset.lty ? '' : ty.dataset.lty; blib.key = null; cmdRenderDoc(); return }
   const tp = t.closest('[data-ltopic]')
   if (tp) { blib.topic = blib.topic === tp.dataset.ltopic ? '' : tp.dataset.ltopic; blib.key = null; cmdRenderDoc(); return }
   const st = t.closest('[data-lonly]')
   if (st) { blib.only = blib.only === st.dataset.lonly ? '' : st.dataset.lonly; blib.key = null; cmdRenderDoc(); return }
   if (t.closest('[data-lmore]')) { blib.more = !blib.more; cmdRenderDoc(); return }
   if (t.closest('[data-lclear]')) {
-    blib.q = ''; blib.topic = ''; blib.only = ''; blib.key = null
+    blib.q = ''; blib.topic = ''; blib.only = ''; blib.ty = ''; blibClearRange(); blibWriteHash(); blib.key = null
     const i = cmdEl.querySelector('.blib input'); if (i) i.value = ''
     cmdRenderDoc(); return
   }
