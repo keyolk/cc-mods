@@ -43,6 +43,7 @@ import crew  # noqa: E402 - office/crew.py, ending a session or releasing it fro
 import paths  # noqa: E402 - office/paths.py, which files the office may show
 import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes and a worker redeems
 import hibernate  # noqa: E402 - office/hibernate.py, long-idle sessions put to sleep and woken
+import agenda  # noqa: E402 - office/agenda.py, the person's meetings (gcl) and who is in them
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
@@ -57,7 +58,7 @@ def code_stamp() -> str:
 
 
 STAMP = code_stamp()
-PAGE_FILES = ("office.html", "brands.js", "skins.js", "resources.js", "auth.js", "review.js", "crew.js", "look.js", "briefline.js", "slx.js", "table.js", "defer.js", "command.js", "paths.js", "hibernate.js")
+PAGE_FILES = ("office.html", "brands.js", "skins.js", "resources.js", "auth.js", "review.js", "crew.js", "look.js", "briefline.js", "slx.js", "table.js", "defer.js", "command.js", "paths.js", "hibernate.js", "agenda.js")
 
 
 def page_stamp() -> str:
@@ -1691,6 +1692,9 @@ def act(body: dict) -> tuple[int, dict]:
         return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
     if kind in crew.KINDS:
         return crew.act(body, snapshot(), inbox_put)
+    if kind in agenda.KINDS:
+        # The view's confirm press is the request: gcl does the write.
+        return agenda.act(body)
     if kind in hibernate.KINDS:
         # The card keeps the session's newest brief, so the brief can wake it.
         return hibernate.act(body, snapshot(), inbox_put, brief=lambda s: command.latest_by_session().get(s))
@@ -2163,7 +2167,10 @@ class Handler(BaseHTTPRequestHandler):
             if sid:
                 return self.send(200, json.dumps(asking(sid)).encode(), "application/json")
             people = snapshot()
-            return self.send(200, json.dumps({**command.view(people, ask=ask_digest), "hibernate": hibernate.view(people)}).encode(), "application/json")
+            cv = command.view(people, ask=ask_digest)
+            ag = agenda.view()
+            ag.update(agenda.people(ag["events"], cv))
+            return self.send(200, json.dumps({**cv, "hibernate": hibernate.view(people), "agenda": ag}).encode(), "application/json")
         if self.path.startswith("/coord"):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
@@ -2180,7 +2187,7 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js", "/hibernate.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js", "/hibernate.js", "/agenda.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")
