@@ -452,7 +452,27 @@ def status_of(w: dict) -> dict | None:
     return {k: st[k] for k in keep if st.get(k) not in (None, "")}
 
 
-def view(people: list[dict], ask=None) -> dict:
+def declared(by_sid: dict[str, dict], ledger_w: dict[str, dict]) -> dict[str, dict]:
+    """sid -> what each live session declared with its status tool, read from
+    its status file (hooks/lib/status.ts). The ledger holds a copy that a
+    coordinator tick wrote: late, and absent for a session no coordinator
+    holds, which is how a block on the person went unseen."""
+    out = {}
+    d = os.path.expanduser("~/.claude/state/office/status")
+    for sid, p in by_sid.items():
+        if not SID.match(sid):
+            continue
+        try:
+            with open(os.path.join(d, sid + ".json")) as f:
+                st = status_of({"status": json.load(f)})
+        except (OSError, ValueError):
+            continue
+        if st:
+            out[sid] = {"name": (ledger_w.get(sid) or {}).get("slug") or p.get("name"), "summary": None, "state": p.get("state"), "status": st}
+    return out
+
+
+def view(people: list[dict], ask=None, deps: list[dict] | None = None) -> dict:
     """What the command view draws: the waiting decisions, each coordinator
     with its live workers (their state from the office's own snapshot and the
     brief each is on), and the finished work waiting on the person's look.
@@ -551,7 +571,10 @@ def view(people: list[dict], ask=None) -> dict:
         # its pane (turn.woken compares it with what it asked when set aside).
         if ask and sid in waits and h.get("until") and h["until"] > now:
             h["askNow"] = ask(sid)
-    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held, now=now)
+    decl = declared(by_sid, ledger_w)
+    for sid, d in decl.items():
+        d["summary"] = label(sid, sums, cwd(sid), ledger_w.get(sid))
+    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held, now=now, declared=decl, deps=deps)
     for r in rows:
         if r.get("wake"):
             defer.wake(r["sid"], r["wake"])

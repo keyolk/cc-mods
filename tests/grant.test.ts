@@ -105,3 +105,9 @@ test('the coordinator rules mark a carried-out, verified decision brief done', (
   expect(rules).toContain('--revert')
   expect(rules).toContain('✅ 최근 완료')
 })
+
+test('the coordinator rules end a feature at the person using it, not at the merge', () => {
+  const rules = coordRules(emptyLedger('sid', 'cc-mods-d9', 0))
+  expect(rules).toContain('A feature is done when the person can use it, not when it merges')
+  expect(rules).toContain('report the action that is still blocked')
+})

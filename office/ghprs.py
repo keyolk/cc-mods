@@ -215,6 +215,12 @@ def prs(wait: bool = False) -> tuple[list[dict] | None, str | None]:
         return _prs["items"], _prs["error"]
 
 
+def last_error() -> str | None:
+    """Why the last PR read failed, without starting one."""
+    with _lock:
+        return _prs["error"]
+
+
 def people(wait: bool = False) -> dict[str, str]:
     """GitHub login (lower) -> work email, from the org's SAML; {} without an org."""
     org = config()["ghOrg"]
