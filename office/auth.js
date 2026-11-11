@@ -34,7 +34,7 @@ function authHtml(a, said, to) {
       + '<div class="m">' + esc(i.detail) + (i.expiresAt ? ' · 만료 ' + esc(clock(i.expiresAt)) : '') + '</div>' + (act && act.copy ? '<div class="m">고치려면 <code>' + esc(act.copy) + '</code></div>' : '') + '</div>'
   }
   const bad = a.items.filter((i) => i.state !== 'ok' && !i.connector), ok = a.items.filter((i) => i.state === 'ok'), idle = a.items.filter((i) => i.state !== 'ok' && i.connector)
-  return '<div class="h">🔑 인증 · 모든 세션 공통 <span class="m">K · Esc</span></div>'
+  return '<button class="authx" title="닫기 (Esc · K)" aria-label="닫기">✕</button><div class="h">🔑 인증 · 모든 세션 공통 <span class="m">K · Esc</span></div>'
     + (said ? '<div class="said">' + esc(said) + '</div>' : '')
     + (bad.length ? '<div class="h">⚠ 로그인이 필요한 것 ' + bad.length + ' <span class="m">' + (to ? '누르면 ' + esc(to.name) + ' 세션이 로그인 시작' : '누르면 명령 복사') + '</span></div>' + bad.map(row).join('') : '<div class="h">✅ 로그인이 필요한 것이 없습니다</div>')
     + (ok.length ? '<div class="h">✅ 정상 ' + ok.length + '</div>' + ok.map(row).join('') : '')

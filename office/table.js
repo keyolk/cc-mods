@@ -42,6 +42,14 @@ const TABLE_CSS = `
 #command table.turn tr.dim.sel td { opacity: .85; }
 #command table.turn td.who .slug { margin-left: 0; }
 #command table.turn .end { font: 11px -apple-system, sans-serif; border: 1px solid rgba(59,42,53,.4); border-radius: 8px; background: #fff; padding: 0 5px; cursor: pointer; margin-left: 4px; }
+#command table.turn tr.relay td { cursor: default; padding: 2px 6px 6px 14px; box-shadow: inset 4px 0 0 #e0793a; }
+#command table.turn tr.relay:hover td { background: transparent; }
+#command .relay-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#command .relay-bar button { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.45); border-radius: 8px; background: #fff; padding: 1px 8px; cursor: pointer; }
+#command .relay-bar button:disabled { opacity: .45; cursor: default; }
+#command .relay-bar input.relay-code { width: 8.5em; font: 14px ui-monospace, Menlo, monospace; letter-spacing: .12em; padding: 1px 6px; border: 1px solid rgba(59,42,53,.45); border-radius: 6px; }
+#command .relay-off { color: #b3261e; font-weight: 600; margin-top: 3px; }
+#command img.relay-shot { display: block; max-width: 100%; max-height: 220px; margin-top: 5px; border: 1px solid rgba(59,42,53,.25); border-radius: 6px; }
 #command .rtabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 6px 12px 0; border-bottom: 2px solid var(--line); background: #fffaf0; }
 #command .rtabs:empty { display: none; }
 #command .rtabs button { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 2px solid rgba(59,42,53,.35); border-bottom: 0; border-radius: 8px 8px 0 0; background: #fff; padding: 2px 9px; cursor: pointer; }
@@ -364,7 +372,7 @@ function tblHtml() {
   const grp = (t) => '<tr class="grp"><td colspan="3">' + t + '</td></tr>'
   const rows = []
   if (g.act.length) rows.push(grp('🔶 지금 내가 해야 할 것 ' + g.act.length))
-  rows.push(...g.act.map((R) => tblRow(R, false)))
+  rows.push(...g.act.flatMap((R) => [tblRow(R, false), tblRelayRow(R)]))
   if (g.look.length) rows.push(grp('🔎 보거나 다시 연결할 것 ' + g.look.length))
   rows.push(...g.look.map((R) => tblRow(R, false)))
   if (folded) {
@@ -410,4 +418,75 @@ function tblTabClick(ev) {
   const b = ev.target.closest('button[data-tab]')
   const R = b && cmd.row && tblFind(cmd.row)
   if (R) tblShow(R, b.dataset.tab)
+}
+
+// A login wait the worker declared with pane/ask/target (hooks/lib/status.ts,
+// office/relay.py): answered from this row, not from the worker's pane. 🖼
+// shows the pane now (asked for, never polled); otp takes a code and sends
+// it to the pane's input; click presses the button after a look; device
+// only says to approve it on the device. The code goes in the /act body
+// alone and is cleared from the box once sent.
+const tblRelay = { shot: {}, busy: {} } // sid -> { png, url, visible, why, look, at }
+const tblRelayOf = (R) => {
+  const st = R.row.status
+  return R.needs && R.row.sid && st && st.state === 'blocked' && st.kind === 'auth' && st.ask && st.pane ? st : null
+}
+function tblRelayRow(R) {
+  const st = tblRelayOf(R)
+  if (!st) return ''
+  const sid = cmdEsc(R.row.sid), shot = tblRelay.shot[R.row.sid], busy = tblRelay.busy[R.row.sid]
+  const lookB = st.ask !== 'device' ? '<button data-relay="look" data-sid="' + sid + '" title="' + cmdEsc(st.pane) + ' 화면을 지금 한 장 찍어 봅니다">🖼 ' + (shot ? '다시 보기' : '화면 보기') + '</button>' : ''
+  let act = ''
+  const no = busy || (shot && shot.approved === false)
+  if (st.ask === 'otp') act = '<input class="relay-code" data-sid="' + sid + '" autocomplete="one-time-code" inputmode="numeric" maxlength="16" placeholder="인증 코드" aria-label="인증 코드"' + (no ? ' disabled' : '') + '><button data-relay="otp" data-sid="' + sid + '"' + (no ? ' disabled' : '') + '>보내기</button>'
+  else if (st.ask === 'click') act = '<button data-relay="click" data-sid="' + sid + '"' + (shot && shot.look && !no ? '' : ' disabled') + ' title="' + (shot ? cmdEsc(st.target) + ' 누르기' : '먼저 🖼 화면을 보고 누릅니다') + '">👆 ' + cmdEsc(st.target) + ' 누르기</button>'
+  else act = '<span class="m">🔐 passkey·지문은 기기에서 승인하세요.</span> <button data-relay="device" data-sid="' + sid + '">승인했어요</button>'
+  const where = '<span class="m">' + cmdEsc(st.pane) + (shot ? ' · ' + cmdEsc(shot.url.replace(/^https?:\/\//, '').slice(0, 60)) : '') + '</span>'
+  // Not an approved site (office.json relay.hosts): the server refuses a code
+  // or a press there, and the row says so before the person types.
+  const off = shot && shot.approved === false
+  const warn = (off ? '<div class="relay-off">⛔ ' + cmdEsc(shot.host || shot.url.split(':')[0] + ':') + ' 은(는) 승인된 사이트가 아니어서 코드·클릭을 보내지 않습니다 <span class="m">office.json relay.hosts</span></div>' : '')
+    + (shot && !shot.visible && st.ask !== 'device' ? '<div class="m">⚠ 대상이 지금 화면에 없습니다: ' + cmdEsc(shot.why) + '</div>' : '')
+  const img = shot ? '<img class="relay-shot" alt="' + cmdEsc(st.pane) + ' 화면" src="data:image/png;base64,' + shot.png + '">' : ''
+  return '<tr class="relay" data-relay-row="' + sid + '"><td colspan="3"><div class="relay-bar">' + lookB + act + where + '</div>' + warn + img + '</td></tr>'
+}
+async function tblRelayClick(ev) {
+  const b = ev.target.closest('button[data-relay]')
+  if (!b) return false
+  const sid = b.dataset.sid, what = b.dataset.relay
+  if (tblRelay.busy[sid]) return true
+  const body = { sid, kind: 'relay_' + what }
+  if (what === 'otp') {
+    const box = cmdEl.querySelector('input.relay-code[data-sid="' + CSS.escape(sid) + '"]')
+    const v = (box && box.value || '').trim()
+    if (!v) { toast('코드를 넣으세요'); box && box.focus(); return true }
+    body.value = v
+    if (box) box.value = ''
+  }
+  if (what === 'click') body.look = (tblRelay.shot[sid] || {}).look
+  tblRelay.busy[sid] = true
+  cmdRender()
+  try {
+    const j = await cmdPost(body)
+    if (what === 'look') {
+      if (j && j.png) tblRelay.shot[sid] = { png: j.png, url: j.url || '', host: j.host || '', approved: j.approved, visible: j.visible, why: j.why || '', look: j.look, at: Date.now() }
+    } else if (j && j.ok) {
+      toast('✅ ' + (what === 'otp' ? '코드를 보냈습니다' : what === 'click' ? '눌렀습니다' : '알렸습니다'))
+      // The look was spent (click) or the page moved on: look again to see.
+      delete tblRelay.shot[sid]
+    }
+  } finally {
+    delete body.value
+    tblRelay.busy[sid] = false
+    cmdRender()
+  }
+  return true
+}
+// Enter in the code box sends it; every other key is typing.
+function tblRelayKey(ev) {
+  const box = ev.target.closest && ev.target.closest('input.relay-code')
+  if (!box) return false
+  if (ev.key === 'Enter') { ev.preventDefault(); const b = cmdEl.querySelector('button[data-relay="otp"][data-sid="' + CSS.escape(box.dataset.sid) + '"]'); if (b) b.click() }
+  ev.stopPropagation()
+  return true
 }
