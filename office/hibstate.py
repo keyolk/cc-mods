@@ -12,7 +12,7 @@ from datetime import datetime
 
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
 CONFIG = os.path.expanduser("~/.config/cc-mods/office.json")
-DEFAULTS = {"idleHours": 12.0, "typedMinutes": 30.0, "auto": "pressure", "pane": "close", "swapFreeMB": 512.0, "pressureLevel": 2}
+DEFAULTS = {"idleHours": 12.0, "typedMinutes": 30.0, "auto": "pressure", "pane": "close", "swapFreeMB": 512.0, "pressureLevel": 2, "maxSessions": 8, "capIdleHours": 2.0}
 _lock = threading.RLock()
 
 

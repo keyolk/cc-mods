@@ -60,7 +60,15 @@ candidates are put to sleep without asking), "off" (proposals only),
 "always". From ~/.config/cc-mods/office.json:
 
   "hibernate": {"idleHours": 12, "typedMinutes": 30, "auto": "pressure",
-                "pane": "close", "swapFreeMB": 512, "pressureLevel": 2}
+                "pane": "close", "swapFreeMB": 512, "pressureLevel": 2,
+                "maxSessions": 8, "capIdleHours": 2}
+
+Session cap (`maxSessions`, 0 turns it off): while more live Claude sessions
+run than that, the next longest-idle sessions are proposed down to
+`capIdleHours` of rest, only as many as are over the cap (`why: cap`), by
+the same rules otherwise (never one waiting on the person, a coordinator,
+an owned worker, or an adopted one a coordinator handed a task). They are
+proposals only: the automatic mode takes the long-idle ones alone.
 
 OFFICE_HIBERNATE_ONLY=<sid>,<sid> limits every action to those sessions
 (the live test runs a second office against the real roster).
@@ -160,7 +168,13 @@ def why_not(p: dict, ctx: dict, manual: bool = False) -> str | None:
     if not tx:
         return "대화 파일이 없어 되살릴 수 없음"
     idle = now - idle_since(p, tx)
-    if not manual and idle < cfg["idleHours"] * 3600:
+    # Over the session cap (cap_floor), a shorter idle floor, for sessions
+    # the cap may take: not one a coordinator handed a task.
+    floor = cfg["idleHours"]
+    cap = ctx.get("capFloor")
+    if cap is not None and cap_eligible(p):
+        floor = min(floor, cap)
+    if not manual and idle < floor * 3600:
         return "쉰 지 %.1f시간" % (idle / 3600)
     if ctx["seen"] is None:
         return "tmux client 목록을 읽지 못함"
@@ -197,10 +211,31 @@ def why_not(p: dict, ctx: dict, manual: bool = False) -> str | None:
     return None
 
 
-def context(sh=run, cfg: dict | None = None) -> dict:
-    # why_not rides along: hibwake.sleep checks the rules again at the press.
+def cap_eligible(p: dict) -> bool:
+    """Whether the session cap may propose this session. Not one a
+    coordinator handed a task: an adopted worker sits waiting between two of
+    its sends, and taken down it reads as gone (owned workers and
+    coordinators are out already, why_not)."""
+    boss = p.get("boss") or {}
+    return not (boss and boss.get("instructed"))
+
+
+def cap_floor(people: list[dict] | None, cfg: dict) -> float | None:
+    """The idle floor (hours) while more Claude sessions run than
+    `maxSessions` (sys-load brief F, 2026-11-11: 17 sessions, 10.9 GB, 16 of
+    them runnable); None at or under the cap, or with no roster to count."""
+    if people is None or cfg["maxSessions"] <= 0 or len(people) <= cfg["maxSessions"]:
+        return None
+    return cfg["capIdleHours"]
+
+
+def context(sh=run, cfg: dict | None = None, people: list[dict] | None = None) -> dict:
+    # why_not rides along: hibwake.sleep checks the rules again at the press,
+    # with the same capFloor, so a cap candidate is not refused there.
+    cfg = cfg or config()
     panes, attn = pane_pids(sh)
-    return {"cfg": cfg or config(), "now": time.time(), "pins": pins(), "seen": looked_at(sh), "reg": registry(), "panes": panes, "attn": attn, "rows": ps(sh), "sh": sh, "why_not": why_not}
+    return {"cfg": cfg, "now": time.time(), "pins": pins(), "seen": looked_at(sh), "reg": registry(), "panes": panes, "attn": attn, "rows": ps(sh), "sh": sh, "why_not": why_not,
+            "capFloor": cap_floor(people, cfg), "live": len(people) if people is not None else None}
 
 
 def reclaim_mb(p: dict, ctx: dict) -> int:
@@ -210,13 +245,36 @@ def reclaim_mb(p: dict, ctx: dict) -> int:
 
 
 def candidates(people: list[dict], ctx: dict) -> list[dict]:
-    out = []
+    """Who may sleep: the long-idle ones (`idleHours`), and over the session
+    cap the next longest-idle ones down to `capIdleHours` (`why: cap`), only
+    as many as the sessions over it. The draft check captures the pane, so
+    it runs on the cheap rules' survivors only, longest idle first, and the
+    cap's run stops once the excess is filled (sys-load brief D)."""
+    plain = {**ctx, "capFloor": None}
+    rows = []
     for p in people:
-        # Draft and pane checks run tmux per session: the cheap rules first.
-        if why_not(p, {**ctx, "draft": False}) is None and why_not(p, ctx) is None:
-            tx = transcript(p["id"])
-            idle = ctx["now"] - idle_since(p, tx)
-            out.append({"sid": p["id"], "name": p.get("name"), "pane": p.get("pane"), "window": p.get("window"), "idleH": round(idle / 3600, 1), "mb": reclaim_mb(p, ctx)})
+        tx = transcript(p["id"])
+        rows.append((ctx["now"] - idle_since(p, tx) if tx else 0.0, p))
+    rows.sort(key=lambda r: -r[0])
+    out = []
+
+    def row(p: dict, idle: float, why: str) -> dict:
+        return {"sid": p["id"], "name": p.get("name"), "pane": p.get("pane"), "window": p.get("window"), "idleH": round(idle / 3600, 1), "mb": reclaim_mb(p, ctx), "why": why}
+
+    for idle, p in rows:
+        if why_not(p, {**plain, "draft": False}) is None and why_not(p, plain) is None:
+            out.append(row(p, idle, "idle"))
+    excess = (ctx.get("live") or 0) - ctx["cfg"]["maxSessions"] - len(out)
+    if ctx.get("capFloor") is not None and excess > 0:
+        taken = {c["sid"] for c in out}
+        for idle, p in rows:
+            if excess <= 0:
+                break
+            if p["id"] in taken:
+                continue
+            if why_not(p, {**ctx, "draft": False}) is None and why_not(p, ctx) is None:
+                out.append(row(p, idle, "cap"))
+                excess -= 1
     return out
 
 
@@ -235,7 +293,7 @@ def pressure(sh=run, cfg: dict | None = None) -> dict:
 
 _view: dict = {"at": 0.0, "out": None, "busy": False}
 VIEW_TTL = 15
-EMPTY = {"cards": [], "candidates": [], "mb": 0, "auto": None, "idleHours": None, "pressure": None, "pins": []}
+EMPTY = {"cards": [], "candidates": [], "mb": 0, "auto": None, "idleHours": None, "cap": None, "pressure": None, "pins": []}
 
 
 def view(people: list[dict], sh=run, fresh: bool = False) -> dict:
@@ -283,9 +341,10 @@ def _view_now(people: list[dict], sh=run) -> dict:
         if row["wokeAt"] and time.time() - row["wokeAt"] > WAKE_GRACE:
             row["wokeAt"] = None
         sleeping.append(row)
-    ctx = context(sh)
+    ctx = context(sh, people=people)
     cands = candidates(people, ctx)
     return {"cards": sleeping, "candidates": cands, "mb": sum(c["mb"] for c in cands), "auto": ctx["cfg"]["auto"], "idleHours": ctx["cfg"]["idleHours"],
+            "cap": {"max": ctx["cfg"]["maxSessions"], "live": ctx["live"], "idleHours": ctx["cfg"]["capIdleHours"], "on": ctx["capFloor"] is not None},
             "pressure": pressure(sh, ctx["cfg"]), "pins": sorted(ctx["pins"])}
 
 
@@ -300,7 +359,7 @@ def act(body: dict, people: list[dict], inbox_put=None, sh=run, brief=None) -> t
         on = body.get("on") is not False
         pin(sid, on)
         return 200, {"ok": True, "sent": ("📌 고정: 휴면 후보에서 뺌" if on else "📌 해제")}
-    ctx = context(sh)
+    ctx = context(sh, people=people)
     if kind == "hibernate":
         p = next((x for x in people if x.get("id") == sid), None)
         if not p:
@@ -311,7 +370,7 @@ def act(body: dict, people: list[dict], inbox_put=None, sh=run, brief=None) -> t
         done, failed, mb = [], [], 0
         for cnd in candidates(people, ctx):
             p = next(x for x in people if x["id"] == cnd["sid"])
-            code, out = sleep(p, context(sh), extra={"brief": brief(p["id"]) if brief else None})
+            code, out = sleep(p, context(sh, people=people), extra={"brief": brief(p["id"]) if brief else None})
             (done if code == 200 else failed).append(str(p.get("name")) + ("" if code == 200 else ": " + out.get("error", "")))
             mb += out.get("mb", 0) if code == 200 else 0
         if not done and not failed:
@@ -327,7 +386,13 @@ def auto_tick(snapshot, sh=run, brief=None) -> list[str]:
         return []
     people = snapshot()
     out = []
+    # Only the long-idle ones: the cap's are proposals, a press decides
+    # (the person's pick on 2026-11-11-session-hibernate-auto was made for
+    # sessions idle half a day, not two hours). Their recheck runs without
+    # the cap's floor too.
     for cnd in candidates(people, context(sh, cfg)):
+        if cnd.get("why") == "cap":
+            continue
         p = next(x for x in people if x["id"] == cnd["sid"])
         code, _ = sleep(p, context(sh, cfg), extra={"auto": cfg["auto"], "brief": brief(p["id"]) if brief else None})
         if code == 200:

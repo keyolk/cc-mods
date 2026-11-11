@@ -43,8 +43,13 @@ function hibFoot() {
   if (cs.length) parts.push('<button data-hib="fold">' + (hib.open ? '▾' : '▸') + ' 💤 휴면 ' + cs.length + '</button>')
   if (cands.length) {
     const armed = Date.now() - hib.allArmed < HIB_CONFIRM_MS
-    parts.push('휴면 후보 ' + cands.length + '개 · 회수 예상 ' + hibGB(d.mb || 0) + ' <button data-hib="all" class="' + (armed ? 'armed' : '') + '" title="' + cmdEsc(cands.map((c) => c.name + ' (' + c.idleH + 'h)').join(', ')) + '">' + (armed ? '한 번 더: 모두 내리기' : '모두 내리기') + '</button>')
+    // A candidate the session cap brought in (`why: cap`) is marked: it has
+    // rested hours, not half a day, and only a press puts it to sleep.
+    const nCap = cands.filter((c) => c.why === 'cap').length
+    parts.push('휴면 후보 ' + cands.length + '개' + (nCap ? ' (세션 상한 ' + nCap + ')' : '') + ' · 회수 예상 ' + hibGB(d.mb || 0) + ' <button data-hib="all" class="' + (armed ? 'armed' : '') + '" title="' + cmdEsc(cands.map((c) => c.name + ' (' + c.idleH + 'h' + (c.why === 'cap' ? ' · 상한' : '') + ')').join(', ')) + '">' + (armed ? '한 번 더: 모두 내리기' : '모두 내리기') + '</button>')
   }
+  // Over the session cap: how many run, and the cap.
+  if (d.cap && d.cap.on) parts.push('<span class="warn">세션 ' + d.cap.live + '/' + d.cap.max + ' (상한 초과)</span>')
   if (d.pressure && d.pressure.on) parts.push('<span class="warn">메모리 압박' + (d.auto === 'off' ? '' : ' · 자동 휴면 켜짐') + '</span>')
   let out = '<div class="hibfoot">' + parts.join(' · ') + '</div>'
   if (hib.open && cs.length) out += '<ul class="hiblist">' + cs.map(hibRow).join('') + '</ul>'

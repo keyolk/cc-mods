@@ -251,6 +251,56 @@ class RulesTest(Home):
         self.assertEqual([c["sid"] for c in got], [S1])
         self.assertEqual(got[0]["mb"], (200_000 + 600_000 + 10_000 + 4) // 1024)
 
+    def test_session_cap_proposes_the_excess_down_to_its_floor(self):
+        # sys-load brief F: over `maxSessions`, sessions rested `capIdleHours`
+        # are proposed too, longest idle first, only as many as are over.
+        (self.home / "office.json").write_text(json.dumps({"hibernate": {"maxSessions": 2, "capIdleHours": 2}}))
+        three_h = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3 * 3600))
+        one_h = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+        S3, S4 = "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444"
+        self.transcript(S1, at=three_h)
+        self.transcript(S2, at=three_h)
+        self.transcript(S3, at=one_h)
+        self.transcript(S4, at=three_h)
+        recent = time.time() - 3 * 3600
+        reg = {s: {"pid": 300, "cwd": "/tmp/x", "kind": "interactive"} for s in (S1, S2, S3, S4)}
+        people = [self.person(S1, since=recent), self.person(S2, since=recent), self.person(S3, since=time.time() - 3600), self.person(S4, since=recent, attention="ask")]
+        cfg = hibstate.config()
+        ctx = self.ctx(cfg=cfg, reg=reg, capFloor=hibernate.cap_floor(people, cfg), live=len(people))
+        got = hibernate.candidates(people, ctx)
+        # 4 live, cap 2: two over. S4 waits on the person and S3 rested 1 h
+        # (under the 2 h floor): never. S1 and S2 (3 h) fill the excess.
+        self.assertEqual(sorted(c["sid"] for c in got), sorted([S1, S2]))
+        self.assertEqual({c["why"] for c in got}, {"cap"})
+        # At or under the cap there is no floor: 3 h is not 12.
+        self.assertIsNone(hibernate.cap_floor(people[:2], cfg))
+        self.assertEqual(hibernate.candidates(people, self.ctx(cfg=cfg, reg=reg)), [])
+        # The press checks again with the same floor: a cap candidate sleeps.
+        self.assertIsNone(hibernate.why_not(people[0], ctx))
+        self.assertIn("쉰 지", hibernate.why_not(people[0], self.ctx(cfg=cfg, reg=reg)))
+
+    def test_session_cap_never_takes_a_worker_its_coordinator_instructed(self):
+        (self.home / "office.json").write_text(json.dumps({"hibernate": {"maxSessions": 1, "capIdleHours": 2}}))
+        three_h = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3 * 3600))
+        self.transcript(S1, at=three_h)
+        recent = time.time() - 3 * 3600
+        told = self.person(boss={"relation": "adopted", "instructed": True}, since=recent)
+        mine = self.person(boss={"relation": "adopted"}, since=recent)
+        cfg = hibstate.config()
+        ctx = self.ctx(cfg=cfg, capFloor=2.0, live=5)
+        self.assertIn("쉰 지", hibernate.why_not(told, ctx))
+        self.assertIsNone(hibernate.why_not(mine, ctx))
+
+    def test_the_automatic_mode_leaves_the_caps_candidates_to_a_press(self):
+        cands = [{"sid": S1, "why": "cap"}, {"sid": S2, "why": "idle"}]
+        slept = []
+        with mock.patch.object(hibernate, "config", return_value={**hibstate.config(), "auto": "always"}), \
+                mock.patch.object(hibernate, "candidates", return_value=cands), \
+                mock.patch.object(hibernate, "context", return_value={}), \
+                mock.patch.object(hibernate, "sleep", side_effect=lambda p, ctx, extra=None: (slept.append(p["id"]), (200, {}))[1]):
+            out = hibernate.auto_tick(lambda: [self.person(), self.person(S2)])
+        self.assertEqual((out, slept), ([S2], [S2]))
+
     def test_config_defaults_are_the_persons_picks(self):
         cfg = hibstate.config()
         self.assertEqual((cfg["auto"], cfg["pane"], cfg["idleHours"]), ("pressure", "close", 12.0))
