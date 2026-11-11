@@ -15,7 +15,7 @@ import { activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseN
 import { treeRows } from '../hooks/views/home'
 import { filterPalette, paletteItems } from '../hooks/lib/palette'
 import { helpSections } from '../hooks/lib/help'
-import { displayName, healDue, healShown, healStuck, healTargets, HEAL_GAPS_MS, HEAL_MAX_TRIES, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, resultText } from '../hooks/lib/mcpheal'
+import { displayName, healDue, healShown, healStuck, healTargets, healWanted, HEAL_GAPS_MS, HEAL_MAX_TRIES, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, resultText, serversNamed } from '../hooks/lib/mcpheal'
 import { goalChip, goalVisible, parseGoal } from '../hooks/lib/goal'
 import { blockOf, nowAllowed, resumePrompt } from '../hooks/lib/unblock'
 import { accountStrip, bar, cacheHit, effortMix, hookName, modelStrip, seriesBy, parseCcoQuota, parseJev, parseQuota, parseUsage, share, shortModel, span, sparkline, until, usd, type Usage } from '../hooks/lib/usage'
@@ -1903,4 +1903,16 @@ test('mcp heal: a server that failed at this session\'s start is a target; a liv
   expect(healTargets([], ['claude.ai Slack', 'portal'], ['portal', 'claude_ai_Gmail'])).toEqual(['claude.ai Slack'])
   expect(healTargets(['claude_ai_Slack'], ['claude.ai Slack'], [])).toEqual(['claude_ai_Slack'])
   expect(healTargets(['rea'], ['claude.ai Slack'], ['claude_ai_Slack'])).toEqual(['rea'])
+})
+
+test('mcp heal: only servers this session used are reconnected on their own', () => {
+  // Live 2026-11-11: /mcp reconnect rows for servers the person never uses.
+  expect(serversNamed('select:mcp__claude_ai_Slack__slack_read_thread,mcp__claude_ai_Slack__slack_send_message,Read')).toEqual(['claude_ai_Slack'])
+  expect(serversNamed('+slack mcp__portal__secrets_list send')).toEqual(['portal'])
+  expect(serversNamed('notebook jupyter')).toEqual([])
+  expect(serversNamed(undefined)).toEqual([])
+  const used = new Set(['claude_ai_Slack'])
+  expect(healWanted(['claude.ai Slack', 'claude.ai Claude Data', 'rea'], used)).toEqual(['claude.ai Slack'])
+  expect(healWanted(['claude_ai_Slack'], used)).toEqual(['claude_ai_Slack'])
+  expect(healWanted(['portal'], new Set())).toEqual([])
 })
