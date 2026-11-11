@@ -647,6 +647,16 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual(command.repo_name(str(self.tmp / "slug-wt")), "main")
         self.assertIsNone(command.label(None, {}))
 
+    def test_a_first_prompt_handed_on_by_a_coordinator_names_the_work_not_the_hand_off(self):
+        # slx-ask-judge showed as `사람의 말(원문): "slx를 좀 개선할수…`.
+        self.assertEqual(command.unrelay('사람의 말(원문): "slx를 좀 개선할수 있을거 같아" (office-x): 이어서'), "slx를 좀 개선할수 있을거 같아")
+        self.assertEqual(command.unrelay('[coordinator] 사람의 말(원문, 앞선 요청): "warren 다시 로드"'), "warren 다시 로드")
+        self.assertEqual(command.unrelay("worker 보고(원문): \"SKILL tsc(worktree)\" 고쳐"), "SKILL tsc(worktree)")
+        self.assertEqual(command.unrelay('[coordinator] #130 rebase'), "#130 rebase")
+        self.assertEqual(command.unrelay('그냥 "말" 그대로'), '그냥 "말" 그대로')
+        with mock.patch.object(command, "first_prompt", return_value='사람의 말(원문): "slx를 좀 개선할수 있을거 같아 무조건 다 올리는게 아니라"'):
+            self.assertEqual(command.label(WORKER, {}, None, {"repo": "keyolk/slx"}), "slx · slx를 좀 개선할수 있을거 같아 무조건 다 올리는게…")
+
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
         with mock.patch.object(office, "inbox_put", side_effect=self.put):
