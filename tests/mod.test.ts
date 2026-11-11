@@ -3788,3 +3788,27 @@ test('coordinator: after a reload with /god off in the ledger, god stays off', a
   expect(store['god:sid-1']).toBeUndefined()
   await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
 })
+
+test('coordinator: a timed /god already on becomes the coordinator default on /coord on; /god off then leaves the coordinator policy', async ($, on) => {
+  const box = { json: JSON.stringify({ mode: 'pr-merge', capabilities: {}, gh_merge_repos: ['acme/infra'] }) }
+  const store: Record<string, unknown> = {}
+  const runs = baseStubs(on, { policyBox: box, store })
+  on('tool.call', () => ({ result: {} }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('session.end', (_$: any, e: any) => ({ sessionId: e.sessionId }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const policyRuns = () => runs.filter((a) => String(a[1] ?? '').endsWith('session_policy.py') && a[2] !== 'show').map((a) => a.slice(2).join(' '))
+  const cmd = (command: string, args: string) => $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } } as any) as any
+  await cmd('god', '15')
+  box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
+  await cmd('coord', 'on')
+  expect(store['god:sid-1']).toMatchObject({ until: 0, coord: true })
+  // Its 15 minutes pass: nothing is put back.
+  const n = policyRuns().length
+  for (let i = 0; i < 4; i++) await clock.advance(5 * 60_000)
+  expect(policyRuns().slice(n)).toEqual([])
+  await cmd('god', 'off')
+  expect(policyRuns().slice(n)).toEqual(['mode default', 'block gh_merge', 'block prod_eks_write', 'block slack_send', 'block tmux_window_escape', 'allow auto_continue'])
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sid-1', resume: {} } as any)
+})
