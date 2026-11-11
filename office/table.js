@@ -41,6 +41,7 @@ const TABLE_CSS = `
 #command table.turn tr.dim td { opacity: .5; }
 #command table.turn tr.dim.sel td { opacity: .85; }
 #command table.turn td.who .slug { margin-left: 0; }
+#command table.turn td.who .hu { display: block; font-size: 11px; color: #8a5a00; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #command table.turn .end { font: 11px -apple-system, sans-serif; border: 1px solid rgba(59,42,53,.4); border-radius: 8px; background: #fff; padding: 0 5px; cursor: pointer; margin-left: 4px; }
 #command table.turn tr.relay td { cursor: default; padding: 2px 6px 6px 14px; box-shadow: inset 4px 0 0 #e0793a; }
 #command table.turn tr.relay:hover td { background: transparent; }
@@ -141,7 +142,7 @@ function tblLegacy(d) {
   }
   const seen = new Set(rows.map((r) => r.key))
   for (const c of d.coordinators || []) {
-    for (const r of [{ sid: c.sid, name: c.name, summary: c.summary, isCoord: true, state: c.state, live: c.live }, ...(c.workers || []).filter((w) => w.sid).map((w) => ({ sid: w.sid, name: w.slug, summary: w.summary, relation: w.relation || 'owned', state: w.state, live: w.live, coord: c.sid, status: w.status }))]) {
+    for (const r of [{ sid: c.sid, name: c.name, summary: c.summary, isCoord: true, state: c.state, live: c.live }, ...(c.workers || []).filter((w) => w.sid).map((w) => ({ sid: w.sid, name: w.slug, summary: w.summary, relation: w.relation || 'owned', state: w.state, live: w.live, coord: c.sid, status: w.status, headsUp: w.headsUp }))]) {
       if (seen.has('s:' + r.sid)) continue
       seen.add('s:' + r.sid)
       rows.push({ key: 's:' + r.sid, decisions: [], reviews: [], ...r })
@@ -332,6 +333,12 @@ const tblCmd = (R) => {
   return m ? m[1] : ''
 }
 
+// The newest Heads up band on the session's pane (hooks/lib/headsup.ts,
+// copied by the coordinator's tick): a finding about its work, one small
+// line under the row's name. The coordinator is woken for it; this is for
+// the person to see that it was there.
+const tblHeadsUp = (r) => r.headsUp && r.headsUp.text ? '<span class="hu" title="' + cmdEsc('Heads up · ' + r.headsUp.text) + '">✦ ' + cmdEsc(r.headsUp.text) + '</span>' : ''
+
 // A trigger's own row that slx judged to ask nothing of the person: drawn faint.
 const tblDim = (R) => tblOwnSlx(R) && R.xs.length > 0 && !!R.xs[0].dim && typeof slxWhy === 'function'
 
@@ -349,11 +356,11 @@ function tblRow(R, other) {
   if (doing) {
     const who = [r.isCoord ? '🎖' : '', tblName(r), slug, R.row.status && R.row.status.kind ? TBL_KIND[R.row.status.kind] || R.row.status.kind : ''].filter(Boolean).join(' · ')
     return '<tr data-row="' + cmdEsc(r.key) + '" class="act' + (cmd.row === r.key ? ' sel' : '') + '"><td class="who"><b class="do" title="' + cmdEsc(doing) + '">' + tblLinkify(doing) + '</b>'
-      + '<span class="m">' + cmdEsc(who) + '</span></td>'
+      + '<span class="m">' + cmdEsc(who) + '</span>' + tblHeadsUp(r) + '</td>'
       + '<td class="st">' + tblCells(R) + cp + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
   }
   return '<tr data-row="' + cmdEsc(r.key) + '"' + (faint ? ' title="' + cmdEsc(slxWhy(R.xs[0])) + '"' : '') + ' class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + (faint ? ' dim' : '') + (R.needs && tblIsAct(R) ? ' act' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
-    + (slug || sub || ask ? '<span class="m">' + (slug ? '<span class="slug">' + cmdEsc(slug) + '</span> ' : '') + cmdEsc([sub, ask].filter(Boolean).join(' · ')) + '</span>' : '') + '</td>'
+    + (slug || sub || ask ? '<span class="m">' + (slug ? '<span class="slug">' + cmdEsc(slug) + '</span> ' : '') + cmdEsc([sub, ask].filter(Boolean).join(' · ')) + '</span>' : '') + tblHeadsUp(r) + '</td>'
     + '<td class="st">' + tblCells(R) + cp + end + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
 }
 

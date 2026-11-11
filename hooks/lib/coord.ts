@@ -27,6 +27,7 @@ import type { Cap, CapValue, Policy } from './policy'
 import { ONE_BROWSER } from './webpane'
 import { grantRule } from './grant'
 import { sameStatus, statusLine, type Status } from './status'
+import { parseHeadsUp } from './headsup'
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
@@ -85,6 +86,14 @@ export type Worker = {
   // state/office/status/<sid>.json): shown in coord_roster, on its turn's
   // wake and on its office row.
   status?: Status
+  // The Heads up band last read off its pane (lib/headsup.ts), shown on its
+  // office row; headsUpTold: the sentences already told the coordinator,
+  // newest last, so one band is told once (and A→B→A not again).
+  headsUp?: { text: string; at: number }
+  headsUpTold?: string[]
+  // When the question its last turn ended on (state/office/asks/<sid>.json)
+  // was told: a file's `at` is told once.
+  askTold?: number
 }
 
 export type LogEntry = { at: number; kind: 'order' | 'spawn' | 'adopt' | 'release' | 'close' | 'send' | 'answer' | 'event' | 'limits'; text: string }
@@ -369,6 +378,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     STATUS_RULE + '\n' +
     '- When you finish a result or research brief, report `DONE <brief path>`; a result brief with no decision question you also mark done yourself: `brief done <brief> --result "<one line>"`, so the office lists it under ✅ 최근 완료.\n' +
     '- When the person must decide (two or more options, a step hard to undo, a scope call), ask on a decision brief. ' + DECISION_BRIEF + ' Add `--coordinator ' + (coordSid ?? '<coordinator sid>') + ' --worker ' + slug + '`, and send `QUESTION <one line> — <brief path>` (or `BLOCKED <why> — <brief path>`). Never run `brief show`: the decision shows in the office\'s 지휘 view, and the answer comes back as a `[coordinator]` prompt. Only a yes/no on one small step that is easy to undo goes as a plain QUESTION.\n' +
+    "- When the person's judgment is needed, do not ask in your answer's words alone (\"정해 주세요\", \"할까요?\"): declare `status` blocked with kind question and ask on a decision brief. Whether to go on with a step inside your task's scope is not a question: go on with it.\n" +
     '- Ask the person once per task where you can: early on, list every open question the work raises, and go on with what needs no answer; then ask them together, one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path. Ask alone and at once only what stops the work entirely.\n' +
     grantRule(briefGrant) + '\n' +
     REVIEW_REQUEST_RULE + '\n' +
@@ -465,7 +475,7 @@ export function parsePanes(out: string): PaneSeen[] {
 // call a permission ask waits on (lib/asks.ts).
 export const PANES_FMT = '#{pane_id}\t#{window_id}\t#{@cc_pane_session}\t#{@cc_pane_state}\t#{?@cc_pane_attention,#{@cc_pane_attention},#{@cc_attention}}\t#{pane_current_path}\t#{@cc_human_at}\t#{@cc_pane_asks}'
 
-export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone' | 'back' | 'mcp'; text: string; wake: boolean; server?: string }
+export type Change = { slug: string; sid: string; kind: 'ask' | 'turn' | 'gone' | 'back' | 'mcp' | 'headsup' | 'person'; text: string; wake: boolean; server?: string }
 const GONE = 'its session is gone'
 const BACK = 'its session is back (taken for gone, it was alive)'
 
@@ -650,6 +660,49 @@ export function mcpWakes(l: Ledger, files: ReadonlyMap<string, string | undefine
   return { ledger: { ...l, mcpDown: self, workers }, changes }
 }
 
+// The Heads up bands on the workers' screens (`screens`: sid → its
+// capture; a sid not in it was not read this tick and keeps what it had).
+// A new sentence wakes the coordinator once: `<who>: heads-up: <sentence>`.
+// A band gone from the screen clears headsUp (the office row) but not what
+// was told. A quiet worker's band is recorded, not told.
+export const HEADSUP_TOLD_MAX = 20
+export function headsUpWakes(l: Ledger, screens: ReadonlyMap<string, string>, now: number, sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
+  const changes: Change[] = []
+  const workers = l.workers.map((w) => {
+    if (w.endedAt || !screens.has(w.sid)) return w
+    const text = parseHeadsUp(screens.get(w.sid)!)
+    if (!text) return w.headsUp ? { ...w, headsUp: undefined } : w
+    if (w.headsUp?.text === text) return w
+    const told = w.headsUpTold ?? []
+    const fresh = !told.includes(text)
+    if (fresh) changes.push({ slug: w.slug, sid: w.sid, kind: 'headsup', text: headsUpText(w.slug, text, sums.get(w.sid)), wake: !quiet(w) })
+    return { ...w, headsUp: { text, at: now }, headsUpTold: fresh ? [...told, text].slice(-HEADSUP_TOLD_MAX) : told }
+  })
+  return workers.every((w, i) => w === l.workers[i]) ? { ledger: l, changes } : { ledger: { ...l, workers }, changes }
+}
+export function headsUpText(slug: string, sentence: string, summary?: string): string {
+  return who(slug, summary) + ': heads-up: ' + sentence
+}
+
+// The questions the workers' last turns ended on in words only (`asks`: sid
+// → its asks file, parsed; register.ts askExport writes it). Each file's
+// `at` is told once: `<who>: 사람에게 물음: "<question>"`. An ask from before
+// the worker's newest turn is old news: the file is cleared by a turn that
+// asked nothing, so one still there is its last turn's.
+export function personAskWakes(l: Ledger, asks: ReadonlyMap<string, { text: string; at: number } | undefined>, sums: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; changes: Change[] } {
+  const changes: Change[] = []
+  const workers = l.workers.map((w) => {
+    const a = asks.get(w.sid)
+    if (w.endedAt || !a || a.at <= (w.askTold ?? 0) || a.at < w.at) return w
+    changes.push({ slug: w.slug, sid: w.sid, kind: 'person', text: personAskText(w.slug, a.text, sums.get(w.sid)), wake: !quiet(w) })
+    return { ...w, askTold: a.at }
+  })
+  return workers.every((w, i) => w === l.workers[i]) ? { ledger: l, changes } : { ledger: { ...l, workers }, changes }
+}
+export function personAskText(slug: string, question: string, summary?: string): string {
+  return who(slug, summary) + ': 사람에게 물음: "' + question.replace(/"/g, "'") + '"'
+}
+
 // The worker a [coord] line is about: its slug at the start (`fix: …`,
 // `fix (pane …`) or in the parentheses after a summary (`… (fix): …`,
 // `… (fix, pane …`). The newest worker of that slug.
@@ -686,6 +739,12 @@ export function current(c: Change, l: Ledger, now: number): boolean {
   if (c.kind === 'gone') return !!w.endedAt
   if (w.endedAt) return false
   if (c.kind === 'back') return true
+  // A finding stays news after the band is dismissed: the person may have
+  // pressed 0 on it, which is what this line is for.
+  if (c.kind === 'headsup') return true
+  // Asked and not answered: the worker has not started a turn since (it
+  // would be working, or the file cleared and askTold kept).
+  if (c.kind === 'person') return w.state !== 'working'
   if (c.kind === 'ask') return w.attention === 'ask' || w.attention === 'action'
   return rested(w)
 }
@@ -771,6 +830,8 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
     "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane, and it is yours to answer, not the person's: never hand it on as `권한 확인 N건 대기`. 1. Read the dialog and its full command: `tmux capture-pane -p -J -t %N`. 2. Check what the command really does: `rm` of a symlink removes only the link; a commit or push of its own branch inside its own worktree is safe; a read or write inside its cwd, ~/research/<slug> or ~/briefs is safe. 3. When it is safe, call `coord_answer` with the slug, option 1 (yes, this time only; never an \"always allow\" option) and expect = a piece of the command you checked, then say in chat in one line what you allowed. 4. Ask the person on a decision brief instead, and leave the dialog up, when it writes to prod, sends anything outside this machine (Slack, mail, a PR comment on someone else's repository), deletes real data, touches credentials or secrets, or changes a session policy. When a folder outside its cwd is the cause, answer this one and close and respawn it with add_dirs before its next task.",
+    "- `[coord] <summary> (<slug>): heads-up: <sentence>` is the Heads up band Claude Code's side agent drew in that worker's pane: a finding about its work (a check it skipped, a step out of order, an answer that came out empty). It is not a notice to clear by pressing 0. Check whether it is true (the worker's diff, report, brief or pane). When it is, fix it: tell the worker with `coord_send`, or put it on a brief when the person must decide. When it does not apply, tell the person in one line why. The office shows the newest one on the worker's row (✦).",
+    "- `[coord] <summary> (<slug>): 사람에게 물음: \"<question>\"` is a worker's turn that ended asking the person in words only, with no brief and no blocked:question status: the question sits in its pane where nobody may look. Do not leave it. When it is inside the scope the person already asked for (go on, which of two equal ways, send the report), answer it yourself with `coord_send`. When it is a real judgment, put it on a decision brief for the person (or have the worker do so) and say so in one line.",
     "- `[coord] <summary> (<slug>): 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
     "- `[coord] <summary> (<slug>): MCP <server> 끊김 (<why>)` (`coordinator: MCP …` for your own session) is an MCP server that session's cc-mods could not reconnect on its own: it keeps retrying (1, 2, 4 … 30 minutes apart), and the office shows 🔌 on that session's row with a 다시 연결 button. Tell the person once in chat `MCP 끊김: <server> (<who>)` with the why. When the why says 이름 매핑 실패, that is a cc-mods bug: route a fix with its text. Do not tell the worker to reconnect it, and do not run /mcp for it.",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',

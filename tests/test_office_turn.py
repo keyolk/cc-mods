@@ -37,6 +37,15 @@ class TurnTest(unittest.TestCase):
         # A status asks nothing of the person: the row does not need them for it.
         self.assertEqual(rows[OWNED]["needKeys"], [])
 
+    def test_a_worker_row_carries_its_heads_up_and_it_asks_nothing_of_the_person(self):
+        hu = {"text": "2FA 중계가 사이트를 확인하지 않습니다", "at": 1794299622173}
+        coords = [{"sid": COORD, "name": "cc-mods-d9", "workers": [{"slug": "fix", "sid": OWNED, "headsUp": hu}, {"slug": "g", "sid": ADOPTED}]}]
+        rows = {r["sid"]: r for r in turn.table([], [], [], coords, now=1000)}
+        self.assertEqual(rows[OWNED]["headsUp"], hu)
+        self.assertIsNone(rows[ADOPTED].get("headsUp"))
+        # The coordinator is woken for it; the row does not need the person.
+        self.assertEqual(rows[OWNED]["needKeys"], [])
+
     def test_a_worker_blocked_on_the_person_by_its_status_needs_them(self):
         N = 1794410000
         def need(st, **kw):
