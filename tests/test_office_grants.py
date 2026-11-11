@@ -44,9 +44,10 @@ class GrantsCase(BriefsCase):
             "import json, os, sys\n"
             f"open({str(self.calls)!r}, 'a').write(json.dumps([os.environ.get('CLAUDE_CODE_SESSION_ID'), *sys.argv[1:]]) + '\\n')\n"
         )
-        p = mock.patch.object(grants, "HOOKS", str(self.hooks) + "/")
-        p.start()
-        self.addCleanup(p.stop)
+        for attr, val in (("HOOKS", str(self.hooks) + "/"), ("OPEN_FILE", str(self.tmp / "grants-open.json"))):
+            p = mock.patch.object(grants, attr, val)
+            p.start()
+            self.addCleanup(p.stop)
         self.ledger([{"slug": "daily", "sid": WORKER, "relation": "owned"}])
 
     def policy_calls(self) -> list:
@@ -134,6 +135,13 @@ class PressTest(GrantsCase):
         self.assertEqual(command.answer(f, "q1", "보내기", "", self.put)[0], 409)
         self.assertEqual(grants.live(), [])
 
+    def test_a_worker_of_that_slug_under_another_coordinator_is_not_the_grantee(self):
+        (self.coords / "other.json").write_text(json.dumps({"sid": "d0000000-0000-0000-0000-000000000004", "on": True, "workers": [{"slug": "dup", "sid": OTHER}]}))
+        self.ledger([{"slug": "daily", "sid": WORKER, "relation": "owned"}])
+        f = self.ask(worker="dup")
+        self.assertEqual(command.answer(f, "q1", "보내기", "", self.put, seen=self.drawn(f)["digest"])[0], 409)
+        self.assertEqual(grants.live(), [])
+
     def test_no_live_worker_of_that_slug_no_grant(self):
         f = self.ask(worker="gone")
         code, out = command.answer(f, "q1", "보내기", "", self.put, seen=self.drawn(f)["digest"])
@@ -192,6 +200,18 @@ class RedeemTest(GrantsCase):
     def test_done_for_a_channel_it_did_not_open_leaves_the_policy_alone(self):
         self.assertEqual(grants.redeem({"sid": WORKER, "kind": "slack_send", "channel": CH, "done": True})[0], 200)
         self.assertEqual(self.policy_calls(), [])
+
+    def test_a_channel_left_open_by_a_stopped_office_is_closed_by_the_next(self):
+        self.granted()
+        self.assertEqual(self.redeem()[0], 200)
+        self.assertEqual(json.loads(pathlib.Path(grants.OPEN_FILE).read_text()), [WORKER + " " + CH])
+        # The office stops: its timers and memory are gone.
+        for t in grants._open.values():
+            t.cancel()
+        grants._open.clear()
+        self.assertEqual(grants.close_leftovers(), [WORKER + " " + CH])
+        self.assertEqual(self.policy_calls()[-1], [WORKER, "inherit", "slack_send", "--scope", CH])
+        self.assertEqual(json.loads(pathlib.Path(grants.OPEN_FILE).read_text()), [])
 
     def test_a_grant_expires(self):
         self.granted()
@@ -266,20 +286,26 @@ class DialogKeyTest(unittest.TestCase):
         p.start()
         self.addCleanup(p.stop)
 
-    def test_the_drawn_dialog_is_answered(self):
-        code, _ = office.act({"sid": WORKER, "kind": "key", "value": "1", "question": "Do you want to proceed?", "label": "Yes"})
+    def drawn(self) -> dict:
+        return office.dialog(self.screen)
+
+    def test_the_drawn_dialog_shows_what_it_asks_and_is_answered(self):
+        d = self.drawn()
+        self.assertEqual((d["question"], d["about"]), ("Do you want to proceed?", ["Bash command", "rm -rf node_modules"]))
+        code, _ = office.act({"sid": WORKER, "kind": "key", "value": "1", "digest": d["digest"], "label": "Yes"})
         self.assertEqual(code, 200)
         self.assertEqual(self.run.call_args[0][0], ["tmux", "send-keys", "-t", "%9", "1"])
 
-    def test_a_dialog_that_changed_since_the_drawing_gets_no_key(self):
-        self.screen = ["Slack send", "Do you want to send it?", "❯ 1. Yes", "  2. No"]
-        code, out = office.act({"sid": WORKER, "kind": "key", "value": "1", "question": "Do you want to proceed?", "label": "Yes"})
+    def test_the_next_dialog_with_the_same_question_and_options_but_another_command_gets_no_key(self):
+        d = self.drawn()
+        self.screen = ["Bash command", "  git push --force origin main", "Do you want to proceed?", "❯ 1. Yes", "  2. No"]
+        code, out = office.act({"sid": WORKER, "kind": "key", "value": "1", "digest": d["digest"], "label": "Yes"})
         self.assertEqual(code, 409)
         self.assertIn("changed", out["error"])
         self.run.assert_not_called()
 
     def test_a_press_that_names_nothing_it_saw_gets_no_key(self):
-        self.assertEqual(office.act({"sid": WORKER, "kind": "key", "value": "1"})[0], 409)
+        self.assertEqual(office.act({"sid": WORKER, "kind": "key", "value": "1", "label": "Yes"})[0], 409)
         self.run.assert_not_called()
 
 

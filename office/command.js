@@ -114,6 +114,7 @@ const CMD_CSS = `
 #command .opt.armed { outline: 3px solid #2a2033; }
 #command .opt small { display: block; font: 11px -apple-system, sans-serif; color: #5a5070; }
 #command .grant { margin: 4px 0 2px; padding: 6px 8px; border: 1px solid #c9a227; border-radius: 6px; background: #fffaf0; font: 12px -apple-system, sans-serif; color: #3a2f10; }
+#command .about { margin: 4px 0; padding: 4px 6px; background: #f4f1fa; border-radius: 4px; white-space: pre-wrap; font: 11px ui-monospace, monospace; max-height: 120px; overflow: auto; }
 #command .grant pre { margin: 4px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font: 11px ui-monospace, monospace; }
 #command .key { display: inline-block; min-width: 16px; margin-right: 5px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; vertical-align: 1px; }
 #command .row { display: flex; gap: 6px; align-items: center; }
@@ -519,8 +520,9 @@ function cmdRenderDoc() {
 // (sent as that key), else the card's quick replies (sent as a reply).
 function cmdChoices(a) {
   if (!a || a.error) return []
-  // question and label: what the person saw, checked against the screen at the press.
-  if (a.dialog) return a.dialog.options.map((o) => ({ label: o.label, body: { kind: 'key', value: String(o.n), question: a.dialog.question, label: o.label } }))
+  // digest and label: what the person saw (what it asks, the question, the
+  // options), checked against the screen at the press.
+  if (a.dialog) return a.dialog.options.map((o) => ({ label: o.label, body: { kind: 'key', value: String(o.n), digest: a.dialog.digest, label: o.label } }))
   return (a.suggestions || []).map((t) => ({ label: t, body: { kind: 'reply', value: t } }))
 }
 
@@ -577,7 +579,7 @@ function cmdRenderCall(bar, doc, dec, s) {
   const chs = cmdChoices(a)
   dec.innerHTML = '<div class="m" style="margin-bottom:4px">' + cmdEsc(['→ 이 세션에 직접 (coordinator를 거치지 않음)', c && c.boss ? '🎖 ' + c.boss + '의 worker' : '', c ? '' : '지금은 기다리지 않음'].filter(Boolean).join(' · ')) + '</div>'
     + (a.inbox ? '<div class="m" style="margin-bottom:4px">📨 앞서 보낸 답이 아직 전달 전: ' + cmdEsc(a.inbox.text) + '</div>' : '')
-    + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div><div class="opts"></div>'
+    + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div>' + (a.dialog && a.dialog.about && a.dialog.about.length ? '<pre class="about">' + cmdEsc(a.dialog.about.join('\n')) + '</pre>' : '') + '<div class="opts"></div>'
     // A choice drawn on its screen takes a key, not a prompt (as on the card).
     + (a.dialog ? '<div class="m" style="margin-top:4px">권한 확인 창은 글로 답할 수 없습니다: 위 선택지를 누르거나, 그 pane에서 답하세요 · G로 이동</div>' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · ⌥Enter 메모로 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다 · ⌥Enter: 보내지 않고 메모로 남깁니다"><button class="act memo" title="보내지 않고 이 세션의 메모로 남기기 (⌥Enter)">📝 메모로</button></div>') + '</div>'
   const opts = dec.querySelector('.opts')

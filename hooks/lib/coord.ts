@@ -25,7 +25,7 @@
 
 import type { Cap, CapValue, Policy } from './policy'
 import { ONE_BROWSER } from './webpane'
-import { GRANT_RULE } from './grant'
+import { grantRule } from './grant'
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
@@ -317,7 +317,8 @@ export const DECISION_BRIEF =
 // mode (sandbox off, managed read paths), a dialog nobody watches.
 // `coordSid`: the coordinator's session id, which `brief ask --coordinator`
 // needs so the office sends the person's answer back to it.
-export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string, where?: { cwd: string; addDirs: readonly string[]; outside?: string }, coordSid?: string): string {
+// `briefGrant`: bin/brief-grant's absolute path (the plugin's bin).
+export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string, where?: { cwd: string; addDirs: readonly string[]; outside?: string }, coordSid?: string, briefGrant?: string): string {
   const o = where?.outside
   return (
     brief.trim() +
@@ -326,7 +327,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
     '- When the person must decide (two or more options, a step hard to undo, a scope call), ask on a decision brief. ' + DECISION_BRIEF + ' Add `--coordinator ' + (coordSid ?? '<coordinator sid>') + ' --worker ' + slug + '`, and send `QUESTION <one line> — <brief path>` (or `BLOCKED <why> — <brief path>`). Never run `brief show`: the decision shows in the office\'s 지휘 view, and the answer comes back as a `[coordinator]` prompt. Only a yes/no on one small step that is easy to undo goes as a plain QUESTION.\n' +
     '- Ask the person once per task where you can: early on, list every open question the work raises, and go on with what needs no answer; then ask them together, one `brief ask --new` per question (a brief holds one decision), in one `QUESTION` report with every brief path. Ask alone and at once only what stops the work entirely.\n' +
-    GRANT_RULE + '\n' +
+    grantRule(briefGrant) + '\n' +
     '- When a skill you use fails you (a script fails, its guidance is wrong, a case it does not cover), work around it to finish, and add a line to your READY or BLOCKED report: `SKILL <skill name>: <the problem in one line> — <evidence: the command and its error, or file:line>`. Do not edit the skill here: fixing it is a separate task.\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     ONE_BROWSER + '\n' +
@@ -646,7 +647,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- A report line `SKILL <name>: <problem> — <evidence>` is a skill that failed a worker. Give fixing it to a worker as its own task (route it like any task), with the line and its evidence verbatim, and tell that worker to use the meta:self-enhancer or meta:skill-creator skill. The worker that hit it does not edit the skill. Tell the person in one line.",
     "- A worker's tools reach only its cwd and add_dirs (its ~/research/<slug> always): never tell it to read a path outside them, which stops it at a dialog nobody answers; put a folder it needs in add_dirs at spawn. A worker that needs one sends `QUESTION need <path>`: answer with what it needs, or close and respawn it with add_dirs.",
     "- A repository Claude Code does not trust is not refused: the worker runs in ~/research/<slug> with the worktree as an add-dir (the spawn result says so). Brief it with absolute paths under the worktree and `git -C <worktree>`; that repository's .claude settings (hooks, permissions, MCP) do not apply there. Never write trust (~/.claude.json) for the person.",
-    "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it, and the office's 지휘 view already shows it on that worker's row with its options to press. Do not tell the person to go to the pane, and do not repeat it: say once in chat `권한 확인 N건 대기 (지휘)` with what each asks. When a folder outside its cwd is the cause, close and respawn it with add_dirs instead.",
+    "- A `[coord]` line names a worker as `<summary> (<slug>)`, or by its slug alone while no summary is known; when you tell the person about it, name it the same way. `[coord] <summary> (<slug>, pane %N, window @N): asks: <tool> <target>` is a permission dialog in that worker's pane: coord_send cannot answer it, and the office's 지휘 view already shows it on that worker's row with its options to press. Do not tell the person to go to the pane, and do not repeat it: say once in chat `권한 확인 N건 대기 (지휘)` with what each asks. Only while the office is down (`curl -sf -o /dev/null http://localhost:8796/` fails) name the pane and window instead. When a folder outside its cwd is the cause, close and respawn it with add_dirs instead.",
     "- `[coord] <summary> (<slug>): 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
     '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',
     ONE_BROWSER + ' Tell workers the same when a brief needs a browser.',

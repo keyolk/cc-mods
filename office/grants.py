@@ -19,8 +19,20 @@ on disk:
     here from the text the office showed (never taken from the declaration),
     and the press carries the digest of what the page drew, so a declaration
     changed between drawing and pressing is refused;
-  - the grantee is the worker the coordinator's ledger names for the brief's
-    `worker` slug, not a session id read from the request or the sidecar.
+  - the grantee is the worker the asking coordinator's ledger names for the
+    brief's `worker` slug, not a session id read from the request or the
+    sidecar.
+
+What this does and does not prove. No file a session writes makes a grant:
+grants live in this process, issued only by a POST to /act. That POST needs
+the office token, and the token is not a secret from a session: it is in a
+0600 file of the same user and in the page GET / serves. What stops a session
+from posting a press for itself is cc-mods refusing such commands
+(hooks/lib/grant.ts officeBypass: the token file, the /act and /redeem
+endpoints, office-redeem), the same kind of command guard that refuses a
+session_policy.py self-grant. A session that deliberately works around that
+guard (another spelling of the request, the office pane driven with tweb)
+is not stopped by this module.
 
 Redeeming: the worker's session policy stays slack_send=block. Its send is
 denied by slack_send_guard.py; its cc-mods then asks the office (POST
@@ -53,6 +65,38 @@ MAX_TEXT = 5000  # Slack takes 5000 characters a text element; the POST that car
 _lock = threading.Lock()
 _grants: dict[str, dict] = {}  # id -> grant
 _open: dict[str, threading.Timer] = {}  # "sid channel" -> the timer that closes it
+# The channels opened, kept on disk too: an office stopped while one was open
+# (a restart for new code) would leave it in that session's policy for good,
+# so the next office closes what is listed there when it starts.
+OPEN_FILE = os.path.expanduser("~/.claude/state/office/grants-open.json")
+
+
+def _save_open() -> None:
+    try:
+        os.makedirs(os.path.dirname(OPEN_FILE), exist_ok=True)
+        tmp = OPEN_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(sorted(_open), f)
+        os.replace(tmp, OPEN_FILE)
+    except OSError:
+        pass
+
+
+def close_leftovers() -> list[str]:
+    """Close the channels a previous office opened and never closed."""
+    try:
+        with open(OPEN_FILE) as f:
+            keys = [k for k in json.load(f) if isinstance(k, str)]
+    except (OSError, ValueError):
+        return []
+    done = []
+    for k in keys:
+        sid, _, ch = k.partition(" ")
+        if SID.match(sid) and CHANNEL.match(ch) and policy(sid, ["inherit", "slack_send", "--scope", ch]):
+            done.append(k)
+    with _lock:
+        _save_open()
+    return done
 
 
 def text_hash(text: str) -> str:
@@ -129,7 +173,7 @@ def why_not(sid: str, channel: str, thread, text: str) -> str:
     instead of retrying the same thing."""
     gs = [g for g in live(sid) if g["kind"] == "slack_send"]
     if not gs:
-        return "no approved send for this session (ask the person on a brief with bin/brief-grant)"
+        return "no approved send for this session (ask the person on a brief with brief-grant)"
     ch = str(channel or "").strip().upper()
     same = [g for g in gs if g["channel"] == ch]
     if not same:
@@ -154,11 +198,17 @@ def close(sid: str, channel: str) -> bool:
     open (a scope the person granted with /policy) is left alone."""
     key = sid + " " + channel
     with _lock:
-        t = _open.pop(key, None)
+        t = _open.get(key)
     if not t:
         return True
     t.cancel()
-    return policy(sid, ["inherit", "slack_send", "--scope", channel])
+    ok = policy(sid, ["inherit", "slack_send", "--scope", channel])
+    if ok:
+        with _lock:
+            if _open.get(key) is t:
+                del _open[key]
+            _save_open()
+    return ok
 
 
 def redeem(body: dict) -> tuple[int, dict]:
@@ -191,6 +241,7 @@ def redeem(body: dict) -> tuple[int, dict]:
     with _lock:
         old = _open.pop(key, None)
         _open[key] = t
+        _save_open()
     if old:
         old.cancel()
     t.start()

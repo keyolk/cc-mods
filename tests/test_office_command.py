@@ -916,11 +916,11 @@ class CommandKeysTest(unittest.TestCase):
             press('2'); const armed = cmd.armed
             press('Enter')
             // A choice drawn on its screen is a key, not a reply.
-            calls({ dialog: { question: 'Proceed?', options: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }] }, suggestions: [] })
+            calls({ dialog: { question: 'Proceed?', digest: 'd1', options: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }] }, suggestions: [] })
             press('1'); press('Enter')
             return [nine, early, armed, replies]
         """)
-        self.assertEqual(got, [False, False, {"call": "s1", "i": 1}, [["s1", {"kind": "reply", "value": "아니요"}, "아니요"], ["s1", {"kind": "key", "value": "1", "question": "Proceed?", "label": "Yes"}, "Yes"]]])
+        self.assertEqual(got, [False, False, {"call": "s1", "i": 1}, [["s1", {"kind": "reply", "value": "아니요"}, "아니요"], ["s1", {"kind": "key", "value": "1", "digest": "d1", "label": "Yes"}, "Yes"]]])
 
     def test_enter_in_a_sessions_box_sends_the_words_or_the_armed_reply_or_says_what_to_do(self):
         got = self.run_js("""

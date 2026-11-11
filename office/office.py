@@ -18,6 +18,7 @@ Usage: office.py [--port 8787]
 """
 
 import glob
+import hashlib
 from datetime import datetime
 import html
 import json
@@ -45,7 +46,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py")
 
 
 def code_stamp() -> str:
@@ -587,7 +588,13 @@ def dialog(lines: list[str]) -> dict | None:
     if len(opts) < 2 or not cursor or first is None:
         return None
     question = next((tail[j].strip(FRAME) for j in range(first - 1, -1, -1) if tail[j].strip(FRAME) and not OPTION.match(tail[j])), "")
-    return {"question": question[:160], "options": opts}
+    # What it asks about: the box above the question (a permission dialog's
+    # tool and command). Two Bash dialogs in a row share their question and
+    # options, so a press is bound to this, by its digest (act, kind key).
+    about = [tail[j].strip(FRAME) for j in range(max(0, first - 9), first) if tail[j].strip(FRAME) and not OPTION.match(tail[j])]
+    about = [x for x in about if x != question][-6:]
+    digest = hashlib.sha256("\n".join([*about, question, *(o["label"] for o in opts)]).encode()).hexdigest()[:16]
+    return {"question": question[:160], "about": [x[:160] for x in about], "options": opts, "digest": digest}
 
 
 def last_text(sid: str) -> str:
@@ -1468,8 +1475,9 @@ def act(body: dict) -> tuple[int, dict]:
         if not d or not o:
             return 409, {"error": "no dialog with that choice on its screen now"}
         # The press approves what the page drew: a permission dialog that
-        # changed since (the next tool call's) gets nothing.
-        if body.get("question") != d["question"] or body.get("label") != o["label"]:
+        # changed since (the next tool call's, with the same question and
+        # options) gets nothing.
+        if body.get("digest") != d["digest"] or body.get("label") != o["label"]:
             return 409, {"error": "the dialog on its screen changed since the page drew it: look again", "dialog": d}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
@@ -1881,6 +1889,8 @@ def main():
     port = 8787
     if "--port" in sys.argv:
         port = int(sys.argv[sys.argv.index("--port") + 1])
+    # Channels a previous office opened for a redeemed send and never closed.
+    grants.close_leftovers()
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
     srv.serve_forever()

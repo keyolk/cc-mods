@@ -707,7 +707,7 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
   }
   await sh($, ['mkdir', '-p', research])
   const promptFile = research + '/prompt.txt'
-  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid, at, ledger!.sid))
+  await $.fs.write(promptFile, workerPrompt(req.brief, ledger!.name, req.slug, 'python3 ' + $.plugin.root + '/bin/coord-report ' + ledger!.sid, at, ledger!.sid, 'python3 ' + $.plugin.root + '/bin/brief-grant'))
   const uuid = (await sh($, ['uuidgen'])).out.toLowerCase()
   const me = ctx!.pane() ?? ''
   const sess = await sh($, ['tmux', 'display-message', '-p', '-t', me, '#{session_name}\t#{pane_width}\t#{pane_height}'], { timeoutMs: 3000 })

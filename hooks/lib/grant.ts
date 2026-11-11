@@ -8,12 +8,15 @@
 // office checks channel, thread and text, opens that one channel for that
 // session for a few seconds, and the mod retries the call once and closes it.
 //
-// What keeps the model from making a grant itself: the office keeps grants
-// in memory and issues them only in its /act handler; that handler needs the
-// office token. A Bash command that reads the token or calls the office's
-// /act or /redeem (or the redeem script) is refused here, like a
-// session_policy.py self-grant (lib/policy.ts isSelfGrant), and a Read of the
-// token file too.
+// What keeps the model from making a grant itself: no file it writes makes
+// one (the office keeps grants in memory and issues them only in its /act
+// handler). That handler needs the office token, which is not a secret from
+// a session (a 0600 file of the same user, and in the page GET / serves). So
+// the line is drawn here, at the command, as for a session_policy.py
+// self-grant (lib/policy.ts isSelfGrant): a Bash command that reads the token
+// file or calls the office's /act or /redeem (or the redeem script) is
+// refused, and a file tool on the token file too. A session that works
+// around this guard on purpose is not stopped by it (office/grants.py).
 
 import { executedText } from './policy'
 
@@ -48,8 +51,16 @@ export function parseRedeem(stdout: string): RedeemAnswer {
 
 // The deny the worker reads when no grant covers the send: what to do next,
 // never how to lift the gate.
-export function noGrantText(deny: string, why: string | undefined): string {
-  return deny + '\nNo approval from the person covers this send (' + (why ?? 'office not reachable') + '). Put the exact text on your decision brief with `bin/brief-grant <brief> <option> --slack <channel> [--thread <ts>] --text-file <file>` and ask; the person\'s press allows that one send.'
+export function noGrantText(deny: string, why: string | undefined, briefGrant = 'brief-grant'): string {
+  return deny + '\nNo approval from the person covers this send (' + (why ?? 'office not reachable') + '). Put the exact text on your decision brief with `' + briefGrant + ' <brief> <option> --slack <channel> [--thread <ts>] --text-file <file>` and ask; the person\'s press allows that one send.'
+}
+
+// A Slack send to a channel a redeemed send holds open is refused: the
+// guard sees only the channel, and the press allowed one message.
+export function heldDeny(held: ReadonlySet<string>, channel: string): string | undefined {
+  const c = channel.trim().toUpperCase()
+  if (!c || !held.has(c)) return undefined
+  return 'BLOCKED: an approved Slack send to ' + c + ' is going out now; the person approved that one message only. Ask on a decision brief for another.'
 }
 
 // ---- the office token and its endpoints are the person's ---------------------
@@ -106,6 +117,12 @@ export function gateNote(gates: readonly Gate[]): string {
 }
 
 // The worker's own line about it, in its prompt.
-export const GRANT_RULE =
-  '- An outward action your policy blocks (a Slack send) is not yours to unlock and not the person\'s chore: ask for it on your first decision brief. Write the exact message to a file, `brief ask --new …` with an option such as "보내기", then `' +
-  'bin/brief-grant <brief> 보내기 --slack <channel id> [--thread <ts>] --text-file <file>` (in the cc-mods plugin\'s bin) so the office shows that text under the option. When the answer comes back `[granted: …]`, send exactly that text once: cc-mods redeems the press and the send goes through. Never ask the person to change the policy, and never ask twice for what they already approved.'
+// The worker's own line about it, in its prompt. `briefGrant`: the script's
+// absolute path (the plugin's bin), as coord-report goes to the worker.
+export function grantRule(briefGrant = 'brief-grant'): string {
+  return (
+    '- An outward action your policy blocks (a Slack send) is not yours to unlock and not the person\'s chore: ask for it on your first decision brief. Write the exact message to a file, `brief ask --new …` with an option such as "보내기", then `' +
+    briefGrant +
+    ' <brief> 보내기 --slack <channel id> [--thread <ts>] --text-file <file>` so the office shows that text under the option. When the answer comes back `[granted: …]`, send exactly that text once (slack_send_message, message = the file\'s text): cc-mods redeems the press and the send goes through. Never ask the person to change the policy, and never ask twice for what they already approved.'
+  )
+}

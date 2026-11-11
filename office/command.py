@@ -301,8 +301,12 @@ def pending() -> list[dict]:
     return items
 
 
-def _worker_sid(slug: str | None) -> str | None:
+def _worker_sid(slug: str | None, coordinator: str | None = None) -> str | None:
+    """The live worker of that slug: under `coordinator` only, when given
+    (two coordinators may each have a worker of one name)."""
     for d in coord.ledgers():
+        if coordinator and d.get("sid") != coordinator:
+            continue
         for w in d.get("workers") or []:
             if slug and w.get("slug") == slug and not w.get("endedAt") and w.get("sid"):
                 return w["sid"]
@@ -608,7 +612,7 @@ def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = ""
     if act:
         if seen != act["digest"]:
             return 409, {"error": "the action this option allows changed since the page drew it: look again"}
-        grantee = _worker_sid(q["worker"])
+        grantee = _worker_sid(q["worker"], q["coordinator"])
         if not grantee:
             return 409, {"error": "no live worker " + str(q["worker"]) + " to allow this for"}
     path = os.path.join(root(), file)

@@ -2,7 +2,7 @@
 // guard, and the gates a brief names.
 import { expect, test } from 'claude-code/testing'
 
-import { BYPASS_DENY, GRANT_RULE, briefGates, gateNote, noGrantText, officeBypass, officeTokenPath, parseRedeem, redeemRequest } from '../hooks/lib/grant'
+import { BYPASS_DENY, briefGates, grantRule, heldDeny, gateNote, noGrantText, officeBypass, officeTokenPath, parseRedeem, redeemRequest } from '../hooks/lib/grant'
 import { coordRules, emptyLedger, workerPrompt } from '../hooks/lib/coord'
 
 const DENY = 'BLOCKED by session policy: slack_send=block. Target C03GA4WGBCK is not allowed.'
@@ -22,6 +22,13 @@ test('only a policy deny of a plain send is redeemable', () => {
   expect(redeemRequest('', SEND, { channel_id: 'C1', message: 'hi' }, DENY)).toBeUndefined()
 })
 
+test('while a redeemed send holds its channel open, another send there is refused', () => {
+  const held = new Set(['C03GA4WGBCK'])
+  expect(heldDeny(held, 'c03ga4wgbck')).toContain('one message only')
+  expect(heldDeny(held, 'C0999ZZZZ9')).toBeUndefined()
+  expect(heldDeny(new Set(), 'C03GA4WGBCK')).toBeUndefined()
+})
+
 test('the office answer is ok only on 200 with ok', () => {
   expect(parseRedeem('{"status":200,"ok":true}').ok).toBe(true)
   expect(parseRedeem('{"status":403,"error":"the message differs"}')).toEqual({ ok: false, error: 'the message differs', status: 403 })
@@ -32,7 +39,8 @@ test('the office answer is ok only on 200 with ok', () => {
 test('a send no press covers says how to ask, never how to lift the gate', () => {
   const t = noGrantText(DENY, 'no approved send for this session')
   expect(t.startsWith(DENY)).toBe(true)
-  expect(t).toContain('bin/brief-grant')
+  expect(t).toContain('brief-grant <brief> <option>')
+  expect(noGrantText(DENY, 'x', 'python3 /p/bin/brief-grant')).toContain('`python3 /p/bin/brief-grant <brief>')
   expect(t).not.toContain('/policy')
 })
 
@@ -82,7 +90,9 @@ test("coord_spawn's note names the gates and the one-brief rule, empty without g
 })
 
 test('the worker prompt and the coordinator rules carry the approval rules', () => {
-  expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid')).toContain(GRANT_RULE)
+  expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid')).toContain(grantRule())
+  // coord_spawn passes the plugin's absolute path, as it does for coord-report.
+  expect(workerPrompt('fix', 'cc-mods-d9', 'x', undefined, undefined, 'sid', 'python3 /p/bin/brief-grant')).toContain('`python3 /p/bin/brief-grant <brief> 보내기 --slack')
   const rules = coordRules(emptyLedger('sid', 'cc-mods-d9', 0))
   expect(rules).toContain('is not asked again')
   expect(rules).toContain("office's 지휘 view already shows it")
