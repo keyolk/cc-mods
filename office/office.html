@@ -1103,6 +1103,19 @@ addEventListener('keypress', (e) => {
 // and the jump to its window. Replies go through that session's cc-mods as
 // the person's own prompt; a dialog choice is its digit key.
 const TOKEN = '__OFFICE_TOKEN__'
+// The code this page was served with (office.py page_stamp). The server can
+// restart on new code with the same token, and the page then ran old code:
+// its presses lacked what the new server checks, and were refused.
+const STAMP = '__OFFICE_STAMP__'
+let stampOff = 0
+function staleStamp(s) {
+  if (!s || s === STAMP) { stampOff = 0; return }
+  // Not under the person's hands: wait while a box has focus (what is typed
+  // would be lost), at most a minute.
+  const a = document.activeElement, typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value
+  if (typing && (stampOff = stampOff || Date.now()) && Date.now() - stampOff < 60000) return
+  toast('↻ office 코드가 바뀌어 페이지를 새로 불러옵니다'); setTimeout(() => location.reload(), 900)
+}
 const card = document.getElementById('card')
 const CARD_MIN_W = 380, CARD_MIN_H = 440
 const CARD_DEFAULT_W = 460, CARD_DEFAULT_H = 500
@@ -3686,7 +3699,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []); staleStamp(j.stamp) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)

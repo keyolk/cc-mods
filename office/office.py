@@ -30,6 +30,7 @@ import threading
 import subprocess
 import sys
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +55,20 @@ def code_stamp() -> str:
 
 
 STAMP = code_stamp()
+PAGE_FILES = ("office.html", "brands.js", "skins.js", "resources.js", "auth.js", "review.js", "crew.js", "look.js", "briefline.js", "slx.js", "table.js", "defer.js", "command.js", "paths.js")
+
+
+def page_stamp() -> str:
+    """The page's code with the server's: a page loaded before either changed
+    runs old code against this server (a press without what it now checks),
+    so the page compares this with the one it was served and reloads."""
+    st = []
+    for n in PAGE_FILES:
+        try:
+            st.append(f"{n}:{int(os.stat(os.path.join(HERE, n)).st_mtime)}")
+        except OSError:
+            pass
+    return STAMP + "|" + ",".join(st)
 FMT = "|".join(
     [
         "#{pane_id}",
@@ -560,6 +575,8 @@ OPTION = re.compile(r"^\s*([❯›>]\s*)?(\d)[.)]\s+(.+?)\s*$")
 # A dialog drawn beside a preview box (AskUserQuestion with a side panel)
 # pads each line out to the box's border: what is left of a line without it.
 FRAME = "│┃║|─━═╭╮╰╯┌┐└┘├┤ \t"
+# The rule Claude Code draws over a dialog (and over its prompt box).
+RULE = re.compile(r"^\s*[─━═╌]{8,}\s*$")
 
 
 def capture(pane: str) -> list[str]:
@@ -570,9 +587,44 @@ def capture(pane: str) -> list[str]:
     return [l.rstrip() for l in out.splitlines()]
 
 
+def _cells(s: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _cut_at(s: str, col: int) -> str:
+    """The part of s left of screen column col (wide characters take two)."""
+    n = 0
+    for i, c in enumerate(s):
+        n += 2 if unicodedata.east_asian_width(c) in "WF" else 1
+        if n > col:
+            return s[:i]
+    return s
+
+
+def unpanel(lines: list[str]) -> list[str]:
+    """The lines without a side panel drawn at the pane's right (a status
+    panel beside the chat, cc-mods' or another plugin's): everything from its
+    border column on. A panel's text changes on its own (request counts,
+    sparklines), so left in, it became a dialog's question and its about, and
+    the digest a press is bound to changed under the person's hand."""
+    cols: dict[int, int] = {}
+    full = [l for l in lines if l.strip()]
+    for l in full:
+        for m in re.finditer("[│┃║]", l):
+            c = _cells(l[: m.start()])
+            cols[c] = cols.get(c, 0) + 1
+    # The border is the one column most lines have a bar at, right of the
+    # middle: a box drawn in the chat has its bars at many columns, a few lines each.
+    width = max((_cells(l) for l in lines), default=0)
+    edge = min((c for c, k in cols.items() if k * 2 >= len(full) and c > width // 3), default=None)
+    if edge is None:
+        return lines
+    return [_cut_at(l, edge).rstrip() for l in lines]
+
+
 def dialog(lines: list[str]) -> dict | None:
     """A numbered choice with a cursor (❯) near the bottom of the screen."""
-    tail = [l for l in lines if l.strip()][-18:]
+    tail = [l for l in unpanel(lines) if l.strip()][-18:]
     opts, cursor, first = [], False, None
     for i, l in enumerate(tail):
         m = OPTION.match(l)
@@ -591,7 +643,10 @@ def dialog(lines: list[str]) -> dict | None:
     # What it asks about: the box above the question (a permission dialog's
     # tool and command). Two Bash dialogs in a row share their question and
     # options, so a press is bound to this, by its digest (act, kind key).
-    about = [tail[j].strip(FRAME) for j in range(max(0, first - 9), first) if tail[j].strip(FRAME) and not OPTION.match(tail[j])]
+    # Only the dialog's own box: it starts under a rule (────), and what is
+    # above that is the chat's scrollback, which changes on its own.
+    top = next((j + 1 for j in range(first - 1, max(-1, first - 10), -1) if RULE.match(tail[j])), max(0, first - 9))
+    about = [tail[j].strip(FRAME) for j in range(top, first) if tail[j].strip(FRAME) and not OPTION.match(tail[j])]
     about = [x for x in about if x != question][-6:]
     digest = hashlib.sha256("\n".join([*about, question, *(o["label"] for o in opts)]).encode()).hexdigest()[:16]
     return {"question": question[:160], "about": [x[:160] for x in about], "options": opts, "digest": digest}
@@ -1470,6 +1525,12 @@ def act(body: dict) -> tuple[int, dict]:
         return 404, {"error": "no such session"}
     pane = me["pane"]  # from tmux, never from the request
     if kind == "key":
+        # A press with no digest comes from a page loaded before the server
+        # learned to bind presses (#108): it is told 403, which every page,
+        # old ones too, takes as "reload me" (staleToken). A 409 here was
+        # only a toast, so the old page kept pressing and nothing moved.
+        if not body.get("digest"):
+            return 403, {"error": "this page is older than the office: reload it", "stale": True}
         d = dialog(capture(pane))
         o = next((o for o in (d or {}).get("options") or [] if str(o["n"]) == str(value)), None)
         if not d or not o:
@@ -1479,7 +1540,9 @@ def act(body: dict) -> tuple[int, dict]:
         # options) gets nothing.
         if body.get("digest") != d["digest"] or body.get("label") != o["label"]:
             return 409, {"error": "the dialog on its screen changed since the page drew it: look again", "dialog": d}
-        subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
+        r = subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
+        if r.returncode:
+            return 502, {"error": "tmux could not send the key to its pane"}
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
         # value: minutes to set it aside for, "speak" for until the person
@@ -1860,7 +1923,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending())}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending()), "stamp": page_stamp()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
@@ -1878,7 +1941,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, skin, "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
-                page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_PREFS__", json.dumps(prefs()).replace("<", "\\u003c").encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
+                page = f.read().replace(b"__OFFICE_STAMP__", page_stamp().encode()).replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_PREFS__", json.dumps(prefs()).replace("<", "\\u003c").encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
                 # Nothing frames the office: a link inside a framed brief that
                 # resolved to "/" once put the whole office in its own frame.
                 return self.send(200, page, "text/html; charset=utf-8", NO_FRAME)
