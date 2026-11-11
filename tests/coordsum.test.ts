@@ -3,7 +3,7 @@
 // answer is kept. No model is called.
 import { expect, test } from 'claude-code/testing'
 
-import { SUM_BATCH, SUM_RETRY_MS, applied, clip, given, parseFirst, parseLast, parseSummaries, parseSums, plan, sumRequest, type SumIn } from '../hooks/lib/coordsum'
+import { SUM_BATCH, SUM_RETRY_MS, applied, clip, fromPerson, given, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, type SumIn } from '../hooks/lib/coordsum'
 import { parsePrompts } from '../hooks/lib/coordroute'
 
 const NOW = 1_800_000_000_000
@@ -74,4 +74,24 @@ test('coordsum: the cache file, and the transcript rows: first prompts skip harn
   expect(parseLast(tail)).toEqual(new Map([['s1', '2026-11-10T07:05:00Z']]))
   // The prompts the router reads are unchanged by the extra column.
   expect(parsePrompts(tail).get('s1')).toEqual(['a', 'b'])
+})
+
+test('coordsum: a coordinator is labelled by the person\'s words, never by its workers\' reports', () => {
+  expect(fromPerson('[worker warren-9c] READY 92e04f0 https://x')).toBeUndefined()
+  expect(fromPerson('READY https://github.com/sendbird/ops-k8s/pull/10341')).toBeUndefined()
+  expect(fromPerson('The cc-mods plugin sent a message:\n[coord] warren …')).toBeUndefined()
+  expect(fromPerson('[brief answer] 2026-11-12-x.html: q1 A')).toBeUndefined()
+  expect(fromPerson('<task-notification>…')).toBeUndefined()
+  expect(fromPerson('[office→coord] (re: 2026-11-12-a.html, worker w) daily check in upload')).toBe('daily check in upload')
+  expect(fromPerson('slx를 좀 개선할수 있을거 같아')).toBe('slx를 좀 개선할수 있을거 같아')
+  const out = [
+    JSON.stringify(['c', '[worker a] READY 1', '2026-11-12T00:40:00Z']),
+    JSON.stringify(['c', 'office 보내기가 안 사라져', '2026-11-12T00:41:00Z']),
+    JSON.stringify(['c', '[review] confirmed a', '2026-11-12T00:42:00Z']),
+    'not json',
+  ].join('\n')
+  const kept = personLines(out)
+  expect(parsePrompts(kept).get('c')).toEqual(['office 보내기가 안 사라져'])
+  // The key moves with the person's newest words, not with each report.
+  expect(parseLast(kept).get('c')).toBe('2026-11-12T00:41:00Z')
 })
