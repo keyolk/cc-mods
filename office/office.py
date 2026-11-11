@@ -2105,6 +2105,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send(404, b"not found", "text/plain")
 
 
+class OfficeServer(ThreadingHTTPServer):
+    # The page asks for its 14 scripts at once, beside /state and /next. The
+    # default backlog (5) is smaller than that: while the office was busy and
+    # slow to accept, the extra connections were reset, the browser got only
+    # some of the scripts, and the 지휘 view stayed empty. 128 holds a burst.
+    request_queue_size = 128
+
+
 def main():
     port = 8787
     if "--port" in sys.argv:
@@ -2113,7 +2121,7 @@ def main():
     grants.close_leftovers()
     threading.Thread(target=_mem_watch, name="mem-watch", daemon=True).start()
     hibernate.start(snapshot, brief=lambda s: command.latest_by_session().get(s))  # memory-pressure sleep (office.json hibernate.auto)
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    srv = OfficeServer(("127.0.0.1", port), Handler)
     print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
     srv.serve_forever()
 
