@@ -230,6 +230,27 @@ def _done_ts(at: str) -> float:
         return 0.0
 
 
+def _done_status(sids: list[str]) -> dict | None:
+    """The newest `done` status among the sessions that made a brief, read from
+    their status files (hooks/lib/status.ts); None when none declared done.
+    `result` is the status's msg, else its step."""
+    best = None
+    d = os.path.expanduser("~/.claude/state/office/status")
+    for sid in sids:
+        if not SID.match(sid):
+            continue
+        try:
+            with open(os.path.join(d, sid + ".json")) as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            continue
+        at = st.get("at") if isinstance(st, dict) else None
+        text = str(st.get("msg") or st.get("step") or "").strip() if isinstance(st, dict) else ""
+        if isinstance(st, dict) and st.get("state") == "done" and isinstance(at, (int, float)) and text and (best is None or at > best["at"]):
+            best = {"at": at, "result": text}
+    return best
+
+
 def briefs() -> list[dict]:
     """Every brief with a sidecar, oldest first (by the date in its name)."""
     out = []
@@ -558,6 +579,17 @@ def view(people: list[dict], ask=None, deps: list[dict] | None = None) -> dict:
             continue
         ts = _done_ts(b["done"]["at"]) or _mtime(b["path"])
         finished.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "by": next((names[s] for s in b["sessions"] if s in names), None), **b["done"], "ts": ts, "old": time.time() - ts > DONE_FOLD_H * 3600})
+    # A result brief with no decision question that a worker finished: the
+    # worker declared `done` with its status tool, and nobody ran `brief done`
+    # (a coordinator forgot, the worker has no such rule). Listed with the
+    # status's own words; a brief marked done by hand wins.
+    for b in briefs():
+        if b["done"] or b["questions"]:
+            continue
+        st = _done_status(b["sessions"])
+        if st:
+            ts = st["at"] / 1000
+            finished.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "by": next((names[s] for s in b["sessions"] if s in names), None), "at": datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%MZ"), "result": st["result"], "links": [], "revert": None, "ts": ts, "old": time.time() - ts > DONE_FOLD_H * 3600, "auto": True})
     finished.sort(key=lambda x: x["ts"], reverse=True)
     reviews = review.items()
     # Set aside and memos: only the live sessions' (an ended one keeps its file, out of sight).

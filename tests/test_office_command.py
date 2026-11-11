@@ -514,6 +514,25 @@ class SayAndViewTest(BriefsCase):
         marks = {r["file"]: r["done"] for r in v["recent"]}
         self.assertEqual((marks[fresh], marks[old], marks[answered], marks[empty]), (True, True, False, False))
 
+    def test_a_result_brief_its_worker_declared_done_is_listed_without_brief_done(self):
+        # No decision question, no `brief done`: the worker's own `done`
+        # status (its status file) lists the brief; a pending one, a worker
+        # still working, and a brief with a question stay out.
+        home = self.tmp / "home"
+        st = home / ".claude/state/office/status"
+        st.mkdir(parents=True)
+        now_ms = int(time.time() * 1000)
+        (st / f"{WORKER}.json").write_text(json.dumps({"state": "done", "at": now_ms, "step": "원인 분석 완료", "msg": "load 원인은 fork 폭주"}))
+        (st / f"{MAKER}.json").write_text(json.dumps({"state": "working", "at": now_ms, "step": "조사 중"}))
+        res = self.brief("2026-11-11-result", sessions=(WORKER,))
+        busy = self.brief("2026-11-11-busy", sessions=(MAKER,))
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            v = command.view([{"id": WORKER, "name": "w"}])
+        self.assertEqual([d["file"] for d in v["done"]], [res])
+        d = v["done"][0]
+        self.assertEqual((d["result"], d["by"], d["old"], d.get("auto")), ("load 원인은 fork 폭주", "w", False, True))
+        self.assertNotIn(busy, [d["file"] for d in v["done"]])
+
     def test_the_done_group_is_drawn_with_copy_and_a_fold(self):
         js = pathlib.Path(__file__).parents[1] / "office" / "briefline.js"
         prog = textwrap.dedent(r"""
