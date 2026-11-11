@@ -96,12 +96,27 @@ function hibClick(ev) {
   if (!b) return false
   const what = b.dataset.hib
   if (what === 'fold') { hib.open = !hib.open; cmdRender() } else if (what === 'all') hibAll()
-  else if (what === 'cands') { hib.candOpen = !hib.candOpen; cmdRender() }
+  else if (what === 'cands') hibCandFold(!hib.candOpen)
   else if (what === 'one') hibOne(b.dataset.sid)
   else if (what === 'pin') hibPin(b.dataset.sid)
   else if (what === 'go') { if (typeof focusPane === 'function') focusPane(b.dataset.pane); toast('↗ ' + b.dataset.pane) }
   else if (what === 'wake') hibWake(b.dataset.sid)
   return true
+}
+
+// The unfolded list is a layer of its own (layers.js): Esc first takes back
+// an armed 💤 휴면, then folds the list, before the 지휘 view's own steps;
+// a layer opened over it (🔑 인증) closes before it.
+function hibCandFold(open) {
+  hib.candOpen = open
+  if (!open) hib.oneArmed = null
+  if (open && typeof layerUp === 'function') {
+    layerUp('hibcands', () => hib.candOpen && cmd.on, () => hibCandFold(false), () => {
+      if (hib.oneArmed && Date.now() - hib.oneArmed.at < HIB_CONFIRM_MS) { hib.oneArmed = null; cmdRender(); return true }
+      return false
+    })
+  }
+  cmdRender()
 }
 
 async function hibOne(sid) {

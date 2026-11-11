@@ -599,6 +599,36 @@ class PageTest(unittest.TestCase):
         self.assertEqual(out["pin"], {"kind": "hibernate_pin", "sid": "b", "on": False})
         self.assertEqual(out["focused"], ["%22"])
 
+    def test_esc_takes_back_an_armed_sleep_then_folds_the_candidates_before_the_view(self):
+        script = r"""
+        const vm = require('vm'), fs = require('fs'), path = require('path')
+        const el = () => ({ style: {}, dataset: {}, appendChild() {}, querySelector: () => null, querySelectorAll: () => [] })
+        const ctx = { console, JSON, Math, Date, setTimeout: () => 0, document: { createElement: el, head: el() } }
+        vm.createContext(ctx)
+        vm.runInContext(fs.readFileSync(path.join(path.dirname(process.argv[1]), 'layers.js'), 'utf8'), ctx)
+        vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx)
+        vm.runInContext(`
+          var cmdEsc = (s) => String(s ?? ''), toast = () => {}, cmdLoad = () => {}, cmdRender = () => {}, cmdPost = async () => ({})
+          var cmd = { on: true, data: { coordinators: [], hibernate: { cards: [], pins: [], mb: 1, candidates: [{ sid: 'a', name: 'n', idleH: 3, mb: 1, why: 'cap' }] } } }
+          var closed = []
+          layerUp('command', () => cmd.on, () => { cmd.on = false; closed.push('command') })
+          hibCandFold(true)
+          hibOne('a')
+          var out = { top: layerTop(), armed: !!hib.oneArmed }
+          layerEsc(); out.afterFirst = [hib.candOpen, !!hib.oneArmed, layerTop()]
+          layerEsc(); out.afterSecond = [hib.candOpen, layerTop()]
+          layerEsc(); out.afterThird = closed
+          console.log(JSON.stringify(out))
+        `, ctx)
+        """
+        r = subprocess.run(["node", "-e", script, str(OFFICE / "hibernate.js")], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual((out["top"], out["armed"]), ("hibcands", True))
+        self.assertEqual(out["afterFirst"], [True, False, "hibcands"])
+        self.assertEqual(out["afterSecond"], [False, "command"])
+        self.assertEqual(out["afterThird"], ["command"])
+
 
 if __name__ == "__main__":
     unittest.main()
