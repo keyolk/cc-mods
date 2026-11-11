@@ -3582,6 +3582,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     setOrg(parseOrg(await readText($, home + ORG_PATH)))
     pane = await $.env.get('TMUX_PANE')
     sid = await $.session.id()
+    // The office reads this instead of capturing the pane (session.compact
+    // below); a pane where it is unset runs an older cc-mods.
+    if (pane) void publish($, undefined, null, { '@cc_pane_compacting': '0' }).catch(() => {})
     mainTurnRunning = (await read($, turnA)) !== null
     await coordStart($, {
       sid: () => sid,
@@ -3785,6 +3788,21 @@ export function register(on: any, options: Record<string, unknown> = {}) {
   on('classic.SessionStart', { source: 'startup' }, async ($: any, e: any, next: any) => {
     if (typeof e.transcript_path === 'string') transcript = e.transcript_path
     return next(e)
+  })
+
+  // Compacting, for the office (office.py reads @cc_pane_compacting off its
+  // list-panes): it used to capture every working pane on each 2 s poll to
+  // look for "Compacting conversation" (16 tmux starts in 13 s, sys-load
+  // brief D). 1 while the engine compacts, 0 otherwise; set to 0 at start so
+  // the office can tell this module from an older one that sets nothing.
+  on('session.compact', async ($: any, e: any, next: any) => {
+    if (e.agentId !== undefined || !pane) return next(e)
+    await publish($, undefined, null, { '@cc_pane_compacting': '1' })
+    try {
+      return await next(e)
+    } finally {
+      await publish($, undefined, null, { '@cc_pane_compacting': '0' })
+    }
   })
 
   // This mod's own compaction after a fork: the moved request becomes one

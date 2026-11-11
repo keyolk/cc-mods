@@ -278,12 +278,26 @@ def _cli_pending() -> dict[str, set | None] | None:
     return out
 
 
+# `brief pending --json` is a process start, and the view polls every 3 s
+# (sys-load brief D, 2026-11-11: 3 of them in 13 s). Its answer is asked
+# again only when a sidecar changed (a brief asked or answered; an office
+# answer also resets the cache) or PENDING_TTL has passed.
+PENDING_TTL = 15
+
+
+def _sides_sig() -> tuple:
+    try:
+        return tuple(sorted((e.name, e.stat().st_mtime) for e in os.scandir(root()) if e.name.endswith(".brief.json")))
+    except OSError:
+        return ()
+
+
 def pending() -> list[dict]:
     """Briefs with a question nobody has answered, the longest waiting first:
     each with all its questions (the answered ones too, to show what is
-    decided) and `decision`, the first open one. Read at most every 3 s: the
-    CLI is a process start."""
-    if time.time() - _pending["at"] < 3:
+    decided) and `decision`, the first open one."""
+    sig = _sides_sig()
+    if time.time() - _pending["at"] < PENDING_TTL and sig == _pending.get("sig"):
         return _pending["items"]
     cli = _cli_pending()
     items = []
@@ -297,7 +311,7 @@ def pending() -> list[dict]:
         if qs:
             items.append({"file": b["file"], "path": b["path"], "title": title(b["file"]), "questions": b["questions"], "decision": qs[0], "sessions": b["sessions"]})
     items.sort(key=lambda i: str(i["decision"].get("asked") or ""))
-    _pending.update(at=time.time(), items=items)
+    _pending.update(at=time.time(), items=items, sig=sig)
     return items
 
 

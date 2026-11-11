@@ -14,8 +14,9 @@ import office  # noqa: E402
 DEAD_PID = 2**22 + 7
 
 
-def pane_row(pane: str, sid: str) -> str:
-    return "|".join([pane, "0", "1", "win", sid, "waiting", "", "", "", "0", "", "@1"])
+def pane_row(pane: str, sid: str, state: str = "waiting", compact: str = "0") -> str:
+    # The fields of office.FMT: ... window_id, @cc_pane_compacting, cwd.
+    return "|".join([pane, "0", "1", "win", sid, state, "", "", "", "0", "", "@1", compact, "/w"])
 
 
 class AliveSessionsTest(unittest.TestCase):
@@ -72,6 +73,49 @@ class AliveSessionsTest(unittest.TestCase):
         self.assertFalse(people["w1"]["coord"])
         self.assertEqual(people["w1"]["boss"], {"sid": "c1", "name": "lead", "relation": "adopted", "slug": "a"})
         self.assertEqual((people["s1"]["coord"], people["s1"]["boss"], people["s1"]["crew"]), (False, None, []))
+
+
+class CompactingTest(unittest.TestCase):
+    """sys-load brief D: a 2 s /state poll captured every working pane to
+    look for "Compacting conversation" (16 tmux starts in 13 s). cc-mods now
+    publishes @cc_pane_compacting; only a pane with no flag (an older
+    cc-mods) is read, at most every COMPACT_TTL seconds."""
+
+    def setUp(self):
+        office._compact_seen.clear()
+
+    def snapshot(self, rows: list[str]) -> tuple[dict, list]:
+        calls = []
+
+        def run(argv, **_):
+            calls.append(argv)
+            if argv[:2] == ["tmux", "list-panes"]:
+                return types.SimpleNamespace(stdout="\n".join(rows))
+            return types.SimpleNamespace(stdout="✻ Compacting conversation…")
+
+        with mock.patch.object(office.subprocess, "run", side_effect=run), \
+                mock.patch.object(office, "alive_sessions", return_value=None), \
+                mock.patch.object(office, "last_tool", return_value={}), \
+                mock.patch.object(office, "tool_counts", return_value={"total": 0, "by": {}, "compacts": 0, "compactAt": None}), \
+                mock.patch.object(office, "desk_items", return_value={}), \
+                mock.patch.object(office, "subagents", return_value=[]), \
+                mock.patch.object(office, "born", return_value=None):
+            people = {p["id"]: p for p in office._snapshot()}
+        return people, [c for c in calls if c[:2] == ["tmux", "capture-pane"]]
+
+    def test_the_flag_answers_without_a_capture(self):
+        people, captures = self.snapshot([pane_row("%1", "a", "working", "1"), pane_row("%2", "b", "working", "0")])
+        self.assertEqual((people["a"]["compacting"], people["b"]["compacting"]), (True, False))
+        self.assertEqual(captures, [])
+        self.assertEqual(people["a"]["cwd"], "/w")
+
+    def test_an_older_cc_mods_is_read_from_its_pane_once_per_ttl(self):
+        people, captures = self.snapshot([pane_row("%1", "a", "working", "")])
+        self.assertTrue(people["a"]["compacting"])
+        self.assertEqual(len(captures), 1)
+        people, captures = self.snapshot([pane_row("%1", "a", "working", "")])
+        self.assertTrue(people["a"]["compacting"])
+        self.assertEqual(captures, [])
 
 
 if __name__ == "__main__":
