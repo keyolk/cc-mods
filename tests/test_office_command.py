@@ -422,6 +422,24 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual([c["name"] for c in v["calls"]], ["w"])
         self.assertEqual((v["recent"][0]["file"], v["recent"][0]["by"], v["recent"][0]["pending"]), (f, "w", True))
 
+    def test_a_coordinator_waits_in_the_table_only_for_a_call_on_its_pane(self):
+        # cc-mods-d9 ended its turns on "결정 N건 대기 · brief에서 보내기를
+        # 누르시면…": its pane said ask, and it stood in 내 차례 as a session to
+        # answer beside the briefs that already asked it.
+        self.ledger([{"slug": "w", "sid": WORKER}])
+        coord_ = {"id": COORD, "state": "waiting", "attention": "ask", "doing": "asking", "name": "cc-mods-d9", "coord": True, "asks": ""}
+        worker = {"id": WORKER, "state": "waiting", "attention": "ask", "doing": "asking", "name": "w", "asks": ""}
+        v = command.view([coord_, worker])
+        self.assertEqual([c["sid"] for c in v["calls"]], [WORKER])
+        row = next(r for r in v["table"] if r["sid"] == COORD)
+        self.assertEqual((row["call"], row["needs"]), (False, False))
+        # A dialog or a permission drawn on its pane is the person's to answer.
+        for attn, asks in (("ask", "Bash: git push"), ("alert", "Write ~/x")):
+            v = command.view([{**coord_, "attention": attn, "asks": asks}, worker])
+            self.assertEqual(sorted(c["sid"] for c in v["calls"]), sorted([COORD, WORKER]))
+        self.assertTrue(command.waits_on_person({"attention": "ask"}))
+        self.assertFalse(command.waits_on_person({"attention": "none", "coord": True, "asks": "x"}))
+
     def test_a_worker_row_carries_the_status_it_declared(self):
         # hooks/lib/status.ts: the coordinator's tick copies a worker's status
         # file into its ledger row; the view hands its fields to the 지휘 table.
@@ -628,6 +646,16 @@ class SayAndViewTest(BriefsCase):
         subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", str(self.tmp / "slug-wt")], check=True)
         self.assertEqual(command.repo_name(str(self.tmp / "slug-wt")), "main")
         self.assertIsNone(command.label(None, {}))
+
+    def test_a_first_prompt_handed_on_by_a_coordinator_names_the_work_not_the_hand_off(self):
+        # slx-ask-judge showed as `사람의 말(원문): "slx를 좀 개선할수…`.
+        self.assertEqual(command.unrelay('사람의 말(원문): "slx를 좀 개선할수 있을거 같아" (office-x): 이어서'), "slx를 좀 개선할수 있을거 같아")
+        self.assertEqual(command.unrelay('[coordinator] 사람의 말(원문, 앞선 요청): "warren 다시 로드"'), "warren 다시 로드")
+        self.assertEqual(command.unrelay("worker 보고(원문): \"SKILL tsc(worktree)\" 고쳐"), "SKILL tsc(worktree)")
+        self.assertEqual(command.unrelay('[coordinator] #130 rebase'), "#130 rebase")
+        self.assertEqual(command.unrelay('그냥 "말" 그대로'), '그냥 "말" 그대로')
+        with mock.patch.object(command, "first_prompt", return_value='사람의 말(원문): "slx를 좀 개선할수 있을거 같아 무조건 다 올리는게 아니라"'):
+            self.assertEqual(command.label(WORKER, {}, None, {"repo": "keyolk/slx"}), "slx · slx를 좀 개선할수 있을거 같아 무조건 다 올리는게…")
 
     def test_office_act_routes_the_new_kinds(self):
         self.ledger([{"slug": "w", "sid": WORKER}])
@@ -1236,6 +1264,42 @@ class CommandKeysTest(unittest.TestCase):
             return btn.onclick().then(() => posts)
         """)
         self.assertEqual(got, [{"kind": "brief_open", "file": "a.html", "via": "session"}])
+
+    def test_a_refused_press_on_a_brief_says_why_under_it_and_leaves_the_row(self):
+        # pt2677: the 보내기 came back 409 (its worker ended) as a toast in the
+        # corner; the buttons came back and the row stayed, the press dead.
+        got = self.run_js("""
+            return (async () => {
+              const p = two(), q = p.questions[0]
+              q.grants = { A: { kind: 'slack_send', channel: 'C1', text: 'x', digest: 'd' } }
+              const posts = []
+              cmdPost = async (b) => { posts.push(b); return { refused: 'no live worker ops-k8s-4a to allow this for', why: 'worker', worker: 'ops-k8s-4a' } }
+              await cmdAnswerReal(p, q, { label: 'A' })
+              const after = [cmd.refusedQ, q.answer, cmd.data.pending.length, toasts.length]
+              cmdPost = async (b) => ({ ok: true, sent: 'x' })
+              await cmdAnswerReal(p, q, { text: '다시 요청해 줘' })
+              return [posts[0].seen, after, cmd.refusedQ, q.answer.choice]
+            })()
+        """)
+        seen, (rq, ans, left, toasts), rq2, choice = got
+        self.assertEqual(seen, "d")
+        self.assertEqual((rq["file"], rq["q"], ans, left, toasts), ("a.html", "q1", None, 2, 0))
+        self.assertIn("ops-k8s-4a", rq["text"])
+        self.assertIn("직접 쓴 답", rq["text"])
+        self.assertEqual((rq2, choice), (None, "직접 답"))
+
+    def test_a_brief_answer_409_comes_back_as_a_refusal_not_a_toast(self):
+        got = self.run_js("""
+            return (async () => {
+              globalThis.TOKEN = 't'
+              fetch = async () => ({ status: 409, ok: false, json: async () => ({ error: 'no live worker w to allow this for', refused: 'worker', worker: 'w' }) })
+              const a = await cmdPost({ kind: 'brief_answer', file: 'a.html' })
+              fetch = async () => ({ status: 409, ok: false, json: async () => ({ error: 'busy' }) })
+              const b = await cmdPost({ kind: 'coord_say' })
+              return [a, b, toasts]
+            })()
+        """)
+        self.assertEqual(got, [{"refused": "no live worker w to allow this for", "why": "worker", "worker": "w"}, None, ["✕ busy"]])
 
     def test_a_busy_session_is_sent_on_a_second_enter_and_then_the_next_one_opens(self):
         got = self.run_js("""

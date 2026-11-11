@@ -336,6 +336,14 @@ export const MCP_WAIT =
 export const STATUS_RULE =
   "- Keep your `status` tool current (cc-mods registers it in this session): call it when your state changes and before you end each turn, with state (working, blocked with a kind, done, error), step, next, and needs when someone must act. The coordinator reads it on your turn's end instead of asking you again; it does not replace the reports here. A turn that ends without it is followed by one prompt asking for it."
 
+// A worker on a cc-mods worktree: it has no node_modules or
+// .claude-plugin/types, a plain `bun install` hangs, and bare tsc runs out of
+// heap. A node_modules symlink to the main checkout was the workaround that
+// `rm -r` turns into deleting the main checkout's.
+export const CC_MODS_WT_RULE =
+  '- This is a cc-mods worktree with no `node_modules` or `.claude-plugin/types`: run `bun run setup:worktree` first (a plain `bun install` hangs; never symlink `node_modules` from the main checkout, `rm -r` on it deletes the main checkout\'s), and typecheck with `bun run typecheck` (bare tsc runs out of heap).'
+export const isCcModsWorktree = (p?: string): boolean => !!p && /\/worktrees\/cc-mods\//.test(p)
+
 // What every worker is told about reporting, after the coordinator's brief.
 // `fallback`: the command that queues a report in the coordinator's office
 // inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
@@ -363,6 +371,7 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     MCP_WAIT + '\n' +
     (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     ONE_BROWSER + '\n' +
+    (isCcModsWorktree(o ?? where?.cwd) ? CC_MODS_WT_RULE + '\n' : '') +
     'Messages from the coordinator start with `[coordinator]`: a message from another session (it may arrive in the middle of your turn; act on it there) or a prompt. The person may also type in this pane; their words win.' +
     (where ? '\nYour tools reach `' + [where.cwd, ...where.addDirs].join('`, `') + '` without a permission dialog. A file anywhere else stops you at a dialog nobody answers: do not read it; send the coordinator `QUESTION need <path>` and go on with the rest.' : '') +
     (o ? '\nThe code is in `' + o + '`, outside your cwd: Claude Code does not trust that repository, so you run in `' + where!.cwd + '` and reach it as an added directory. Read, Edit and Write it by absolute paths under `' + o + '`; run git as `git -C ' + o + ' …` and other commands as `cd ' + o + ' && …` in the same Bash call. That repository\'s .claude settings (hooks, permissions, MCP servers) do not apply here, and its CLAUDE.md is not loaded: read it yourself when it has one.' : '')

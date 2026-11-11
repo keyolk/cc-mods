@@ -14,9 +14,9 @@ import office  # noqa: E402
 DEAD_PID = 2**22 + 7
 
 
-def pane_row(pane: str, sid: str, state: str = "waiting", compact: str = "0") -> str:
-    # The fields of office.FMT: ... window_id, @cc_pane_compacting, cwd.
-    return "|".join([pane, "0", "1", "win", sid, state, "", "", "", "0", "", "@1", compact, "/w"])
+def pane_row(pane: str, sid: str, state: str = "waiting", compact: str = "0", attn: str = "", asks: str = "", cwd: str = "/w") -> str:
+    # The fields of office.FMT: ... @cc_attention, ..., window_id, @cc_pane_compacting, @cc_pane_asks, cwd.
+    return "|".join([pane, "0", "1", "win", sid, state, "", attn, "", "0", "", "@1", compact, asks, cwd])
 
 
 class AliveSessionsTest(unittest.TestCase):
@@ -55,6 +55,19 @@ class AliveSessionsTest(unittest.TestCase):
         self.assertEqual([p["id"] for p in people], ["live"])
         # The pane itself is still live: the page must not take that as the session being there.
         self.assertEqual(office._live_panes, {"%1", "%2"})
+
+    def test_snapshot_reads_what_the_pane_asks_and_a_cwd_with_a_bar(self):
+        # @cc_pane_asks sits before the cwd, which stays last so a "|" in it is kept.
+        out = "\n".join([pane_row("%1", "a", attn="ask", asks="Bash: rm -rf x", cwd="/w/a|b"), pane_row("%2", "b", attn="ask")])
+        with mock.patch.object(office.subprocess, "run", return_value=types.SimpleNamespace(stdout=out)), \
+                mock.patch.object(office, "alive_sessions", return_value=None), \
+                mock.patch.object(office, "last_tool", return_value={}), \
+                mock.patch.object(office, "tool_counts", return_value={"total": 0, "by": {}, "compacts": 0, "compactAt": None}), \
+                mock.patch.object(office, "desk_items", return_value={}), \
+                mock.patch.object(office, "born", return_value=None):
+            people = {p["id"]: p for p in office._snapshot()}
+        self.assertEqual((people["a"]["asks"], people["a"]["cwd"]), ("Bash: rm -rf x", "/w/a|b"))
+        self.assertEqual((people["b"]["asks"], people["b"]["attention"]), ("", "ask"))
 
     def test_snapshot_rows_carry_the_coordinator_role(self):
         out = "\n".join([pane_row("%1", "c1"), pane_row("%2", "w1"), pane_row("%3", "s1")])

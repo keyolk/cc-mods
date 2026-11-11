@@ -22,7 +22,7 @@ import { dialogShown, dialogText, matches, parseDialog } from './lib/dialog'
 import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
-import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
+import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
 
 // What register.ts lends: the session, and its policy. God mode keeps "the
 // policy before" and puts it back when it ends, so while god is on the
@@ -367,8 +367,11 @@ const READ_EACH = 'd=$0; for s; do [ -f "$d/$s.json" ] && printf "%s\\t%s\\n" "$
 // The active workers' status files, by session id. One read for all; a
 // failed read or a missing file is no news (the ledger keeps what it had).
 async function statusFiles($: any, l: Ledger): Promise<Map<string, Status>> {
+  return statusOf($, active(l).map((w) => w.sid))
+}
+async function statusOf($: any, ids: string[]): Promise<Map<string, Status>> {
   const m = new Map<string, Status>()
-  const sids = active(l).map((w) => w.sid)
+  const sids = [...new Set(ids)].filter((s) => /^[0-9a-f-]{8,64}$/.test(s))
   if (!sids.length) return m
   const r = await sh($, ['sh', '-c', READ_EACH, ctx!.home() + STATUS_DIR, ...sids], { timeoutMs: 3000 })
   if (!r.ok) return m
@@ -589,22 +592,39 @@ const PROMPT_JQ = '\'fromjson? | select(.type == "user" and (.isMeta | not)) | (
 const PROMPTS_SH =
   'h=$0; for s in "$@"; do f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || continue; ' +
   'tail -c 300000 "$f" | tail -n +2 | jq -Rc --arg s "$s" ' + PROMPT_JQ + ' 2>/dev/null | tail -n 12; done'
+// The coordinator's own prompts, further back: the person's words are a few
+// among many worker reports (coordsum personLines keeps them).
+const OWN_SH =
+  'h=$0; s=$1; f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || exit 0; ' +
+  'tail -c 3000000 "$f" | tail -n +2 | jq -Rc --arg s "$s" ' + PROMPT_JQ + ' 2>/dev/null | tail -n 400'
 // The first prompts, off the head: what the session was started for.
 const FIRST_SH =
   'h=$0; for s in "$@"; do f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] || continue; ' +
   'head -c 200000 "$f" | jq -Rc --arg s "$s" ' + PROMPT_JQ + ' 2>/dev/null | head -n 4; done'
 
-type Info = { titles: Map<string, string>; prompts: Map<string, string[]>; first: Map<string, string>; last: Map<string, string> }
+type Info = { titles: Map<string, string>; prompts: Map<string, string[]>; first: Map<string, string>; last: Map<string, string>; own?: { prompts: string[]; first?: string; last?: string } }
 
-// Pane labels and prompts of every live session but this one.
+// Pane labels and prompts of every live session; this one's own (`own`,
+// the person's words only) when it is among them.
 async function sessionInfo($: any, seen: PaneSeen[]): Promise<Info> {
-  const sids = [...new Set(seen.filter((s) => s.sid !== ledger!.sid).map((s) => s.sid))]
-  const [titles, tail, head] = await Promise.all([
+  const me = ledger!.sid
+  const sids = [...new Set(seen.filter((s) => s.sid !== me).map((s) => s.sid))]
+  const self = seen.some((s) => s.sid === me)
+  const [titles, tail, head, own, ownHead] = await Promise.all([
     sh($, ['tmux', 'list-panes', '-a', '-F', '#{@cc_pane_session}\t#{@title}'], { timeoutMs: 3000 }).then((r) => new Map(r.out.split('\n').map((x) => x.split('\t') as [string, string]).filter(([s, t]) => s && t))),
     sids.length ? sh($, ['sh', '-c', PROMPTS_SH, ctx!.home(), ...sids], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
     sids.length ? sh($, ['sh', '-c', FIRST_SH, ctx!.home(), ...sids], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
+    self ? sh($, ['sh', '-c', OWN_SH, ctx!.home(), me], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
+    self ? sh($, ['sh', '-c', FIRST_SH, ctx!.home(), me], { timeoutMs: 10_000 }) : Promise.resolve({ out: '' }),
   ])
-  return { titles, prompts: parsePrompts(tail.out), first: parseFirst(head.out), last: parseLast(tail.out) }
+  const mine = personLines(own.out)
+  return {
+    titles,
+    prompts: parsePrompts(tail.out),
+    first: parseFirst(head.out),
+    last: parseLast(tail.out),
+    ...(self ? { own: { prompts: parsePrompts(mine).get(me) ?? [], first: parseFirst(personLines(ownHead.out)).get(me), last: parseLast(mine).get(me) } } : {}),
+  }
 }
 
 // What each live session was doing (lib/coordsum.ts), kept in the office's
@@ -615,11 +635,24 @@ const sumFile = () => ctx!.home() + '/.claude/state/office/summary.json'
 let summing = false
 async function summarize($: any, seen: PaneSeen[], n: Map<string, string>, info: Info): Promise<Map<string, string>> {
   const mine = new Map(active(ledger!).map((w) => [w.sid, w]))
+  // Every seen session's declared status (a worker's, and any other session
+  // that runs the status tool): one read of the files the tick reads.
+  const declared = await statusOf($, seen.map((s) => s.sid))
+  const st = (sid: string) => {
+    const x = declared.get(sid)
+    return x && (x.step || x.next) ? { status: { ...(x.step ? { step: x.step } : {}), ...(x.next ? { next: x.next } : {}), ...(x.msg ? { msg: x.msg } : {}) } } : {}
+  }
   const rows: SumIn[] = []
   for (const s of seen) {
-    if (s.sid === ledger!.sid || rows.some((r) => r.sid === s.sid)) continue
+    if (rows.some((r) => r.sid === s.sid)) continue
+    if (s.sid === ledger!.sid) {
+      // Itself: what the person asked of it, never its workers' reports.
+      const o = info.own
+      if (o && (o.first || o.prompts.length)) rows.push({ sid: s.sid, name: n.get(s.sid) ?? ledger!.name, ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(o.first ? { first: o.first } : {}), prompts: o.prompts, ...(o.last ? { last: o.last } : {}), ...st(s.sid) })
+      continue
+    }
     const w = mine.get(s.sid)
-    rows.push({ sid: s.sid, name: n.get(s.sid) ?? s.sid.slice(0, 8), ...(w ? { slug: w.slug } : {}), ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(info.first.get(s.sid) ? { first: info.first.get(s.sid) } : {}), prompts: info.prompts.get(s.sid) ?? [], ...(info.last.get(s.sid) ? { last: info.last.get(s.sid) } : {}) })
+    rows.push({ sid: s.sid, name: n.get(s.sid) ?? s.sid.slice(0, 8), ...(w ? { slug: w.slug } : {}), ...(info.titles.get(s.sid) ? { title: info.titles.get(s.sid) } : {}), cwd: s.cwd, ...(info.first.get(s.sid) ? { first: info.first.get(s.sid) } : {}), prompts: info.prompts.get(s.sid) ?? [], ...(info.last.get(s.sid) ? { last: info.last.get(s.sid) } : {}), ...st(s.sid) })
   }
   const cache = parseSummaries(await readText($, sumFile()))
   const now = Date.now()

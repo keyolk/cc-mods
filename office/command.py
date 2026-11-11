@@ -359,16 +359,29 @@ def pending() -> list[dict]:
     return items
 
 
-def _worker_sid(slug: str | None, coordinator: str | None = None) -> str | None:
+def _worker_sid(slug: str | None, coordinator: str | None = None, alive: set[str] | None = None) -> str | None:
     """The live worker of that slug: under `coordinator` only, when given
-    (two coordinators may each have a worker of one name)."""
+    (two coordinators may each have a worker of one name).
+
+    `alive`: the sessions still running (office.py alive_sessions). A ledger
+    marks a worker ended when the coordinator lets it go or loses its pane,
+    while the session itself may still run: pt2677's `ops-k8s-4a` was ended
+    in the ledger at 00:29 and alive, so the person's 보내기 on its brief was
+    refused (no live worker) and the row never left 내 차례. The ledger still
+    names the session (the newest entry of that slug); `alive` only says it
+    is there to redeem the grant."""
+    last = None
     for d in coord.ledgers():
         if coordinator and d.get("sid") != coordinator:
             continue
         for w in d.get("workers") or []:
-            if slug and w.get("slug") == slug and not w.get("endedAt") and w.get("sid"):
+            if not (slug and w.get("slug") == slug and w.get("sid")):
+                continue
+            if not w.get("endedAt"):
                 return w["sid"]
-    return None
+            if alive and w["sid"] in alive and (last is None or (w.get("at") or 0) >= (last.get("at") or 0)):
+                last = w
+    return last["sid"] if last else None
 
 
 def _coord_name(sid: str | None) -> str | None:
@@ -447,6 +460,19 @@ def repo_name(cwd: str | None, w: dict | None = None) -> str:
     return _repo[cwd]
 
 
+# The head a coordinator puts on what it hands a worker (hooks/lib/coordsum.ts
+# unrelay): `사람의 말(원문): "…"`, `[coordinator] …`. A name made of it
+# names the hand-off, not the work.
+RELAY_HEAD = re.compile(r'^\s*(?:\[(?:coordinator|coord|office→coord)\]\s*)?(?:(?:사람의 말|worker 보고)\s*\([^)]*\)\s*:\s*)?"?')
+
+
+def unrelay(text: str) -> str:
+    t = text or ""
+    out = RELAY_HEAD.sub("", t, count=1).strip()
+    # The quote the head opened closes at the first `"`; what follows is the coordinator's.
+    return out.split('"', 1)[0].strip() if out != t.strip() and '"' in out else out
+
+
 def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict | None = None) -> str | None:
     """What the view calls a session: its cached summary, else its
     repository and the start of its first prompt; None when neither is known."""
@@ -454,7 +480,7 @@ def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict
         return None
     if sums.get(sid):
         return sums[sid]
-    first = first_prompt(sid)
+    first = unrelay(first_prompt(sid))
     first = first if len(first) <= FIRST_CHARS else first[: FIRST_CHARS - 1] + "…"
     out = " · ".join(x for x in (repo_name(cwd, w), first) if x)
     return out or None
@@ -491,6 +517,19 @@ def declared(by_sid: dict[str, dict], ledger_w: dict[str, dict]) -> dict[str, di
         if st:
             out[sid] = {"name": (ledger_w.get(sid) or {}).get("slug") or p.get("name"), "summary": None, "state": p.get("state"), "status": st}
     return out
+
+
+def waits_on_person(p: dict) -> bool:
+    """Whether a session is a 🙋 waiting row (`calls`): its pane asks for
+    attention. A coordinator is one only while its pane draws a call (a
+    dialog, a permission: `asks`, @cc_pane_asks). Its turn that ends on a
+    question ("결정 N건 대기", "brief에서 보내기를 누르시면") is asked on its
+    briefs, already rows of their own in 내 차례; as a call too, the same
+    question stood twice, and the 보내기 pressed on the brief left the
+    coordinator's row in place."""
+    if p.get("attention") not in ("ask", "alert"):
+        return False
+    return not p.get("coord") or bool(p.get("asks"))
 
 
 def view(people: list[dict], ask=None, deps: list[dict] | None = None) -> dict:
@@ -558,7 +597,7 @@ def view(people: list[dict], ask=None, deps: list[dict] | None = None) -> dict:
     calls = [
         {"sid": p["id"], "name": p.get("name") or p["id"][:8], "window": p.get("window"), "pane": p.get("pane"), "cwd": p.get("cwd"), "attention": p.get("attention"), "doing": p.get("doing"), "boss": (p.get("boss") or {}).get("name"), "slug": (p.get("boss") or {}).get("slug"), "summary": label(p["id"], sums, p.get("cwd"), ledger_w.get(p["id"])), "since": p.get("since")}
         for p in people
-        if p.get("attention") in ("ask", "alert")
+        if waits_on_person(p)
     ]
     # The slx inbox: an item whose session has a row above rides on it (📨);
     # the rest get rows of their own.
@@ -709,7 +748,7 @@ def message(file: str, qs: list[dict]) -> str:
     return f"[brief answer] {file}: {head}\n" + "\n".join(f"- {q['id']} {q['question']} → {_said(q['answer'])}{_granted(q)}" for q in qs)
 
 
-def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = "", seen: str = "") -> tuple[int, dict]:
+def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = "", seen: str = "", alive: set[str] | None = None) -> tuple[int, dict]:
     """Record the person's answer to one question on the brief: one of its
     options (`label`, with `note`) or their own words (`text`). When it was
     the brief's last open question, tell whoever asked every answer at once.
@@ -741,9 +780,12 @@ def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = ""
     if act:
         if seen != act["digest"]:
             return 409, {"error": "the action this option allows changed since the page drew it: look again"}
-        grantee = _worker_sid(q["worker"], q["coordinator"])
+        grantee = _worker_sid(q["worker"], q["coordinator"], alive)
         if not grantee:
-            return 409, {"error": "no live worker " + str(q["worker"]) + " to allow this for"}
+            # Not recorded: a 보내기 with no one to send it would drop the
+            # send the person approved without a word. The page shows why
+            # under the option (command.js cmdAnswer) and offers the rest.
+            return 409, {"error": "no live worker " + str(q["worker"]) + " to allow this for", "refused": "worker", "worker": q["worker"]}
     path = os.path.join(root(), file)
     if text:
         args = ["answer", path, qid, "--text", text, "--by", "office"]
@@ -825,10 +867,10 @@ def say(coord_sid: str, slug: str, text: str, inbox_put, about: dict | None = No
     return 200, {"ok": True, "sent": f"{slug} 지시 → {name}"}
 
 
-def act(body: dict, inbox_put) -> tuple[int, dict]:
+def act(body: dict, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
-        return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""), str(body.get("seen") or ""))
+        return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""), str(body.get("seen") or ""), alive)
     if kind == "brief_open":
         return open_outside(str(body.get("file") or ""), str(body.get("via") or ""))
     if kind in review.KINDS:
