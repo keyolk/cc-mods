@@ -282,6 +282,7 @@ LIB_MAX = 400  # the 📚 list: every brief there is (~300 today), at most this 
 
 _no_list: dict = {"until": 0.0}
 LIB_STATES = ("pending", "done", "answered", "read")
+LIB_TYPES = ("decision", "result", "review", "research")  # `brief list --json`'s type, the index's type facets
 
 
 def library() -> dict:
@@ -300,7 +301,8 @@ def library() -> dict:
     for r in rows:
         topics[r["topic"]] = topics.get(r["topic"], 0) + 1
     counts = {k: sum(1 for r in rows if r["state"] == k) for k in LIB_STATES}
-    return {"at": time.time(), "total": len(rows), "counts": counts, "topics": sorted(topics.items(), key=lambda kv: (-kv[1], kv[0])), "items": rows[:LIB_MAX]}
+    types = {k: sum(1 for r in rows if r.get("type") == k) for k in LIB_TYPES}
+    return {"at": time.time(), "total": len(rows), "counts": counts, "types": types, "topics": sorted(topics.items(), key=lambda kv: (-kv[1], kv[0])), "items": rows[:LIB_MAX]}
 
 
 def _cli_list() -> list[dict] | None:
@@ -317,7 +319,7 @@ def _cli_list() -> list[dict] | None:
         return None
     if not isinstance(items, list):
         return None
-    keep = ("file", "date", "title", "desc", "topic", "state", "ask", "result", "search")
+    keep = ("file", "date", "title", "desc", "topic", "type", "state", "ask", "result", "search")
     return [{k: it.get(k) for k in keep} for it in items if isinstance(it, dict) and NAME.match(str(it.get("file") or "")) and it.get("state") in LIB_STATES]
 
 
@@ -345,6 +347,7 @@ def _own_list() -> list[dict]:
         state = "pending" if _open(qs) else "done" if done else "answered" if qs else "read"
         t, desc, topic = title(file), _meta(head, "description"), _meta(head, "brief:topic") or "기타"
         rows.append({"file": file, "date": file[:10], "title": t, "desc": desc, "topic": topic, "state": state,
+                     "type": "review" if re.search(r"review-requests?", file) else "decision" if qs else "result" if done else "research",
                      "ask": next((q["question"] for q in _open(qs)), None), "result": done["result"] if done else None,
                      "search": " ".join([t, desc, topic, "결정 대기" if state == "pending" else "", "완료" if done else "", done["result"] if done else ""] + (b["sessions"] if b else [])).lower(),
                      "_at": _mtime(path)})
