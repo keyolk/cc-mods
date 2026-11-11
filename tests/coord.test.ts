@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, DECISION_BRIEF, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, DECISION_BRIEF, MCP_WAIT, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -659,4 +659,49 @@ test('coord: a wake names the worker by what it was doing, the slug after it, an
   expect(recheck('[coord] tmux 레이아웃 정리 (tmc-layout): its session is gone (pane closed or claude exited)', two, NOW, new Map())).toBeUndefined()
   const back = observe({ ...l, workers: [worker({ endedAt: NOW - 5_000, goneAt: NOW - 5_000 })] }, parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t'), NOW, new Set(), sums)
   expect(back.changes.map((c) => c.text)).toEqual(['tmux 레이아웃 정리 (tmc-layout): its session is back (taken for gone, it was alive)'])
+})
+
+test('coord: a stuck MCP server of a worker or of the coordinator wakes it once, until it comes back and falls again', () => {
+  const w: Worker = { slug: 'daily', sid: 'w-1', relation: 'owned', cwd: '/w', at: NOW }
+  const l = on({ workers: [w] })
+  const state = (stuck: boolean, last = 'failed') => JSON.stringify({ live: [], dropped: [{ server: 'claude.ai Slack', since: 1, tries: 3, last, text: 'Failed to reconnect: ECONNRESET', ...(stuck ? { stuck: true } : {}) }] })
+  // Not stuck yet (still retrying on its own): nothing.
+  let r = mcpWakes(l, new Map([['w-1', state(false)]]))
+  expect(r.changes).toEqual([])
+  // Stuck: one wake that names the worker, the server and why.
+  r = mcpWakes(r.ledger, new Map([['w-1', state(true)]]), new Map([['w-1', 'daily check-in']]))
+  expect(r.changes.map((c) => c.text)).toEqual(['daily check-in (daily): MCP claude.ai Slack 끊김 (자동 재연결 3회 실패: Failed to reconnect: ECONNRESET)'])
+  expect(r.ledger.workers[0]!.mcpDown).toEqual(['claude.ai Slack'])
+  // Held while the coordinator's turn ran: true while it is still down.
+  expect(current(r.changes[0]!, r.ledger, NOW)).toBe(true)
+  // Still stuck: not told again.
+  const again = mcpWakes(r.ledger, new Map([['w-1', state(true)]]))
+  expect(again.changes).toEqual([])
+  expect(again.ledger).toBe(r.ledger)
+  // Back: the held line is dropped, and a new fall is told again.
+  const back = mcpWakes(r.ledger, new Map([['w-1', JSON.stringify({ live: ['claude_ai_Slack'], dropped: [] })]]))
+  expect(back.ledger.workers[0]!.mcpDown).toBeUndefined()
+  expect(current(r.changes[0]!, back.ledger, NOW)).toBe(false)
+  expect(mcpWakes(back.ledger, new Map([['w-1', state(true)]])).changes).toHaveLength(1)
+  // The coordinator's own session: the name it saw at its start fail, a
+  // spelling /mcp did not know.
+  const self = mcpWakes(l, new Map([['coord-sid', JSON.stringify({ dropped: [{ server: 'claude_ai_Slack', tries: 1, last: 'unknown', stuck: true }] })]]))
+  expect(self.changes.map((c) => c.text)).toEqual(['coordinator: MCP claude_ai_Slack 끊김 (/mcp가 이 이름을 모름: 이름 매핑 실패, 자동 재연결 멈춤)'])
+  expect(current(self.changes[0]!, self.ledger, NOW)).toBe(true)
+  // A quiet worker (the person's own session): recorded, not told.
+  const quietL = on({ workers: [{ ...w, auto: true }] })
+  const q = mcpWakes(quietL, new Map([['w-1', state(true)]]))
+  expect(q.changes.map((c) => c.wake)).toEqual([false])
+  // A file that is not JSON, or none: nothing down.
+  expect(parseMcpState('nope')).toEqual([])
+  expect(parseMcpState(undefined)).toEqual([])
+  expect(mcpText('x', { server: 's', tries: 2, atStart: true })).toBe('x: MCP s 끊김 (세션 시작 때 연결 실패, 자동 재연결 2회 실패)')
+})
+
+test('coord: a worker is told to end its turn on a dropped MCP server, not to send BLOCKED', () => {
+  const p = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout')
+  expect(p).toContain(MCP_WAIT)
+  expect(MCP_WAIT).toContain('do not send BLOCKED')
+  expect(MCP_WAIT).toContain('end your turn')
+  expect(coordSection(on(), NOW)).toContain('MCP <server> 끊김')
 })

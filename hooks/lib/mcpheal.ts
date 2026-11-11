@@ -1,10 +1,17 @@
 // Keep MCP servers connected. A server that dropped (a proxy reset, a sleep,
 // an expired session on the server's side) often comes back on a plain
 // reconnect, but Claude Code leaves it disconnected until someone opens /mcp.
-// Only a server that was in use and then failed a call is retried, by name
-// (`/mcp reconnect <server>`): `reconnect all` also retries every server that
-// never connected (needs sign-in, unused) and leaves a transcript row each
-// time. Pure: register.ts decides when to run it.
+// A server is retried by name (`/mcp reconnect <server>`): `reconnect all`
+// also retries every server that needs sign-in and leaves a transcript row
+// each time. Pure: register.ts decides when to run it.
+//
+// /mcp takes the server's own name, as `claude mcp list` prints it
+// (`claude.ai Slack`), bare. The tool-name spelling (`claude_ai_Slack`) and a
+// quoted name both answer "There's no MCP server named …" (checked
+// 2026-11-11 with `claude -p "/mcp reconnect …"`). The context breakdown's
+// serverName, which the watch reads, is the tool-name spelling: until this
+// was resolved, every reconnect of a claude.ai connector was refused, three
+// times in a row, and the person reconnected Slack by hand from /mcp.
 
 // An MCP tool result that says the server, not the call, is the problem.
 const DISCONNECT = /not connected|connection (closed|reset|refused|lost)|disconnected|server (is )?(not running|unavailable)|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up|transport (closed|error)|session (not found|expired)|-32000/i
@@ -66,4 +73,94 @@ export function nextWatch(prev: McpWatch, live: readonly string[], now: number):
   const since = new Map(prev.dropped.map((d) => [d.server, d.since]))
   const dropped = seen.filter((s) => !live.includes(s)).map((server) => ({ server, since: since.get(server) ?? now }))
   return { seen, live: [...live], dropped }
+}
+
+// The name /mcp knows a server by, from any spelling of it. `known`: the
+// servers' own names (the radar's `claude mcp list` rows). The tool-name
+// spelling maps back by normalizing both sides. With no known name, a
+// claude.ai connector's name is rebuilt (`claude_ai_Google_Workspace_-_Sendbird`
+// → `claude.ai Google Workspace - Sendbird`: connector names use spaces where
+// the spelling has "_"), and any other name is kept as it is.
+export function displayName(server: string, known: readonly string[]): string {
+  if (known.includes(server)) return server
+  const key = normalizeServer(server)
+  const hit = known.find((k) => normalizeServer(k) === key)
+  if (hit) return hit
+  const m = /^claude_ai_(.+)$/.exec(server)
+  return m ? 'claude.ai ' + m[1]!.replace(/_/g, ' ') : server
+}
+
+// What `/mcp reconnect` answered. `ok`: reconnected. `unknown`: no server by
+// that name here; sending the same name again cannot help. `off`: the server
+// is turned off here, or this session cannot reconnect (`claude -p`): left
+// alone. `failed`: anything else (it did not come back, or the command threw).
+export type ReconnectOutcome = 'ok' | 'unknown' | 'off' | 'failed'
+export function reconnectOutcome(text: string): ReconnectOutcome {
+  if (/no MCP server named|not found/i.test(text)) return 'unknown'
+  if (/\bdisabled\b|aren't available in this session|not available in this session/i.test(text)) return 'off'
+  if (/\breconnected\b/i.test(text) && !/not connected|failed|error|\b0 of\b/i.test(text)) return 'ok'
+  return 'failed'
+}
+
+// One server's retries: a growing gap (1, 2, 4, 8, 16, then every 30
+// minutes) in place of three tries 2 minutes apart and then silence. A
+// server that is still down after NOTIFY_AFTER tries, or whose name /mcp
+// does not know, is reported (the coordinator, the office); retries go on at
+// the longest gap, since the server can still come back.
+// `at`: the engine's clock (healDue's `now`); `wall`: epoch ms of the first
+// failed try, for the office's "since".
+export type HealTry = { at: number; n: number; last?: ReconnectOutcome; text?: string; wall?: number }
+export const HEAL_GAPS_MS = [60_000, 2 * 60_000, 4 * 60_000, 8 * 60_000, 16 * 60_000, 30 * 60_000]
+export const NOTIFY_AFTER = 3
+// About 3.5 hours of tries (1+2+4+8+16 minutes, then 30 apart): past that
+// each try is one more transcript row for a server that is not coming back
+// on its own. It stays on the card, stuck; 다시 연결 there still runs.
+export const HEAL_MAX_TRIES = 11
+
+// `n` 0 with `last` ok: reconnected at `at`. A call failing again within
+// the first gap waits it out: the reconnect did not hold, and retrying at
+// every turn's end would fill the transcript.
+export function healDue(t: HealTry | undefined, now: number): boolean {
+  if (!t) return true
+  if (t.last === 'unknown' || t.last === 'off' || t.n >= HEAL_MAX_TRIES) return false
+  return now - t.at >= HEAL_GAPS_MS[Math.min(Math.max(t.n - 1, 0), HEAL_GAPS_MS.length - 1)]!
+}
+
+// Whether a server is to be reported as down. `seen`: it was live in this
+// session. A server the radar lists that this session never had (another
+// project's server) and /mcp does not know is not this session's: quiet. One
+// it had and cannot be named is a mapping bug: told, so it is not silent again.
+export function healStuck(t: HealTry | undefined, seen: boolean): boolean {
+  if (!t || t.last === 'ok' || t.last === 'off') return false
+  if (t.last === 'unknown') return seen
+  return t.n >= NOTIFY_AFTER
+}
+
+// Whether a server belongs on the office card and in the coordinator's
+// notice: tried here and not left alone.
+export function healShown(t: HealTry | undefined, seen: boolean): boolean {
+  return !!t && t.n > 0 && t.last !== 'ok' && t.last !== 'off' && (t.last !== 'unknown' || seen)
+}
+
+// The servers to reconnect now. `dropped`: seen live in this session, gone.
+// `expected`: connected by the radar's own `claude mcp list` (another
+// process, so the server works from this machine) yet not in this session.
+// That is a server that failed at this session's start (claude.ai Slack,
+// ECONNRESET on the first connect, 2026-11-11): never live here, so never
+// dropped, so never retried until now. Compared by normalized name; the
+// result keeps the first spelling met.
+export function healTargets(dropped: readonly string[], expected: readonly string[], live: readonly string[]): string[] {
+  const here = new Set(live.map(normalizeServer))
+  const out = new Map<string, string>()
+  for (const s of [...dropped, ...expected]) {
+    const k = normalizeServer(s)
+    if (!here.has(k) && !out.has(k)) out.set(k, s)
+  }
+  return [...out.values()]
+}
+
+// The radar's MCP rows: every server's own name, and the connected ones.
+export function radarNames(items: readonly { id: string; state: string }[]): { all: string[]; connected: string[] } {
+  const mcp = items.filter((i) => i.id.startsWith('mcp:'))
+  return { all: mcp.map((i) => i.id.slice(4)), connected: mcp.filter((i) => i.state === 'ok').map((i) => i.id.slice(4)) }
 }

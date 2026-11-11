@@ -1684,7 +1684,8 @@ async function openCard(sid, kind = null) {
   if (mc && mc.dropped && mc.dropped.length) {
     const since = Math.min(...mc.dropped.map((x) => x.since || Date.now() / 1000)), tries = Math.max(...mc.dropped.map((x) => x.tries || 0))
     const mbox = add('div', 'mcpdrop', '🔌 <b>MCP 끊김</b> ' + esc(mc.dropped.map((x) => x.server.replace(/^claude\.ai /, '')).join(', '))
-      + '<span class="m">' + esc(ago(since)) + ' · ' + (mc.heal ? '자동 재연결 ' + tries + '/3' : '자동 재연결 꺼짐') + '</span>')
+      + '<span class="m">' + esc(ago(since)) + ' · ' + (!mc.heal ? '자동 재연결 꺼짐' : mc.dropped.some((x) => x.last === 'unknown') ? '이름 매핑 실패' : (mc.dropped.some((x) => x.atStart) ? '시작 때 연결 실패 · ' : '') + '자동 재연결 ' + tries + '회' + (mc.dropped.some((x) => x.stuck) ? ' 실패' : '')) + '</span>'
+      + (mc.dropped.find((x) => x.text) ? '<div class="m">' + esc(mc.dropped.find((x) => x.text).text) + '</div>' : ''))
     const mb = document.createElement('button'); mb.className = 'act'; mb.innerHTML = '<span class="key">C</span>다시 연결'; mb.title = '그 세션에서 /mcp reconnect (C)'
     mb.onclick = () => send({ kind: 'mcp', value: [] }, 'MCP 다시 연결 요청 · 몇 초 뒤 반영')
     mbox.appendChild(mb); card.mcpFix = mb

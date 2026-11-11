@@ -79,6 +79,20 @@ class TurnTest(unittest.TestCase):
         coords = [{"sid": COORD, "name": "d9", "workers": [{"slug": "zz", "sid": OWNED}, {"slug": "aa", "sid": ADOPTED, "relation": "adopted"}]}]
         self.assertEqual([r["name"] for r in turn.table([], [], [], coords)], ["aa", "d9", "zz"])
 
+    def test_a_session_that_lost_an_mcp_server_shows_it_and_a_stuck_one_needs_the_person(self):
+        now = turn.epoch("2026-11-10T10:00Z")
+        retrying = {"dropped": [{"server": "claude.ai Slack", "since": now - 60, "tries": 1}]}
+        stuck = {"dropped": [{"server": "claude.ai Slack", "since": now - 600, "tries": 3, "stuck": True}]}
+        coords = [{"sid": COORD, "name": "d9", "mcp": stuck, "workers": [{"slug": "zz", "sid": OWNED, "mcp": retrying}, {"slug": "aa", "sid": ADOPTED}]}]
+        by = {r["key"]: r for r in turn.table([], [], [], coords, now=now)}
+        # Still retrying on its own: shown, not the person's turn.
+        self.assertEqual([m["server"] for m in by["s:" + OWNED]["mcp"]], ["claude.ai Slack"])
+        self.assertFalse(by["s:" + OWNED]["needs"])
+        # Past retrying alone: the person's, waited since it went.
+        self.assertTrue(by["s:" + COORD]["needs"])
+        self.assertEqual(by["s:" + COORD]["at"], now - 600)
+        self.assertEqual(by["s:" + ADOPTED]["mcp"], [])
+
 
 class CrewCase(unittest.TestCase):
     def setUp(self):

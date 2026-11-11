@@ -508,7 +508,21 @@ def mcp_state(sid: str) -> dict | None:
             d = json.load(f) or {}
     except (OSError, ValueError):
         return None
-    dropped = [{"server": str(x.get("server") or ""), "since": (x.get("since") or 0) / 1000 or None, "tries": int(x.get("tries") or 0)} for x in d.get("dropped") or [] if isinstance(x, dict) and x.get("server")]
+    dropped = [
+        {
+            "server": str(x.get("server") or ""),
+            "since": (x.get("since") or 0) / 1000 or None,
+            "tries": int(x.get("tries") or 0),
+            # Past retrying alone (register.ts healStuck), and why: the last
+            # answer /mcp gave, and whether it never connected in that session.
+            "stuck": x.get("stuck") is True,
+            "last": str(x.get("last") or "") or None,
+            "text": str(x.get("text") or "")[:200] or None,
+            "atStart": x.get("atStart") is True,
+        }
+        for x in d.get("dropped") or []
+        if isinstance(x, dict) and x.get("server")
+    ]
     return {"dropped": dropped, "live": len(d.get("live") or []), "heal": d.get("heal") is not False} if dropped else None
 
 

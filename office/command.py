@@ -419,7 +419,7 @@ def view(people: list[dict]) -> dict:
 
     def live(sid: str | None) -> dict:
         p = by_sid.get(sid or "") or {}
-        return {"state": p.get("state"), "attention": p.get("attention"), "doing": p.get("doing"), "window": p.get("window"), "name": p.get("name"), "live": bool(p)}
+        return {"state": p.get("state"), "attention": p.get("attention"), "doing": p.get("doing"), "window": p.get("window"), "name": p.get("name"), "live": bool(p), "mcp": p.get("mcp")}
 
     coords = []
     for c in coord.view():

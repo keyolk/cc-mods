@@ -15,7 +15,7 @@ import { activeEngine, linkArgv, linkOf, parseConsole, parseDaemonStatus, parseN
 import { treeRows } from '../hooks/views/home'
 import { filterPalette, paletteItems } from '../hooks/lib/palette'
 import { helpSections } from '../hooks/lib/help'
-import { isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, resultText } from '../hooks/lib/mcpheal'
+import { displayName, healDue, healShown, healStuck, healTargets, HEAL_GAPS_MS, HEAL_MAX_TRIES, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, resultText } from '../hooks/lib/mcpheal'
 import { goalChip, goalVisible, parseGoal } from '../hooks/lib/goal'
 import { blockOf, nowAllowed, resumePrompt } from '../hooks/lib/unblock'
 import { accountStrip, bar, cacheHit, effortMix, hookName, modelStrip, seriesBy, parseCcoQuota, parseJev, parseQuota, parseUsage, share, shortModel, span, sparkline, until, usd, type Usage } from '../hooks/lib/usage'
@@ -1831,4 +1831,67 @@ test('cco: parseCcoQuota keeps reset times and skips removed accounts', () => {
   expect(q[1]!.state).toBe('expired')
   expect(q[2]!.state).toBe('cooldown')
   expect(parseCcoQuota('nope')).toEqual([])
+})
+
+test('mcp heal: /mcp takes the server by its own name, never its tool-name spelling', () => {
+  // Live 2026-11-11: `/mcp reconnect claude_ai_Slack`, three times, "not
+  // found"; the person's /mcp → "Reconnected to claude.ai Slack.".
+  const known = ['claude.ai Slack', 'claude.ai Google Workspace - Sendbird', 'portal']
+  expect(displayName('claude_ai_Slack', known)).toBe('claude.ai Slack')
+  expect(displayName('claude_ai_Google_Workspace_-_Sendbird', known)).toBe('claude.ai Google Workspace - Sendbird')
+  expect(displayName('claude.ai Slack', known)).toBe('claude.ai Slack')
+  expect(displayName('portal', known)).toBe('portal')
+  // No radar yet: a claude.ai connector's name is rebuilt, others kept.
+  expect(displayName('claude_ai_Slack', [])).toBe('claude.ai Slack')
+  expect(displayName('narwhal', [])).toBe('narwhal')
+  expect(radarNames([{ id: 'mcp:claude.ai Slack', state: 'ok' }, { id: 'mcp:sentry', state: 'expired' }, { id: 'gh:x', state: 'ok' }])).toEqual({ all: ['claude.ai Slack', 'sentry'], connected: ['claude.ai Slack'] })
+})
+
+test('mcp heal: what /mcp reconnect answered', () => {
+  expect(reconnectOutcome('Reconnected to claude.ai Slack.')).toBe('ok')
+  expect(reconnectOutcome('Reconnected 1 of 1 MCP servers')).toBe('ok')
+  expect(reconnectOutcome('MCP server "claude_ai_Slack" not found')).toBe('unknown')
+  expect(reconnectOutcome('There\'s no MCP server named "claude_ai_Slack". Run `/mcp` in the terminal to see configured servers.')).toBe('unknown')
+  expect(reconnectOutcome('Reconnect, enable, and disable aren\'t available in this session.')).toBe('off')
+  expect(reconnectOutcome('MCP server "x" is disabled')).toBe('off')
+  expect(reconnectOutcome('Failed to reconnect to claude.ai Slack: ECONNRESET')).toBe('failed')
+  expect(reconnectOutcome('Reconnected 0 of 1 MCP servers')).toBe('failed')
+  expect(reconnectOutcome('')).toBe('failed')
+})
+
+test('mcp heal: retries back off and go on; a name /mcp does not know is not sent again; stuck after 3', () => {
+  expect(healDue(undefined, 0)).toBe(true)
+  // Just reconnected: a failure right after waits the first gap.
+  expect(healDue({ at: 0, n: 0, last: 'ok' }, HEAL_GAPS_MS[0]! - 1)).toBe(false)
+  expect(healDue({ at: 0, n: 0, last: 'ok' }, HEAL_GAPS_MS[0]!)).toBe(true)
+  // 1, 2, 4 … minutes after each try.
+  let t = { at: 0, n: 1, last: 'failed' as const }
+  expect(healDue(t, HEAL_GAPS_MS[0]! - 1)).toBe(false)
+  expect(healDue(t, HEAL_GAPS_MS[0]!)).toBe(true)
+  t = { at: 0, n: 3, last: 'failed' }
+  expect(healDue(t, 3 * 60_000)).toBe(false)
+  expect(healDue(t, 4 * 60_000)).toBe(true)
+  // Past the gaps: every 30 minutes, up to the cap.
+  expect(healDue({ at: 0, n: 9, last: 'failed' }, 30 * 60_000)).toBe(true)
+  expect(healDue({ at: 0, n: HEAL_MAX_TRIES, last: 'failed' }, 99 * 60 * 60_000)).toBe(false)
+  expect(healDue({ at: 0, n: 1, last: 'unknown' }, 99 * 60_000)).toBe(false)
+  expect(healDue({ at: 0, n: 1, last: 'off' }, 99 * 60_000)).toBe(false)
+  // Stuck: three failures, or a name it had and /mcp does not know.
+  expect(healStuck({ at: 0, n: 2, last: 'failed' }, true)).toBe(false)
+  expect(healStuck({ at: 0, n: 3, last: 'failed' }, true)).toBe(true)
+  expect(healStuck({ at: 0, n: 1, last: 'unknown' }, true)).toBe(true)
+  // A radar server this session never had and /mcp does not know: another
+  // project's, not this session's to report or show.
+  expect(healStuck({ at: 0, n: 1, last: 'unknown' }, false)).toBe(false)
+  expect(healShown({ at: 0, n: 1, last: 'unknown' }, false)).toBe(false)
+  expect(healShown({ at: 0, n: 1, last: 'failed' }, false)).toBe(true)
+  expect(healShown({ at: 0, n: 1, last: 'off' }, true)).toBe(false)
+})
+
+test('mcp heal: a server that failed at this session\'s start is a target; a live one is not, whatever its spelling', () => {
+  // Live 2026-11-11: the coordinator's claude.ai Slack failed with
+  // ECONNRESET at start: not in live, not dropped, never retried.
+  expect(healTargets([], ['claude.ai Slack', 'portal'], ['portal', 'claude_ai_Gmail'])).toEqual(['claude.ai Slack'])
+  expect(healTargets(['claude_ai_Slack'], ['claude.ai Slack'], [])).toEqual(['claude_ai_Slack'])
+  expect(healTargets(['rea'], ['claude.ai Slack'], ['claude_ai_Slack'])).toEqual(['rea'])
 })
