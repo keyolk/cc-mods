@@ -922,6 +922,20 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [False, False, {"call": "s1", "i": 1}, [["s1", {"kind": "reply", "value": "아니요"}, "아니요"], ["s1", {"kind": "key", "value": "1", "digest": "d1", "label": "Yes"}, "Yes"]]])
 
+    def test_a_refused_press_on_a_screens_choice_says_why_and_draws_the_choice_again(self):
+        got = self.run_js("""
+            return (async () => {
+              calls({ dialog: { question: 'Q?', digest: 'd1', options: [{ n: 1, label: 'Yes' }] }, suggestions: [] })
+              const now = { question: 'Q2?', digest: 'd2', options: [{ n: 1, label: 'Yes' }] }, sent = []
+              TOKEN = 't'; cmdAsk = () => {}
+              fetch = (url, o) => { sent.push(JSON.parse(o.body)); return Promise.resolve({ status: 409, ok: false, json: () => Promise.resolve({ error: 'the dialog on its screen changed since the page drew it: look again', dialog: now }) }) }
+              const ok = await cmdReplyReal(cmd.sel, { kind: 'key', value: '1', digest: 'd1', label: 'Yes' }, 'Yes')
+              return [ok, sent[0].digest, cmd.ask.dialog.digest, cmd.refused, toasts, cmdRefusedText(cmd.refused.text)]
+            })()
+        """)
+        self.assertEqual(got[:5], [False, "d1", "d2", {"sid": "s1", "text": "the dialog on its screen changed since the page drew it: look again", "digest": "d2"}, []])
+        self.assertIn("바뀌었습니다", got[5])
+
     def test_enter_in_a_sessions_box_sends_the_words_or_the_armed_reply_or_says_what_to_do(self):
         got = self.run_js("""
             calls()
