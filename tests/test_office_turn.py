@@ -49,13 +49,43 @@ class TurnTest(unittest.TestCase):
         # CI or a review wait, working again, or a block two hours old: not the person's turn.
         self.assertFalse(need({**auth, "kind": "wait"})["needs"])
         self.assertFalse(need({**auth, "state": "working"})["needs"])
-        self.assertFalse(need({**auth, "at": (N - 7300) * 1000})["needs"])
+        self.assertFalse(need({**auth, "at": (N - 9 * 3600) * 1000})["needs"])
         # No kind but a needs text counts; neither does not.
         self.assertTrue(need({"state": "blocked", "needs": "decide", "at": (N - 1000) * 1000})["needs"])
         self.assertFalse(need({"state": "blocked", "at": (N - 1000) * 1000})["needs"])
         # A dialog already holds the row: one need, not two.
         r = need(auth, calls=[{"sid": OWNED, "since": N - 500}])
         self.assertEqual([k[0] for k in r["needKeys"]], ["c"])
+
+    def test_a_status_file_makes_a_row_for_a_session_no_coordinator_holds_and_beats_the_ledger_copy(self):
+        N = 1794410000
+        blk = {"state": "blocked", "kind": "permission", "needs": "merge it", "at": (N - 1000) * 1000}
+        # No coordinator has OWNED: its declared status alone makes the row.
+        r = {x["sid"]: x for x in turn.table([], [], [], [], now=N, declared={OWNED: {"name": "w", "summary": "s", "state": "waiting", "status": blk}})}[OWNED]
+        self.assertTrue(r["needs"])
+        self.assertTrue(r["byStatus"])
+        # A session not blocked on the person makes none.
+        rows = turn.table([], [], [], [], now=N, declared={OWNED: {"name": "w", "status": {"state": "working", "at": N * 1000}}})
+        self.assertEqual(rows, [])
+        # The ledger's copy is older than the file's: the file's wins.
+        old = {"state": "working", "at": (N - 5000) * 1000}
+        coords = [{"sid": COORD, "name": "c", "workers": [{"slug": "w", "sid": OWNED, "live": True, "status": old}]}]
+        r = {x["sid"]: x for x in turn.table([], [], [], coords, now=N, declared={OWNED: {"status": blk}})}[OWNED]
+        self.assertEqual(r["status"], blk)
+        self.assertTrue(r["needs"])
+
+    def test_a_block_a_few_hours_old_still_needs_the_person(self):
+        N = 1794410000
+        st = {"state": "blocked", "kind": "permission", "needs": "merge it", "at": (N - 4 * 3600) * 1000}
+        self.assertTrue(turn.status_blocks_person(st, N))
+        self.assertFalse(turn.status_blocks_person({**st, "at": (N - 9 * 3600) * 1000}, N))
+
+    def test_a_dependency_a_feature_lacks_is_a_row_that_needs_the_person(self):
+        dep = {"id": "gcl", "title": "📅 일정: gcl 업데이트 필요", "text": "옛 버전", "cmd": "make install", "link": None, "since": 900}
+        rows = turn.table([], [], [], [], now=1000, deps=[dep])
+        self.assertEqual([(r["key"], r["needs"], r["at"], r["dep"]["cmd"]) for r in rows], [("d:gcl", True, 900, "make install")])
+        self.assertEqual(rows[0]["name"], dep["title"])
+
 
     def test_one_table_a_row_a_session_holding_its_decisions_call_and_reviews(self):
         coords = [{"sid": COORD, "name": "d9", "summary": "지휘", "state": "working", "live": True, "workers": [

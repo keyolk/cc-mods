@@ -2167,7 +2167,7 @@ class Handler(BaseHTTPRequestHandler):
             if sid:
                 return self.send(200, json.dumps(asking(sid)).encode(), "application/json")
             people = snapshot()
-            cv = command.view(people, ask=ask_digest)
+            cv = command.view(people, ask=ask_digest, deps=agenda.deps())
             ag = agenda.view()
             ag.update(agenda.people(ag["events"], cv))
             return self.send(200, json.dumps({**cv, "hibernate": hibernate.view(people), "agenda": ag}).encode(), "application/json")
