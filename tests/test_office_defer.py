@@ -95,6 +95,54 @@ class DeferStoreTest(HomeCase):
         self.assertFalse(self.file(S2).exists())
 
 
+class AskDigestTest(HomeCase):
+    def test_the_server_keeps_what_it_asks_when_set_aside_and_a_new_one_wakes_it(self):
+        code, _ = defer.act({"kind": "defer_set", "sid": S1, "until": "3h", "seen": []}, {S1}, ask=lambda s: "a" + "5" * 15)
+        self.assertEqual((code, defer.load(S1)["ask"]), (200, "a" + "5" * 15))
+        # Asking nothing is kept as NO_ASK, so a later question is new.
+        defer.act({"kind": "defer_set", "sid": S2, "until": "3h"}, {S2}, ask=lambda s: "")
+        self.assertEqual(defer.load(S2)["ask"], defer.NO_ASK)
+        # Without a reader (an older caller): none kept.
+        defer.act({"kind": "defer_set", "sid": S2, "until": "3h"}, {S2})
+        self.assertIsNone(defer.load(S2)["ask"])
+        defer.adopt(S2, "d" + "6" * 15)
+        self.assertEqual(defer.load(S2)["ask"], "d" + "6" * 15)
+        defer.adopt(S2, "d" + "7" * 15)  # kept once, not moved
+        self.assertEqual(defer.load(S2)["ask"], "d" + "6" * 15)
+        defer.wake(S2, "new")
+        self.assertFalse(self.file(S2).exists())
+
+    def test_deferred_now_names_the_sessions_whose_time_has_not_come(self):
+        defer.act({"kind": "defer_set", "sid": S1, "until": "1h"}, {S1})
+        defer.act({"kind": "memo_add", "sid": S2, "text": "x"}, {S2})
+        self.assertEqual(set(defer.deferred_now()), {S1})
+        self.assertEqual(defer.deferred_now(now=time.time() + 7200), {})
+
+    def test_the_floor_leaves_a_session_set_aside_out_until_its_question_changes(self):
+        defer.act({"kind": "defer_set", "sid": S1, "until": "3h"}, {S1}, ask=lambda s: "a" + "1" * 15)
+        people = [{"id": S1, "doing": "asking", "attention": "ask"}, {"id": S2, "doing": "asking"}]
+        office._ask_read.clear()
+        with mock.patch.object(office, "ask_digest", return_value="a" + "1" * 15) as got:
+            self.assertEqual(set(office.deferred(people)), {S1})
+            self.assertEqual(set(office.deferred(people)), {S1})
+            # Read once per DEFER_EVERY, not on every 2 s poll.
+            self.assertEqual(got.call_count, 1)
+        with mock.patch.object(office, "ask_digest", return_value="d" + "9" * 15):
+            self.assertEqual(office.deferred(people, now=time.time() + office.DEFER_EVERY + 1), {})
+        self.assertFalse(self.file(S1).exists())
+
+    def test_ask_digest_reads_the_dialog_else_a_question_at_the_end_of_the_answer(self):
+        me = {"pane": "%1"}
+        with mock.patch.object(office, "pane_of", return_value=me), mock.patch.object(office, "capture", return_value=[]):
+            with mock.patch.object(office, "last_text", return_value="다 했습니다.\n\nB안으로 갈까요?"):
+                a = office.ask_digest(S1)
+            with mock.patch.object(office, "last_text", return_value="다 했습니다."):
+                self.assertEqual(office.ask_digest(S1), "")
+        self.assertTrue(a.startswith("a") and defer.DIGEST.match(a))
+        with mock.patch.object(office, "pane_of", return_value=None):
+            self.assertEqual(office.ask_digest(S1), "")
+
+
 class MemoSendTest(HomeCase):
     def test_a_memo_goes_as_the_sessions_reply_and_only_then_leaves(self):
         defer.act({"kind": "memo_add", "sid": S1, "text": "B로 해"}, {S1})
@@ -128,16 +176,47 @@ class TableDeferTest(unittest.TestCase):
         r = turn.table([], self.calls(), [], [], now=self.NOW, held=held)[0]
         self.assertEqual((r["needs"], r["deferred"], r["wake"]), (False, self.NOW + 3600, None))
 
-    def test_a_new_wait_or_question_or_trigger_brings_it_back_at_once(self):
-        held = {S1: {"until": self.NOW + 3600, "seen": ["c:100"], "memos": []}}
+    def test_a_new_question_on_the_pane_or_a_new_decision_brings_it_back_at_once(self):
+        held = {S1: {"until": self.NOW + 3600, "seen": ["c:100"], "ask": "a" + "1" * 15, "askNow": "d" + "2" * 15, "memos": []}}
         r = turn.table([], self.calls(since=200), [], [], now=self.NOW, held=held)[0]
         self.assertEqual((r["needs"], r["deferred"], r["wake"]), (True, None, "new"))
+        held = {S1: {"until": self.NOW + 3600, "seen": ["c:100"], "memos": []}}
         waiting = [{"file": "a.html", "decision": {"id": "q1", "coordinator": S1}, "questions": [{"id": "q1"}], "sessions": []}]
         r = turn.table(waiting, self.calls(), [], [], now=self.NOW, held=held)
         self.assertEqual([(x["key"], x["wake"]) for x in r if x["sid"] == S1], [("s:" + S1, "new")])
+
+    def test_the_same_question_waiting_again_stays_set_aside(self):
+        # Live 2026-11-11 (gavin-jeong-f1): set aside until Monday, it went on
+        # publishing waiting (an MCP reconnect, the idle reminder); every new
+        # wait was a new c:<since>, and the time was dropped within the hour.
+        same = "a" + "1" * 15
+        held = {S1: {"until": self.NOW + 3600, "seen": ["c:100"], "ask": same, "askNow": same, "memos": []}}
+        r = turn.table([], self.calls(since=200), [], [], now=self.NOW, held=held)[0]
+        self.assertEqual((r["needs"], r["deferred"], r["wake"]), (False, self.NOW + 3600, None))
+        # It asks nothing now (a turn that ended on no question): quiet too.
+        held[S1]["askNow"] = ""
+        r = turn.table([], self.calls(since=300), [], [], now=self.NOW, held=held)[0]
+        self.assertEqual((r["needs"], r["wake"]), (False, None))
+        # Set aside asking nothing (NO_ASK), it asks now: that is new.
+        held[S1].update(ask=defer.NO_ASK, askNow=same)
+        self.assertEqual(turn.table([], self.calls(since=300), [], [], now=self.NOW, held=held)[0]["wake"], "new")
+
+    def test_a_file_from_before_ask_adopts_what_it_asks_now(self):
+        held = {S1: {"until": self.NOW + 3600, "seen": ["c:100"], "askNow": "d" + "3" * 15, "memos": []}}
+        r = turn.table([], self.calls(since=200), [], [], now=self.NOW, held=held)[0]
+        self.assertEqual((r["needs"], r["wake"], r["adopt"]), (False, None, "d" + "3" * 15))
+
+    def test_a_stuck_mcp_server_a_review_or_a_trigger_wait_for_its_time(self):
+        held = {S1: {"until": self.NOW + 3600, "seen": ["c:100"], "memos": []}}
         trig = [{"id": "t1", "merged": True, "sid": S1, "alive": True}]
         r = turn.table([], self.calls(), [], [], trig, now=self.NOW, held=held)[0]
-        self.assertEqual(r["wake"], "new")
+        self.assertEqual((r["needs"], r["wake"]), (False, None))
+        coords = [{"sid": COORD, "name": "d9", "workers": [{"slug": "w", "sid": S1, "live": True, "mcp": {"dropped": [{"server": "claude.ai Claude Data", "stuck": True, "since": 1}]}}]}]
+        r = next(x for x in turn.table([], self.calls(), [], coords, now=self.NOW, held=held) if x["sid"] == S1)
+        self.assertEqual((r["needs"], r["wake"], r["deferred"]), (False, None, self.NOW + 3600))
+        reviews = [{"id": "w", "coord": COORD}]
+        r = next(x for x in turn.table([], self.calls(), reviews, coords, now=self.NOW, held=held) if x["sid"] == S1)
+        self.assertEqual((r["needs"], r["wake"]), (False, None))
 
     def test_its_time_brings_it_back_with_its_memos_even_with_nothing_else(self):
         memos = [{"id": "m1", "text": "B안 확인", "at": 1}]

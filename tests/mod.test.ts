@@ -1708,6 +1708,46 @@ test('MCP heal: a claude.ai connector this session never got is tried once, and 
   expect(state().dropped).toEqual([])
 })
 
+test('MCP heal: a session the person set aside (office ⏰ 나중에) is not reconnected until its time, then is', { timeoutMs: 20_000 }, async ($, on) => {
+  // Live 2026-11-11: gavin-jeong-f1, set aside until Monday, rang five idle
+  // banners in 17 minutes, each a minute after an automatic /mcp reconnect.
+  const store: Record<string, unknown> = { 'cockpit-settings': {} }
+  const written: Record<string, string> = {}
+  const files: Record<string, string> = { '/.claude/state/office/defer/sid-1.json': JSON.stringify({ until: Date.now() / 1000 + 3600, seen: [], memos: [] }) }
+  const list = 'claude.ai Slack: https://mcp.slack.com/mcp - ✔ Connected'
+  baseStubs(on, { store, written, files, run: (argv) => (argv[0] === 'claude' && argv[1] === 'mcp' && argv[2] === 'list' ? { code: 0, out: list } : undefined) })
+  on('mcp.call', () => ({ value: { content: [] } }) as any)
+  const clock = mock.clock(on)
+  on('store.keys', () => ({ value: [] }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 1, window: 1_000_000, breakdown: { mcpTools: [{ name: 'mcp__portal__x', serverName: 'portal', tokens: 1, isLoaded: true }] } }, rateLimits: [] } }) as any)
+  const reconnects: string[] = []
+  on('command.run', (_$: any, e: any) => {
+    if (e.command === 'mcp') reconnects.push(e.args)
+    return { text: e.command === 'mcp' ? 'Failed to reconnect to claude.ai Slack' : '' }
+  })
+  on('tool.call', () => ({ result: { content: [] } }) as any)
+  const settle = async () => {
+    for (let i = 0; i < 400; i++) await Promise.resolve()
+  }
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  await clock.advance(0)
+  await settle()
+  // A server this session uses (lib/mcpheal healWanted): it asked for its tools.
+  await $.tool.call({ tool: 'ToolSearch', query: 'select:mcp__claude_ai_Slack__slack_read_thread', max_results: 1 } as any)
+  for (let t = 0; t < 4; t++) {
+    await clock.advance(t ? 60_000 : 15_000)
+    await settle()
+  }
+  // Not tried, so not on the office card as stuck either (healShown).
+  expect(reconnects).toEqual([])
+  expect(JSON.parse(written['/home/u/.claude/state/office/mcp/sid-1.json'] ?? '{}').dropped ?? []).toEqual([])
+  // Its time came (or the office brought it back): the reconnect runs.
+  files['/.claude/state/office/defer/sid-1.json'] = JSON.stringify({ until: null, woke: 1, memos: [] })
+  await clock.advance(60_000)
+  await settle()
+  expect(reconnects).toEqual(['reconnect claude.ai Slack'])
+})
+
 test('MCP heal: a name /mcp does not know is sent once, then reported, not repeated', { timeoutMs: 20_000 }, async ($, on) => {
   const store: Record<string, unknown> = { 'cockpit-settings': {} }
   const written: Record<string, string> = {}

@@ -142,7 +142,7 @@ def defer(r: dict, h: dict | None, now: float) -> None:
     `memos` (the list), `deferred` (until when, while it is set aside),
     `woke` (its time came and it is not opened yet), `wake` (what
     command.view should write: "due" or "new")."""
-    r.update(memos=[], deferred=None, woke=False, wake=None)
+    r.update(memos=[], deferred=None, woke=False, wake=None, adopt=None)
     if not h:
         return
     r["memos"] = [{"id": m["id"], "text": m["text"], "at": m.get("at")} for m in h.get("memos") or []]
@@ -150,7 +150,7 @@ def defer(r: dict, h: dict | None, now: float) -> None:
     if until:
         if now >= until:
             r["wake"] = "due"
-        elif set(r["needKeys"]) - set(h.get("seen") or []):
+        elif woken(r, h):
             r["wake"] = "new"
         else:
             r["deferred"] = until
@@ -162,3 +162,31 @@ def defer(r: dict, h: dict | None, now: float) -> None:
         r["needs"] = True
         if not r["at"]:
             r["at"] = until or h.get("woke") or now
+
+
+def woken(r: dict, h: dict) -> bool:
+    """Whether a row set aside holds a new question or a new approval now:
+    the only needs that bring it back before its time (the person: "나중에로
+    다음주에 보자고 한 세션의 알림이 계속 오는데"). A new decision on a brief
+    (`d:`) is one. A wait on the pane (`c:`) is keyed by when it began, and a
+    session set aside keeps publishing waiting (an MCP reconnect, a hook, the
+    engine's idle reminder), so it counts only when what it asks changed:
+    `askNow` (office.py ask_digest, read now) against `ask` (read when it was
+    set aside). With none kept (a file from before `ask`), the one read now
+    is adopted (`adopt`, written by command.view) and does not wake it. A
+    stuck MCP server (`m:`), a review (`r:`) and an slx trigger (`x:`) wait
+    for its time: none is a question the session asks."""
+    new = set(r["needKeys"]) - set(h.get("seen") or [])
+    if any(k.startswith("d:") for k in new):
+        return True
+    if not any(k.startswith("c:") for k in new):
+        return False
+    # askNow "": it asks nothing now (idle after a turn that ended on no
+    # question); NO_ASK kept: it asked nothing when it was set aside.
+    now_ask, kept = h.get("askNow"), h.get("ask")
+    if not now_ask:
+        return False
+    if not kept:
+        r["adopt"] = now_ask
+        return False
+    return now_ask != kept

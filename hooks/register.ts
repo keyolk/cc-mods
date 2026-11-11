@@ -57,6 +57,7 @@ import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from '
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from './lib/asks'
 import { clip, hhmm } from './lib/text'
 import { INBOX_HOLD_MAX_MS, INBOX_TRIES, failWake, inboxPrompt, landed, parseInbox, putBack, resumed, type InboxMsg } from './lib/inbox'
+import { DEFER_DIR, deferredUntil } from './lib/defer'
 import { displayName, healDue, healShown, healStuck, healTargets, healWanted, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, serversNamed, type HealTry, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
 import { SUMS_CHECK, expFromAnswer, expFromTool, expPreview, lastMessage, parseOpen, parseSums, type ExpCheck } from './lib/exp'
@@ -1767,11 +1768,22 @@ async function mcpCheck($: any) {
     mcpDown = healTargets(mcpWatch.dropped.map((d) => d.server), atStart, live)
     // On its own, only the servers this session used: the person saw /mcp
     // reconnect rows for servers they never touch (2026-11-11).
-    if (mcpHealEnabled && !mainTurnRunning) for (const s of healWanted(mcpDown, mcpUsed)) await healServer($, s)
+    // Set aside by the person (lib/defer.ts): no reconnect until its time.
+    // Each /mcp reconnect makes the engine fire idle_prompt a minute later,
+    // and that is a banner (the Notification hook). 다시 연결 on the office
+    // card still runs (officeMcp), and the watch and the export go on.
+    const want = healWanted(mcpDown, mcpUsed)
+    if (mcpHealEnabled && !mainTurnRunning && want.length && !(await deferredHere($))) for (const s of want) await healServer($, s)
     await mcpExport($)
   } finally {
     mcpChecking = false
   }
+}
+// Whether the person set this session aside (office ⏰ 나중에) and its
+// time has not come. A read that fails is not set aside.
+async function deferredHere($: any): Promise<boolean> {
+  if (!home || !sid) return false
+  return !!deferredUntil(await readText($, home + DEFER_DIR + '/' + sid + '.json'), Date.now())
 }
 // The file the office and a coordinator read: `dropped` holds every server
 // this session is missing and has tried (since: when it went, or the first

@@ -1415,6 +1415,62 @@ def pane_of(sid: str) -> dict | None:
     return None
 
 
+def ask_digest(sid: str) -> str:
+    """What a session waiting on its pane asks, as a digest: the choice drawn
+    on its screen (dialog's own digest: a permission's tool and command, a
+    question's options), else the end of its last answer when that ends on a
+    question (ASKS). "" when it asks nothing: a turn that ended without a
+    question, or a pane that is gone. office/defer.py keeps it when a
+    session is set aside; turn.woken wakes the session only when it changed,
+    so the same question re-published (an MCP reconnect, an idle reminder)
+    stays quiet."""
+    me = pane_of(sid) if re.fullmatch(r"[0-9a-f-]{8,64}", sid or "") else None
+    if not me:
+        return ""
+    d = dialog(capture(me["pane"]))
+    if d:
+        return "d" + d["digest"][:15]
+    text = command.ask_block(last_text(sid))["text"]
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines or not ASKS.search(lines[-1]):
+        return ""
+    return "a" + hashlib.sha256(text.encode()).hexdigest()[:15]
+
+
+# Sessions set aside (office/defer.py), for the floor: out of its waiting
+# queue and N/Tab, as the 지휘 view's rows are. The floor polls /state every
+# 2 s; what a waiting one asks (ask_digest: a tmux capture and a transcript
+# tail) is read at most every DEFER_EVERY s a session, so a new question
+# brings it back without the 지휘 view open.
+DEFER_EVERY = 15
+_ask_read: dict[str, float] = {}
+
+
+def deferred(people: list[dict], now: float | None = None) -> dict[str, float]:
+    """sid -> until, for the live sessions set aside now. One that waits on
+    the person (doing asking or alert, the floor's own test) and whose
+    question changed since it was set aside wakes ("new") and leaves."""
+    now = time.time() if now is None else now
+    live = {p["id"]: p for p in people}
+    out = {}
+    for sid, until in defer.deferred_now(now).items():
+        p = live.get(sid)
+        if not p:
+            continue
+        if p.get("doing") in ("asking", "alert") and now - _ask_read.get(sid, 0) >= DEFER_EVERY:
+            _ask_read[sid] = now
+            kept, got = defer.load(sid)["ask"], ask_digest(sid)
+            if got and not kept:
+                defer.adopt(sid, got)
+            elif got and got != kept:
+                defer.wake(sid, "new", now)
+                continue
+        out[sid] = until
+    for sid in [s for s in _ask_read if s not in out]:
+        _ask_read.pop(sid, None)
+    return out
+
+
 def asking(sid: str) -> dict:
     """What a session waiting on the person asks, for the command view: the
     end of its last answer (command.ask_block), the choice on its screen if
@@ -1641,7 +1697,7 @@ def act(body: dict) -> tuple[int, dict]:
     if kind == "memo_send":
         return memo_send(body)
     if kind in defer.KINDS:
-        return defer.act(body, {p["id"] for p in snapshot()})
+        return defer.act(body, {p["id"] for p in snapshot()}, ask=ask_digest)
     if kind == "fix":
         # value: the 🔑 row's id. The session is the office's pick, not the page's.
         return auth_handoff(str(value or ""), snapshot())
@@ -2107,12 +2163,12 @@ class Handler(BaseHTTPRequestHandler):
             if sid:
                 return self.send(200, json.dumps(asking(sid)).encode(), "application/json")
             people = snapshot()
-            return self.send(200, json.dumps({**command.view(people), "hibernate": hibernate.view(people)}).encode(), "application/json")
+            return self.send(200, json.dumps({**command.view(people, ask=ask_digest), "hibernate": hibernate.view(people)}).encode(), "application/json")
         if self.path.startswith("/coord"):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending()), "stamp": page_stamp()}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "deferred": deferred(people), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending()), "stamp": page_stamp()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
