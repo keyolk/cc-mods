@@ -402,10 +402,12 @@ def label(sid: str | None, sums: dict[str, str], cwd: str | None = None, w: dict
     return out or None
 
 
-def view(people: list[dict]) -> dict:
+def view(people: list[dict], ask=None) -> dict:
     """What the command view draws: the waiting decisions, each coordinator
     with its live workers (their state from the office's own snapshot and the
-    brief each is on), and the finished work waiting on the person's look."""
+    brief each is on), and the finished work waiting on the person's look.
+    `ask`: sid -> what it asks now (office.py ask_digest), for the rows set
+    aside (office/defer.py)."""
     by_sid = {p["id"]: p for p in people}
     latest = latest_by_session()
     sums = coord.summaries()
@@ -476,13 +478,21 @@ def view(people: list[dict]) -> dict:
     reviews = review.items()
     # Set aside and memos: only the live sessions' (an ended one keeps its file, out of sight).
     held = defer.held(set(by_sid))
+    now = time.time()
+    waits = {c["sid"] for c in calls}
     for sid, h in held.items():
         p = by_sid[sid]
         h["info"] = {"name": p.get("name"), "summary": label(sid, sums, p.get("cwd"), ledger_w.get(sid)), "state": p.get("state")}
-    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held)
+        # What a session set aside asks now, read only for one that waits on
+        # its pane (turn.woken compares it with what it asked when set aside).
+        if ask and sid in waits and h.get("until") and h["until"] > now:
+            h["askNow"] = ask(sid)
+    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held, now=now)
     for r in rows:
         if r.get("wake"):
             defer.wake(r["sid"], r["wake"])
+        elif r.get("adopt"):
+            defer.adopt(r["sid"], r["adopt"])
     return {"at": time.time(), "pending": waiting, "coordinators": coords, "calls": calls, "reviews": reviews, "recent": recent, "table": rows, "slx": inbox}
 
 

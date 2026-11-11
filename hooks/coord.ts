@@ -18,6 +18,7 @@ import { BOX_FMT, busyOf, parseBoxes, pick, places, spots, type Fit, type PaneBo
 import type { Policy } from './lib/policy'
 import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, upsert, type ReviewFile } from './lib/coordreview'
 import { clip } from './lib/text'
+import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
 import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
 
@@ -298,7 +299,12 @@ async function tick($: any) {
     const files = await mcpFiles($, o.ledger)
     const m = files ? mcpWakes(o.ledger, files, sums) : { ledger: o.ledger, changes: [] }
     const l = m.ledger
-    const changes = [...o.changes, ...m.changes]
+    // A worker the person set aside (office ⏰ 나중에, lib/defer.ts) is
+    // recorded, not woken for, as a quiet worker is: its turns, asks and
+    // MCP drops wait for its time, or for the office to bring it back on a
+    // new question (the file then stops naming it).
+    const asleep = await deferredSids($)
+    const changes = [...o.changes, ...m.changes].map((c) => (c.wake && asleep.has(c.sid) ? { ...c, wake: false } : c))
     let out = l
     // A quiet worker's asks are the person's own work: kept in its
     // row, not in the log the office shows.
@@ -319,6 +325,11 @@ async function tick($: any) {
   }
 }
 
+// The sessions set aside now (a failed read: none).
+async function deferredSids($: any): Promise<Map<string, number>> {
+  const r = await sh($, ['sh', '-c', DEFER_LIST, ctx!.home() + DEFER_DIR], { timeoutMs: 3000 })
+  return r.ok ? parseDeferred(r.out, Date.now()) : new Map()
+}
 // Each live session's MCP state file, by session id: the coordinator's and
 // its active workers'. One read for all (a missing file reads as nothing).
 async function mcpFiles($: any, l: Ledger): Promise<Map<string, string | undefined> | undefined> {
