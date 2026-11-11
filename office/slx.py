@@ -174,6 +174,7 @@ def _row(it: dict, rows: set[str]) -> dict:
     alive = bool(s.get("alive"))
     trig = "meerkat" if it.get("trigger") == "meerkat" else "slack"
     inc = it.get("incident") if isinstance(it.get("incident"), dict) else {}
+    tri = it.get("triage") if isinstance(it.get("triage"), dict) else {}
     return {
         "id": str(it.get("id") or ""),
         "trigger": trig,
@@ -196,6 +197,10 @@ def _row(it: dict, rows: set[str]) -> dict:
         "pane": s.get("pane") or None,
         "window": s.get("window") or None,
         "alive": alive,
+        # slx judged it not to ask or request anything of the person (jev): the
+        # row is drawn faint, with why, never hidden. An older slx sends neither.
+        "dim": bool(it.get("dim")),
+        "why": str(tri.get("why") or "")[:120],
         # The session's own row in the view shows this item as 📨.
         "merged": alive and sid in rows,
     }
@@ -225,7 +230,7 @@ def view(rows: set[str], now: float | None = None) -> dict:
         for m in d.get("mutes") or []
         if isinstance(m, dict) and MUTE_ID.match(str(m.get("id") or ""))
     ]
-    return {"items": items, "old": old, "tui": d["tui"], "stale": d.get("stale") or [], "canUp": knows_up(binary()), "error": d["error"], "windowH": WINDOW_H, "mutes": mutes, "muted": d.get("muted", 0), "snoozed": d.get("snoozed", 0)}
+    return {"items": items, "old": old, "tui": d["tui"], "stale": d.get("stale") or [], "canUp": knows_up(binary()), "error": d["error"], "windowH": WINDOW_H, "dimmed": sum(1 for r in items if r["dim"]), "mutes": mutes, "muted": d.get("muted", 0), "snoozed": d.get("snoozed", 0)}
 
 
 def by_sid(v: dict) -> dict[str, dict]:

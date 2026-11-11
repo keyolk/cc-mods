@@ -42,6 +42,7 @@ const SLX_CSS = `
 #command .slxfoot button { font: 11.5px -apple-system, "Apple SD Gothic Neo", sans-serif; border: 1px solid rgba(59,42,53,.4); border-radius: 8px; background: #fff; padding: 0 6px; cursor: pointer; margin: 0 2px; }
 #command .slxfoot button.armed { background: #c0392b; color: #fff; border-color: #c0392b; }
 #command .slxfoot .marks { display: block; margin-top: 2px; }
+#command .slxv.dim, #command .feed li.dim { opacity: .5; }
 #command .slxmk { cursor: pointer; margin-right: 2px; }
 #command .decide .sub { margin-top: 6px; }
 #command .decide .sub input { font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; width: 60%; border: 1px solid rgba(59,42,53,.4); border-radius: 6px; padding: 2px 6px; }
@@ -79,14 +80,18 @@ function slxState(x) {
   return ''
 }
 
+// Faint rows: slx judged they ask nothing of the person (dim); shown, not hidden.
+const slxDimmed = (xs = slxList()) => xs.filter((x) => x.dim).length
+const slxWhy = (x) => (x && x.dim && x.why ? '흐림 · ' + x.why : x && x.dim ? '흐림' : '')
+
 // A trigger row's mark (☐/☑), for the bulk choices of the slx line.
 const slxMk = (x) => '<span class="slxmk" data-slxmk="' + cmdEsc(x.id) + '" title="고르기">' + (slxUi.marks[x.id] ? '☑' : '☐') + '</span>'
 
 // A trigger whose session runs with no row, under ⚙ 진행 중.
 function slxTurnRow(x) {
   const mk = '<span class="slxmk" data-slxmk="' + cmdEsc(x.id) + '" title="고르기 (x)">' + (slxUi.marks[x.id] ? '☑' : '☐') + '</span>'
-  return '<li data-slx="' + cmdEsc(x.id) + '" class="t' + (slxIsSel(x) ? ' sel' : '') + '">' + mk + x.icon + ' <b>' + cmdEsc(x.from) + '</b> · ' + cmdEsc(slxLine(x.text).slice(0, 80))
-    + ' <span class="m">' + cmdEsc([x.where, cmdAgo(x.at), slxState(x), x.pending ? '새 멘션 ' + x.pending : ''].filter(Boolean).join(' · ')) + '</span></li>'
+  return '<li data-slx="' + cmdEsc(x.id) + '" class="t' + (slxIsSel(x) ? ' sel' : '') + (x.dim ? ' dim' : '') + '"' + (x.dim ? ' title="' + cmdEsc(slxWhy(x)) + '"' : '') + '>' + mk + x.icon + ' <b>' + cmdEsc(x.from) + '</b> · ' + cmdEsc(slxLine(x.text).slice(0, 80))
+    + ' <span class="m">' + cmdEsc([x.where, cmdAgo(x.at), slxState(x), x.pending ? '새 멘션 ' + x.pending : '', slxWhy(x)].filter(Boolean).join(' · ')) + '</span></li>'
 }
 
 // The slx line under 내 차례: what is hidden, what runs, the bulk choices;
@@ -102,6 +107,8 @@ function slxFoot() {
   }
   if (run.length) parts.push('<a href="#" data-slxf="run">⚙ 진행 중 ' + run.length + (slxUi.runOpen ? ' ▾' : ' ▸') + '</a>')
   if (rules.length || d.muted) parts.push('<a href="#" data-slxf="rules">🙈 숨김 규칙 ' + rules.length + (d.muted ? ' · 가린 ' + d.muted : '') + '</a>')
+  const dim = slxDimmed()
+  if (dim) parts.push('흐림 ' + dim)
   if (d.snoozed) parts.push('⏰ 나중에 ' + d.snoozed)
   if (d.old) parts.push(Math.round(d.windowH || 72) + '시간 넘은 ' + d.old + '건은 slx에서')
   const armed = Date.now() - slxUi.allArmed < 8000
@@ -227,7 +234,7 @@ function slxRenderDoc(bar, doc, dec, s) {
       said.innerHTML = '<h4>' + (x.trigger === 'meerkat' ? '알럿' : '메시지') + '</h4><div class="msg">' + cmdEsc(x.text) + '</div>'
         + (x.detail ? '<h4>요약</h4><div class="msg">' + cmdEsc(x.detail) + '</div>' : '')
         + '<h4>링크</h4>' + (links.length ? '<ul class="links">' + links.map((l) => '<li>' + cmdEsc(l[0]) + ' · <a href="#" data-slink="' + l[1] + '">' + cmdEsc(l[2]) + '</a></li>').join('') + '</ul>' : '<div class="m">—</div>')
-        + '<h4>slx</h4><div class="m">' + cmdEsc([x.status === 'new' ? '세션 없음' : slxState(x), x.mentions > 1 ? '멘션 ' + x.mentions : '', x.pending ? '세션이 못 본 멘션 ' + x.pending : '', x.window || '', x.joinedTo ? '↳ ' + x.joinedTo + '의 세션에 합쳐짐' : ''].filter(Boolean).join(' · ')) + '</div>'
+        + '<h4>slx</h4><div class="m">' + cmdEsc([x.status === 'new' ? '세션 없음' : slxState(x), slxWhy(x), x.mentions > 1 ? '멘션 ' + x.mentions : '', x.pending ? '세션이 못 본 멘션 ' + x.pending : '', x.window || '', x.joinedTo ? '↳ ' + x.joinedTo + '의 세션에 합쳐짐' : ''].filter(Boolean).join(' · ')) + '</div>'
       said.onclick = (ev) => { const a = ev.target.closest('a[data-slink]'); if (a) { ev.preventDefault(); cmdPost({ kind: 'slx_link', id: x.id, which: a.dataset.slink }).then((j) => { if (j) toast('↗ ' + (j.sent || '열었습니다')) }) } }
     }
   }
