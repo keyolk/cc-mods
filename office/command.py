@@ -264,6 +264,32 @@ def briefs() -> list[dict]:
     return out
 
 
+LIB_MAX = 400  # the 📚 list: every brief there is (~300 today), at most this many
+
+
+def library() -> dict:
+    """Every brief for the 📚 전체 브리프 panel, newest first (the date in its
+    name, then its last change): its title, and where it stands: `pending`
+    (a question open), `done` (`brief done`, with its result), `answered`
+    (every question answered, not marked done) or `read` (asks nothing).
+    A brief with no sidecar is listed too: ~/briefs/index.html lists them."""
+    rows = []
+    sides = {b["file"]: b for b in briefs()}
+    for path in glob.glob(os.path.join(root(), "*.html")):
+        file = os.path.basename(path)
+        if not NAME.match(file):
+            continue
+        b = sides.get(file)
+        qs = b["questions"] if b else []
+        done = b["done"] if b else None
+        state = "pending" if _open(qs) else "done" if done else "answered" if qs else "read"
+        rows.append({"file": file, "path": path, "title": title(file), "date": file[:10], "at": _mtime(path), "state": state,
+                     "result": done["result"] if done else None, "ask": next((q["question"] for q in _open(qs)), None)})
+    rows.sort(key=lambda r: (r["date"], r["at"]), reverse=True)
+    counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("pending", "done", "answered", "read")}
+    return {"at": time.time(), "total": len(rows), "counts": counts, "items": rows[:LIB_MAX]}
+
+
 def latest_by_session() -> dict[str, dict]:
     """Session id -> the newest brief it is recorded on."""
     out: dict[str, dict] = {}
