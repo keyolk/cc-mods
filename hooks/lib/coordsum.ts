@@ -130,6 +130,37 @@ export function parseSummaries(raw: string | undefined): Summaries {
   }
 }
 
+// A coordinator's own prompts are mostly not the person's: worker reports
+// (`[worker x] READY …`), brief answers, review verdicts, the plugin's
+// notices, other sessions' messages. Its summary was made of those, and its
+// key (the newest prompt's time) moved on each one; it also skipped itself,
+// so cc-mods-d9 kept "대화 스크롤 키 바인딩 변경 및 PR 막힘 처리" from
+// 2026-11-10 in the person's 내 차례. Only the person's words are kept, so
+// the label says what they asked of it and changes when they speak again.
+// What the office's task box sends (office/command.py say) is the person's,
+// with its tag taken off.
+export function fromPerson(text: string): string | undefined {
+  const t = text.trim()
+  const office = /^\[office→coord\]\s*(?:\(re: [^)]*\)\s*)?([\s\S]+)/.exec(t)
+  if (office) return office[1]!.trim()
+  if (!t || /^(?:\[|<|The cc-mods plugin sent|Another Claude session|(?:READY|DONE|NOTE|QUESTION|BLOCKED)\b)/.test(t)) return undefined
+  return t
+}
+
+// `["sid","text","time"]` lines (coord.ts PROMPTS_SH, FIRST_SH) with only
+// the person's words left.
+export function personLines(out: string): string {
+  const keep: string[] = []
+  for (const line of out.split('\n')) {
+    try {
+      const r = JSON.parse(line)
+      const t = Array.isArray(r) && typeof r[1] === 'string' ? fromPerson(r[1]) : undefined
+      if (t) keep.push(JSON.stringify([r[0], t, ...r.slice(2)]))
+    } catch {}
+  }
+  return keep.join('\n')
+}
+
 // The first prompt of each session: `["sid","text"]` lines (coord.ts FIRST_SH),
 // harness tags skipped as parsePrompts skips them.
 export function parseFirst(out: string): Map<string, string> {
