@@ -221,6 +221,8 @@ const cmdWorkers = () => (cmd.data?.coordinators || []).flatMap((c) => c.workers
 // review.js and slx.js, unless the server that sent this page has none.
 const cmdRev = () => typeof revList === 'function'
 const cmdSlx = () => typeof slxList === 'function'
+// hibernate.js, unless the server that sent this page has none.
+const cmdHib = () => typeof hibFoot === 'function'
 
 async function cmdAsk() {
   const sid = cmd.sel?.sid
@@ -246,7 +248,7 @@ function cmdRender() {
   // The table scrolls on its own: a redraw keeps where it was.
   const list = cmdEl.querySelector('.list'), keep = list.scrollTop, keepT = list.querySelector('.tblwrap')?.scrollTop || 0
   // The slx line under the table: what is hidden, what runs, the bulk choices.
-  list.innerHTML = tblHtml() + (cmdSlx() ? slxFoot() : '')
+  list.innerHTML = tblHtml() + (cmdHib() ? hibFoot() : '') + (cmdSlx() ? slxFoot() : '')
   list.scrollTop = keep
   const wrap = list.querySelector('.tblwrap')
   if (wrap) wrap.scrollTop = keepT
@@ -273,6 +275,7 @@ function cmdFold(which) {
 
 function cmdClick(ev) {
   if (cmdSlx() && slxClick(ev)) return
+  if (cmdHib() && hibClick(ev)) return
   // ⏹ on a row: the session opens beside the panel and its end is asked
   // there, where the warning and the second press are.
   const end = ev.target.closest('button[data-end]')
@@ -415,7 +418,8 @@ function cmdRenderSay() {
 // ↗ 밖으로 opens this brief alone in the browser (the server's `open`); the
 // office page is the person's screen and never moves.
 function cmdBriefBar(bar, s) {
-  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>' + (cmdHib() ? hibBriefButton(s.file) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
+  if (cmdHib()) hibBriefWire(bar)
   bar.querySelector('.out').onclick = async () => { const j = await cmdPost({ kind: 'brief_open', file: s.file, via: lastPlace(s.path) }); if (j) toast('↗ ' + (j.sent || '열었습니다')) }
   bar.querySelector('.shut').onclick = cmdShut
 }
@@ -538,9 +542,10 @@ function cmdRenderCall(bar, doc, dec, s) {
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
     bar.innerHTML = '<b title="' + cmdEsc(cmdWho(s)) + '">' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.summary || s.name) + '</b>' + (s.summary && s.summary !== s.name ? '<span class="slug">' + cmdEsc(s.name) + '</span>' : '') + '<span class="m">' + cmdEsc(s.window || '') + '</span>'
       + '<span class="seg" title="마지막 답 ↔ 카드 (T · 입력칸에서는 ⌥T)"><button data-v="said" title="마지막 답"><span class="key">T</span>답</button><button data-v="card" title="카드: 지난 대화, 파일, 작업, btw">🗂 카드</button></span>'
-      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗</button>' + (typeof crewButtons === 'function' ? crewButtons(s.sid) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
+      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗</button>' + (typeof crewButtons === 'function' ? crewButtons(s.sid) : '') + (cmdHib() ? hibButtons(s.sid) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.go').onclick = () => cmdFocus(s)
     if (typeof crewWire === 'function') crewWire(bar, s)
+    if (cmdHib()) hibWire(bar, s)
     bar.querySelector('.seg').onclick = (ev) => { const b = ev.target.closest('button[data-v]'); if (b) cmdView(b.dataset.v) }
     bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
