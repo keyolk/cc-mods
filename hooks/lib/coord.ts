@@ -334,7 +334,7 @@ export const MCP_WAIT =
 // worker is in a coordinator's ledger). The prompt names it so the worker
 // calls it; a turn that ends without one gets a self-check prompt.
 export const STATUS_RULE =
-  "- Keep your `status` tool current (cc-mods registers it in this session): call it when your state changes and before you end each turn, with state (working, blocked with a kind, done, error), step, next, and needs when someone must act. The coordinator reads it on your turn's end instead of asking you again; it does not replace the reports here. A turn that ends without it is followed by one prompt asking for it."
+  "- Keep your `status` tool current (cc-mods registers it in this session): call it when your state changes and before you end each turn, with state (working, blocked with a kind, done, error), step, next, and needs when someone must act. The coordinator reads it on your turn's end instead of asking you again; it does not replace the reports here. A turn that ends without it is followed by one prompt asking for it. Blocked on a login in a tweb pane (a 2FA code, a Confirm button, a passkey): declare blocked with kind auth and pane (%N), ask (otp|click|device) and target (the CSS selector of the code input or the button; for otp also submit, the button that sends it), and the person answers it from the office; never ask for the code in a message."
 
 // A worker on a cc-mods worktree: it has no node_modules or
 // .claude-plugin/types, a plain `bun install` hangs, and bare tsc runs out of

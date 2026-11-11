@@ -111,6 +111,7 @@ body.picking #c { cursor: crosshair; }
 #settings { position: fixed; left: 14px; top: 52px; width: 340px; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 13px; }
 /* The credential radar: one for the whole office, not per session. */
 #authp { position: fixed; right: 14px; top: 52px; width: min(420px, calc(100% - 28px)); max-height: calc(100% - 70px); overflow: auto; display: none; z-index: 8; background: #fffaf0; color: #2a2033; border: 3px solid var(--line); border-radius: 16px; box-shadow: 0 5px 0 var(--line); padding: 12px 14px; font-size: 12.5px; }
+#authp .authx { float: right; font: 13px -apple-system, sans-serif; border: 2px solid rgba(59,42,53,.35); border-radius: 8px; background: #fff; padding: 0 7px; cursor: pointer; margin: -2px -2px 0 6px; }
 #authp .h { font-family: Jua, sans-serif; margin: 8px 0 4px; } #authp .h:first-child { margin-top: 0; }
 #authp .r { background: #f3ecdf; border-radius: 8px; padding: 4px 8px; margin: 3px 0; overflow-wrap: anywhere; }
 #authp .m { color: #7a7090; font-size: 11px; }
@@ -363,7 +364,7 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
 // reloads itself: after a short wait, a few times (the count is in
 // sessionStorage, so a file that never loads cannot make a reload loop),
 // then it stops and shows a banner with a button.
-var MODS = [['brands.js','brandOf'],['skins.js','guildSprite'],['resources.js','drawResourceBoard'],['auth.js','authHtml'],['review.js','revRenderList'],['crew.js','crewButtons'],['look.js','cmdView'],['briefline.js','cmdRenderBriefs'],['slx.js','slxFoot'],['table.js','tblHtml'],['defer.js','dfrUntil'],['hibernate.js','hibRow'],['agenda.js','agRenderLine'],['paths.js','pathScan'],['command.js','cmdRender']]
+var MODS = [['layers.js','layerEsc'],['brands.js','brandOf'],['skins.js','guildSprite'],['resources.js','drawResourceBoard'],['auth.js','authHtml'],['review.js','revRenderList'],['crew.js','crewButtons'],['look.js','cmdView'],['briefline.js','cmdRenderBriefs'],['slx.js','slxFoot'],['table.js','tblHtml'],['defer.js','dfrUntil'],['hibernate.js','hibRow'],['agenda.js','agRenderLine'],['paths.js','pathScan'],['command.js','cmdRender']]
 var MOD_KEY = 'office.modReload', MOD_TRIES = 5
 var MODFAIL = [], modTimer = 0, modBar = null
 function modErr(el) { MODFAIL.push(el.getAttribute('src')) }
@@ -408,6 +409,7 @@ function modEnsure(late) {
   return false
 }
 </script>
+<script src="layers.js" onerror="modErr(this)"></script>
 <script src="brands.js" onerror="modErr(this)"></script>
 <script src="skins.js" onerror="modErr(this)"></script>
 <script src="resources.js" onerror="modErr(this)"></script>
@@ -1095,10 +1097,14 @@ function officeKey(e) {
   const open = card.style.display === 'block'
   const k = keyName(e)
   const hit = (fn) => { e.preventDefault(); fn() }
-  // The command view (command.js) takes the keys while it is up, and D.
-  if (typeof commandKey === 'function' && commandKey(e, k, typing)) return
+  // A popup menu floats over everything: its keys (Esc too) come first.
   if (quietMenu.id_ && menuKey(quietMenu, k, (b) => pickQuiet(b.dataset.v), hideQuiet, hit)) return
   if (placeMenu.v && menuKey(placeMenu, k, (b) => pickPlace(b.dataset.k), hidePlaces, hit)) return
+  // Esc closes the layer opened last (layers.js): 인증 over 지휘 goes
+  // first. A box keeps its own Esc (it leaves the box).
+  if (k === 'Escape' && !typing && typeof layerEsc === 'function' && layerEsc()) return hit(() => {})
+  // The command view (command.js) takes the keys while it is up, and D.
+  if (typeof commandKey === 'function' && commandKey(e, k, typing)) return
   // ⌥ works everywhere, the reply box and TWeb's normal mode included: TWeb
   // keeps bare g, z, x, f, j, k… for itself there but passes ⌥ chords on.
   if (e.altKey) {
@@ -1108,19 +1114,14 @@ function officeKey(e) {
     if (k === 'f') return hit(() => { cam.user = false; camGo.on = false; fit() })
   }
   if (typing) return // the reply box handles its own keys
-  if (viewer.path && k === 'Escape') return hit(closeViewer)
   if (viewer.path && k === 'o') return hit(() => (e.shiftKey ? showPlaces(viewer.path, viewer.querySelector('.place')) : openLink(viewer.path)))
   if (open && (k === '<' || k === '>') && card.turnStep) return hit(() => turnKey(k === '<' ? -1 : 1))
   if (k === ',') return hit(() => (settings.style.display === 'block' ? closeSettings() : openSettings()))
-  if (settings.style.display === 'block' && k === 'Escape') return hit(closeSettings)
-  if (k === 'Escape' && authp.style.display === 'block') return hit(() => toggleAuth(false))
   if (k === 'k' && !open) return hit(() => toggleAuth())
-  if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block' })
-  if (help.style.display === 'block' && k === 'Escape') return hit(() => { help.style.display = 'none' })
+  if (k === '?') return hit(() => { help.style.display = help.style.display === 'block' ? 'none' : 'block'; if (help.style.display === 'block') layerUp('help', () => help.style.display === 'block', () => { help.style.display = 'none' }) })
   if (pendingMove && k === 'Enter') return hit(doMove)
   if (pendingMove && k === 'Escape') return hit(cancelMove)
   if (k === 'Escape' && picked.size && pickbar.dataset.mode) return hit(() => { pickbar.dataset.mode = ''; renderPicks() })
-  if (k === 'Escape' && open) return hit(closeCard)
   if (k === 'Escape' && (picked.size || pickMode)) return hit(() => setPickMode(false))
   if (k === 'v' && !open) return hit(() => setPickMode(!pickMode))
   if (k === 'Tab') return hit(() => step(e.shiftKey ? -1 : 1))
@@ -1498,7 +1499,7 @@ function renderAuthChip() {
 // The line a press left at the panel's top, until the panel closes.
 let authSaid = ''
 function toggleAuth(on = authp.style.display !== 'block') {
-  if (on && authNow) { authPaint(authp, authHtml(authNow, authSaid, authTo)); authp.style.display = 'block' } else { authp.style.display = 'none'; authSaid = '' }
+  if (on && authNow) { authPaint(authp, authHtml(authNow, authSaid, authTo)); authp.style.display = 'block'; layerUp('auth', () => authp.style.display === 'block', () => toggleAuth(false)) } else { authp.style.display = 'none'; authSaid = '' }
 }
 authchip.onclick = () => toggleAuth()
 authp.addEventListener('toggle', (e) => { if (e.target.tagName === 'DETAILS') authFold.open = e.target.open }, true)
@@ -1513,6 +1514,8 @@ async function authSend(id) {
   } catch { return null }
 }
 authp.addEventListener('click', async (e) => {
+  // ✕ (auth.js authHtml): closed like Esc, the click outside or K.
+  if (e.target.closest('button.authx')) return toggleAuth(false)
   const said = await authPress(e, authSend)
   if (said === null) return
   authSaid = said
@@ -1678,6 +1681,7 @@ function cardPanes(host, d, pn, opts = {}) {
 async function openCard(sid, kind = null) {
   cardSid = sid
   card.style.display = 'block'
+  layerUp('card', () => card.style.display === 'block', closeCard)
   if (!card.classList.contains('max')) restoreCardLayout()
   for (const e of ents.values()) e.sel = e.id === sid
   lookAt(ents.get(sid))
@@ -2035,6 +2039,7 @@ async function viewFile(path, sid = cardSid) {
   viewer.querySelector('.out').onclick = () => openLink(path)
   viewer.querySelector('.place').onclick = (ev) => showPlaces(path, ev.currentTarget)
   viewer.path = path
+  layerUp('viewer', () => !!viewer.path, closeViewer)
   const body = viewer.querySelector('.body')
   if (/\.(html?|pdf|svg)$/i.test(path)) { body.innerHTML = '<iframe sandbox="allow-scripts allow-popups" src="' + url + '"></iframe>'; return }
   if (/\.(png|jpe?g|gif|webp)$/i.test(path)) { body.innerHTML = '<img src="' + url + '">'; return }
@@ -2159,6 +2164,7 @@ function openSettings() {
   })
   settings.querySelectorAll('input[type=checkbox]').forEach((el) => { el.onchange = () => { setPref(el.dataset.k, el.checked ? '1' : '0'); drawHints(); toast('⚙ 저장했습니다') } })
   settings.style.display = 'block'
+  layerUp('settings', () => settings.style.display === 'block', closeSettings)
 }
 const closeSettings = () => { settings.style.display = 'none' }
 document.getElementById('gear').onclick = () => (settings.style.display === 'block' ? closeSettings() : openSettings())

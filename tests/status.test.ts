@@ -3,7 +3,7 @@
 // coordinator sees it (observe's wake, the roster, the prompts). No engine.
 import { expect, test } from 'claude-code/testing'
 
-import { KINDS, SELF_CHECK_MAX, STATES, STATUS_TOOL, parseStatus, parseStatusFile, sameStatus, selfCheckDue, statusLine, workerOf, type Status } from '../hooks/lib/status'
+import { ASKS, KINDS, SELF_CHECK_MAX, STATES, STATUS_TOOL, parseStatus, parseStatusFile, sameStatus, selfCheckDue, statusLine, workerOf, type Status } from '../hooks/lib/status'
 import { STATUS_OLD_MS, STATUS_RULE, coordRoster, coordRules, emptyLedger, observe, parsePanes, statusTail, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
 
 const NOW = 1_800_000_000_000
@@ -25,6 +25,27 @@ test('status: the tool takes Rex\'s states and kinds, refuses what it does not k
   expect(long.step!.endsWith('…')).toBe(true)
   // Empty fields are left out, not stored empty.
   expect(parseStatus({ state: 'done', msg: '  ', kind: '' }, NOW)).toEqual({ state: 'done', at: NOW })
+})
+
+test('status: a login wait names its pane, what it asks and the element, and only with blocked:auth', () => {
+  expect(STATUS_TOOL.inputSchema.properties.ask.enum).toEqual([...ASKS])
+  const otp = parseStatus({ state: 'blocked', kind: 'auth', needs: 'GitHub 2FA', pane: '%601', ask: 'otp', target: '#app_totp', submit: 'button[type=submit]' }, NOW) as Status
+  expect(otp).toEqual({ state: 'blocked', kind: 'auth', needs: 'GitHub 2FA', pane: '%601', ask: 'otp', target: '#app_totp', submit: 'button[type=submit]', at: NOW })
+  expect(statusLine(otp)).toContain('relay otp %601')
+  // submit means something only for a code; device has no element.
+  expect(parseStatus({ state: 'blocked', kind: 'auth', pane: '%1', ask: 'click', target: '#go', submit: '#x' }, NOW)).toEqual({ state: 'blocked', kind: 'auth', pane: '%1', ask: 'click', target: '#go', at: NOW })
+  expect(parseStatus({ state: 'blocked', kind: 'auth', pane: '%1', ask: 'device', target: '#x' }, NOW)).toEqual({ state: 'blocked', kind: 'auth', pane: '%1', ask: 'device', at: NOW })
+  expect(parseStatus({ state: 'blocked', kind: 'question', pane: '%1', ask: 'otp', target: '#x' }, NOW)).toContain('only with state blocked, kind auth')
+  expect(parseStatus({ state: 'working', pane: '%1' }, NOW)).toContain('only with state blocked, kind auth')
+  expect(parseStatus({ state: 'blocked', kind: 'auth', pane: '601', ask: 'otp', target: '#x' }, NOW)).toContain('tmux pane id')
+  expect(parseStatus({ state: 'blocked', kind: 'auth', pane: '%1', ask: 'sms', target: '#x' }, NOW)).toContain('ask must be')
+  expect(parseStatus({ state: 'blocked', kind: 'auth', pane: '%1', ask: 'otp' }, NOW)).toContain('needs target')
+  // A login wait without them is as before: the office only shows its needs.
+  expect(parseStatus({ state: 'blocked', kind: 'auth', needs: 'aws sso login' }, NOW)).toEqual({ state: 'blocked', kind: 'auth', needs: 'aws sso login', at: NOW })
+  expect(parseStatusFile(JSON.stringify(otp))).toEqual(otp)
+  // The worker is told to declare it and never to ask for the code in a message.
+  expect(STATUS_RULE).toContain('ask (otp|click|device)')
+  expect(STATUS_RULE).toContain('never ask for the code in a message')
 })
 
 test('status: a file is read back as written, and a broken one is none', () => {

@@ -521,7 +521,7 @@ def status_of(w: dict) -> dict | None:
     st = w.get("status")
     if not isinstance(st, dict) or st.get("state") not in STATUS_STATES:
         return None
-    keep = ("state", "kind", "step", "next", "needs", "progress", "msg", "link", "at")
+    keep = ("state", "kind", "step", "next", "needs", "progress", "msg", "link", "pane", "ask", "target", "submit", "at")
     return {k: st[k] for k in keep if st.get(k) not in (None, "")}
 
 

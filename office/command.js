@@ -164,12 +164,26 @@ function cmdSwitch() {
   m.innerHTML = '<button data-m="office" class="' + (cmd.on ? '' : 'on') + '">🏢 사무실</button><button data-m="command" class="' + (cmd.on ? 'on' : '') + '">🎖 지휘' + (cmd.pendingN ? ' <b>' + cmd.pendingN + '</b>' : '') + '</button>'
 }
 
+// The 지휘 view's own Esc, before it closes (layers.js step): a trigger's
+// armed choice (slx.js) backs out first, then ⏰ 나중에's choices, then a
+// brief opened from 📚 전체 브리프 goes back to 📚 (its ← 📚), then the open
+// row or 📚 itself. False: nothing left to back out of, the view closes.
+function cmdEscStep() {
+  if (cmd.sel?.slx && cmd.armed?.slx) { cmd.armed = null; cmdRenderDoc(); return true }
+  if (typeof dfr !== 'undefined' && dfr.armed) { dfr.armed = null; tblRenderTabs(); return true }
+  if (cmd.sel?.fromLib) { cmd.sel = { library: true }; cmd.armed = null; cmd.q = null; cmdRender(); return true }
+  if (cmd.sel) { cmdShut(); return true }
+  return false
+}
+
 function setCommand(on) {
   // Leaving the view is a close as much as ✕ is: the decisions waiting now
   // do not open their brief again on their own when it is opened next.
   if (cmd.on && !on) { cmd.sel = null; cmd.armed = null; cmd.q = null; cmd.shut = (cmd.data?.pending || []).map((p) => p.file).join('|') }
   cmd.on = on
   cmdEl.classList.toggle('on', on)
+  // On the Esc stack (layers.js), with its own steps before it closes.
+  if (on && typeof layerUp === 'function') layerUp('command', () => cmd.on, () => setCommand(false), cmdEscStep)
   try { localStorage.setItem('office.mode', on ? 'command' : 'office') } catch { /* private window: the mode is only not remembered */ }
   cmdSwitch()
   clearTimeout(cmd.timer)
@@ -245,6 +259,7 @@ function cmdRender() {
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="rtabs"></div><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
+    if (typeof tblRelayKey === 'function') cmdEl.querySelector('.list').onkeydown = tblRelayKey
     // A module the page failed to load (see the module guard in office.html)
     // leaves its names undefined: skip that part, and draw the rest.
     if (typeof cmdBriefClick === 'function') cmdEl.querySelector('.briefs').onclick = cmdBriefClick
@@ -252,11 +267,15 @@ function cmdRender() {
   }
   // The table scrolls on its own: a redraw keeps where it was.
   const list = cmdEl.querySelector('.list'), keep = list.scrollTop, keepT = list.querySelector('.tblwrap')?.scrollTop || 0
+  // A code half typed in a relay box (table.js) survives the 3 s redraw.
+  const codes = {}, codeAt = document.activeElement?.matches?.('input.relay-code') ? document.activeElement.dataset.sid : null
+  list.querySelectorAll('input.relay-code').forEach((i) => { if (i.value) codes[i.dataset.sid] = i.value })
   // The slx line under the table: what is hidden, what runs, the bulk choices.
   list.innerHTML = (typeof tblHtml === 'function' ? tblHtml() : '<div class="empty">table.js 를 불러오지 못했습니다. 곧 다시 불러옵니다.</div>') + (cmdHib() ? hibFoot() : '') + (cmdSlx() ? slxFoot() : '') + (typeof doneFoot === 'function' ? doneFoot() : '')
   list.scrollTop = keep
   const wrap = list.querySelector('.tblwrap')
   if (wrap) wrap.scrollTop = keepT
+  list.querySelectorAll('input.relay-code').forEach((i) => { if (codes[i.dataset.sid]) i.value = codes[i.dataset.sid]; if (i.dataset.sid === codeAt) i.focus() })
   if (typeof cmdRenderBriefs === 'function') cmdRenderBriefs()
   if (cmdAgenda()) agRenderLine()
   cmdRenderSay()
@@ -280,6 +299,9 @@ function cmdFold(which) {
 }
 
 function cmdClick(ev) {
+  if (typeof tblRelayClick === 'function' && ev.target.closest('button[data-relay]')) return void tblRelayClick(ev)
+  // The code box is typing, not a press on its row.
+  if (ev.target.closest('tr.relay')) return
   if (typeof doneClick === 'function' && doneClick(ev)) return
   if (cmdSlx() && slxClick(ev)) return
   if (cmdHib() && hibClick(ev)) return
@@ -883,10 +905,10 @@ function commandKey(e, k, typing) {
   const hit = (fn) => { e.preventDefault(); fn(); return true }
   // ⏰ 나중에's choices, while up, take the digits, Enter and Esc first; Z puts them up.
   if (typeof dfrKey === 'function' && dfrKey(k, hit)) return true
-  // A trigger's armed choice (slx.js) backs out first: 3 and 4 take numbers of their own.
-  if (k === 'Escape' && cmd.sel?.slx && cmd.armed?.slx) return hit(() => { cmd.armed = null; cmdRenderDoc() })
-  if (k === 'Escape' && cmd.sel) return hit(cmdShut)
-  if (k === 'Escape' || k === 'd') return hit(() => setCommand(false))
+  // Esc is the stack's (layers.js: cmdEscStep, then the view closes); a page
+  // without layers.js keeps the steps here.
+  if (k === 'Escape' && typeof layerEsc !== 'function') return hit(() => { if (!cmdEscStep()) setCommand(false) })
+  if (k === 'd') return hit(() => setCommand(false))
   // j/k only: the arrows walk the floor beside the panel.
   if (k === 'j' || k === 'k') return cmdWalk(e, k)
   // Tab / ⇧Tab: the open row's tabs; with none open (or one tab) the floor's.
