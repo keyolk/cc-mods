@@ -49,6 +49,14 @@ class BriefsCase(unittest.TestCase):
         self.cli = mock.patch.object(command, "brief_bin", return_value=None)
         self.cli.start()
         self.addCleanup(self.cli.stop)
+        # The view reads this machine's transcripts for what the person
+        # handled (office/handled.py): none here.
+        import handled
+        p = mock.patch.object(handled, "ROOT", str(self.tmp / "projects"))
+        p.start()
+        self.addCleanup(p.stop)
+        handled._files.clear()
+        handled._list.update(at=0.0, paths=[])
         # The view reads the slx inbox; this machine's slx must not answer.
         p = mock.patch.object(slx, "binary", return_value=None)
         p.start()
@@ -1855,6 +1863,19 @@ class CommandKeysTest(unittest.TestCase):
             return [asked, cmd.sel.sid, cmd.sel.summary, cmd.row]
         """)
         self.assertEqual(got, [["w4"], "w4", "Twingate 조사", "s:w4"])
+
+    def test_what_the_person_handled_leaves_my_turn_for_a_fold_of_its_own(self):
+        got = self.run_js("""
+            table()
+            cmd.data.table.push(
+              { key: 's:w5', sid: 'w5', name: 'luther', coord: 'c1', relation: 'owned', live: true, state: 'working', decisions: [], call: false, reviews: [], status: { state: 'blocked', kind: 'question', needs: '보낼지' }, handled: { how: 'working', at: Date.now() / 1000 } },
+              { key: 'x:C1/1.2', name: 'Luther Lee', decisions: [], reviews: [], slx: [], handled: { how: 'reply', at: Date.now() / 1000 } })
+            const need = (k) => tblAll().find((R) => R.row.key === k).needs
+            const html = tblHtml()
+            cmdFold('done'); const open = tblHtml(); cmdFold('done')
+            return [need('s:w5'), need('x:C1/1.2'), /✔ 처리 중 2/.test(html), html.includes('data-row="s:w5"'), open.includes('data-row="s:w5"'), open.includes('지시 받고 일하는 중'), open.includes('스레드에 답함')]
+        """)
+        self.assertEqual(got, [False, False, True, False, True, True, True])
 
     def test_an_older_server_without_a_table_still_gets_a_row_each(self):
         got = self.run_js("""

@@ -46,6 +46,7 @@ import turn  # noqa: E402 - office/turn.py, the one table of sessions and what e
 import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat incidents)
 import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes
+import handled  # noqa: E402 - office/handled.py, what the person already handled (transcripts)
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
@@ -738,7 +739,8 @@ def view(people: list[dict], ask=None, deps: list[dict] | None = None) -> dict:
     decl = declared(by_sid, ledger_w)
     for sid, d in decl.items():
         d["summary"] = label(sid, sums, cwd(sid), ledger_w.get(sid))
-    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held, now=now, declared=decl, deps=deps)
+    seen = handled.seen(handled.scan(now), inbox["items"])
+    rows = turn.table(waiting, calls, reviews, coords, inbox["items"], held=held, now=now, declared=decl, deps=deps, seen=seen)
     for r in rows:
         if r.get("wake"):
             defer.wake(r["sid"], r["wake"])

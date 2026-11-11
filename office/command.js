@@ -296,6 +296,7 @@ function cmdFold(which) {
   if (which === 'others') tbl.othersOpen = !tbl.othersOpen
   else if (which === 'slx') tbl.slxOpen = !tbl.slxOpen
   else if (which === 'dfr') tbl.dfrOpen = !tbl.dfrOpen
+  else if (which === 'done') tbl.doneOpen = !tbl.doneOpen
   cmdRender()
 }
 
