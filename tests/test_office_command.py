@@ -454,6 +454,43 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual(j["b"], "⚙ working · tests · PR 열기")
         self.assertEqual(j["c"], "✅ done · https://github.com/keyolk/cc-mods/pull/121")
 
+    def test_the_table_puts_what_the_person_must_do_above_triggers_with_its_text_and_links(self):
+        # office-gcl asked for a merge: it was row 4 of 28, named by its slug, its
+        # needs text small and grey, under 24 Slack mentions.
+        js = pathlib.Path(__file__).parents[1] / "office" / "table.js"
+        prog = textwrap.dedent(r"""
+            const vm = require('vm'), fs = require('fs')
+            const el = () => ({ appendChild() {}, querySelector: () => null })
+            const ctx = { console, JSON, Date, document: { createElement: el, head: el(), addEventListener() {} },
+              cmdEsc: (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]),
+              cmdPending: () => null, cmdCall: () => null, cmdRev: () => true, cmdOpen: () => [], revList: () => [{ coord: 'c', id: 'p', title: 'PR' }], slxList() {}, slxMk: () => '', slxLine: (x) => x, slxData: () => ({ items: [{ id: '1', icon: '📨', text: 'a' }, { id: '2', icon: '📨', text: 'b' }] }), cmd: { sent: {} } }
+            vm.createContext(ctx)
+            vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + `
+              var rows = [{ key: 'x:1', name: 'alice', decisions: [], reviews: [], slx: ['1'], at: 5 }, { key: 'x:2', name: 'bob', decisions: [], reviews: [], slx: ['2'], at: 4 },
+                { key: 's:r', sid: 'r', name: 'rev', decisions: [], reviews: [['c', 'p']], at: 3 },
+                { key: 's:g', sid: 'g', name: 'office-gcl', live: true, decisions: [], reviews: [], byStatus: true, at: 9,
+                  status: { state: 'blocked', kind: 'permission', needs: '사람이 https://github.com/keyolk/gcl/pull/22 → https://github.com/keyolk/gcl/pull/23 merge. 설치: \`brew install gcl\`' } }]
+              cmd.data = { table: rows }
+              var g = tblSplit(tblAll()), html = tblHtml(), order = tblOrder()
+            `, ctx)
+            console.log(JSON.stringify({ act: ctx.g.act.map((R) => R.row.key), look: ctx.g.look.map((R) => R.row.key), slx: ctx.g.slx.map((R) => R.row.key), html: ctx.html, order: ctx.order }))
+        """)
+        r = subprocess.run(["node", "-e", prog, str(js)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        self.assertEqual((j["act"], j["look"], j["slx"]), (["s:g"], ["s:r"], ["x:1", "x:2"]))
+        self.assertEqual(j["order"], ["s:g", "s:r", "x:1", "x:2"])
+        h = j["html"]
+        self.assertLess(h.index("지금 내가 해야 할 것"), h.index("office-gcl"))
+        self.assertLess(h.index("office-gcl"), h.index("data-row=\"s:r\""))
+        self.assertLess(h.index("data-row=\"s:r\""), h.index("data-row=\"x:1\""))
+        # The needs text is the line: its URLs are links (a PR as owner/repo#N), a backtick span is code.
+        self.assertIn('<b class="do"', h)
+        self.assertIn('<a href="https://github.com/keyolk/gcl/pull/22" target="_blank" rel="noopener">keyolk/gcl#22</a>', h)
+        self.assertIn("keyolk/gcl#23", h)
+        self.assertIn("<code>brew install gcl</code>", h)
+        self.assertIn("data-copy=", h)
+
     def test_a_brief_marked_done_is_listed_apart_from_one_only_answered(self):
         # `brief done` writes sidecar.done; the view lists those under `done`
         # (newest first, a day old is folded), and an answered brief is not one.

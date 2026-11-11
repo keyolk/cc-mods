@@ -27,6 +27,11 @@ const TABLE_CSS = `
 #command table.turn td.who { overflow: hidden; }
 #command table.turn td.who b { font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #command table.turn td.who .m { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#command table.turn td.who b.do { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+#command table.turn td.who b.do a { color: #1a5fb4; text-decoration: underline; }
+#command table.turn td.who b.do code { font: 12px ui-monospace, Menlo, monospace; background: #f3ecdf; border-radius: 4px; padding: 0 3px; }
+#command table.turn tr.act td:first-child { box-shadow: inset 4px 0 0 #e0793a; }
+#command table.turn tr.grp td { background: #fff3e6; font-weight: 600; cursor: default; padding-top: 6px; }
 #command table.turn td.st { width: 7.5em; white-space: nowrap; }
 #command table.turn td.ago { width: 3.2em; text-align: right; color: #7a7090; white-space: nowrap; }
 #command table.turn tr:hover td { background: #f3ecdf; }
@@ -59,6 +64,34 @@ const tblSlxFolded = (all = tblAll()) => !tbl.slxOpen && all.filter((R) => R.nee
 // A row's name for the person, and its slug when that says something else.
 const tblName = (r) => r.summary || r.name || (r.sid || '').slice(0, 8)
 const tblSlug = (r) => (r.summary && r.name && r.summary !== r.name ? r.name : '')
+
+// A row that waits on the person to do something (a session blocked by its
+// own status, a pane dialog, a missing dependency, a brief's question) comes
+// before the rest of 내 차례 (a review to look at, a woken memo, a lost MCP
+// server) and before the triggers: "gcl PR을 merge해야 한다"는 24개 Slack
+// 멘션 사이에서 보이지 않았다.
+const tblIsAct = (R) => R.needs && !tblOwnSlx(R) && !!(R.row.byStatus || R.c || R.row.dep || R.ds.length)
+// 내 차례's rows in the table's order: to do, then to look at, then triggers.
+const tblSplit = (all) => {
+  const needs = all.filter((R) => R.needs)
+  return { act: needs.filter(tblIsAct), look: needs.filter((R) => !tblIsAct(R) && !tblOwnSlx(R)), slx: needs.filter(tblOwnSlx) }
+}
+// What the person is to do, as the session wrote it: its `needs` text (a
+// blocked status) or the dependency's text, else ''. Draw it, not the name.
+const tblDoText = (R) => {
+  if (R.row.dep) return R.row.dep.text || ''
+  const st = R.row.status
+  return R.row.byStatus && !R.ds.length && !R.c && st && st.state === 'blocked' ? st.needs || '' : ''
+}
+// Text for a line: URLs are links (a GitHub PR as owner/repo#N), `x` is code.
+function tblLinkify(text) {
+  return cmdEsc(text)
+    .replace(/https?:\/\/(?:(?!&(?:quot|lt|gt);)[^\s)'`])+/g, (u) => {
+      const m = /^https?:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/(?:pull|issues)\/(\d+)/.exec(u)
+      return '<a href="' + u + '" target="_blank" rel="noopener">' + (m ? m[1] + '#' + m[2] : u) + '</a>'
+    })
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+}
 
 // The rows, resolved against what /command holds now: { row, ds (decisions),
 // c (the call, unless answered in the last minute), rs (review items), needs }.
@@ -183,7 +216,8 @@ function tblShow(R, k, render = true) {
 // Folded trigger rows are not walked; the open one is.
 function tblOrder() {
   const all = tblAll(), folded = tblSlxFolded(all)
-  return all.filter((R) => R.needs && !(folded && tblOwnSlx(R) && R.row.key !== cmd.row)).map((R) => R.row.key)
+  const g = tblSplit(all)
+  return [...g.act, ...g.look, ...g.slx.filter((R) => !(folded && R.row.key !== cmd.row))].map((R) => R.row.key)
 }
 // The row of what is open now: the one opened from the table, else the row
 // holding the picked brief, session or review item (a chip or a link opened
@@ -296,7 +330,15 @@ function tblRow(R, other) {
   const cp = tblCmd(R) ? '<button class="end" data-copy="' + cmdEsc(R.row.key) + '" title="명령 복사: ' + cmdEsc(tblCmd(R)) + '">📋</button>' : ''
   // A trigger's own row carries its mark for the slx line's bulk choices.
   const mk = String(r.key).startsWith('x:') && R.xs.length && typeof slxMk === 'function' ? slxMk(R.xs[0]) + ' ' : ''
-  return '<tr data-row="' + cmdEsc(r.key) + '" class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
+  // What it asks of the person is the line; the session is the small one.
+  const doing = !other && tblDoText(R)
+  if (doing) {
+    const who = [r.isCoord ? '🎖' : '', tblName(r), slug, R.row.status && R.row.status.kind ? TBL_KIND[R.row.status.kind] || R.row.status.kind : ''].filter(Boolean).join(' · ')
+    return '<tr data-row="' + cmdEsc(r.key) + '" class="act' + (cmd.row === r.key ? ' sel' : '') + '"><td class="who"><b class="do" title="' + cmdEsc(doing) + '">' + tblLinkify(doing) + '</b>'
+      + '<span class="m">' + cmdEsc(who) + '</span></td>'
+      + '<td class="st">' + tblCells(R) + cp + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
+  }
+  return '<tr data-row="' + cmdEsc(r.key) + '" class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + (R.needs && tblIsAct(R) ? ' act' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
     + (slug || sub || ask ? '<span class="m">' + (slug ? '<span class="slug">' + cmdEsc(slug) + '</span> ' : '') + cmdEsc([sub, ask].filter(Boolean).join(' · ')) + '</span>' : '') + '</td>'
     + '<td class="st">' + tblCells(R) + cp + end + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
 }
@@ -305,7 +347,7 @@ function tblRow(R, other) {
 // Nothing is drawn for what is empty.
 function tblHtml() {
   const all = tblAll(), others = all.filter((R) => !R.needs && !R.deferred), later = all.filter((R) => R.deferred)
-  const slxRows = all.filter((R) => R.needs && tblOwnSlx(R)), needs = all.filter((R) => R.needs && !tblOwnSlx(R))
+  const g = tblSplit(all), slxRows = g.slx, needs = [...g.act, ...g.look]
   const folded = tblSlxFolded(all)
   tbl.order = tblOrder()
   // A row picked from under 그 밖 shows there even folded.
@@ -313,7 +355,12 @@ function tblHtml() {
   const out = []
   // 내 차례 counts what sessions and briefs wait on; triggers are candidates, counted on their own line.
   if (needs.length || slxRows.length) out.push('<h3>✋ 내 차례 ' + needs.length + (slxRows.length ? ' <span class="m">+ 📨 ' + slxRows.length + '</span>' : '') + ' <span class="m">오래 기다린 순 · j/k 행 · Tab 탭</span></h3>')
-  const rows = needs.map((R) => tblRow(R, false))
+  const grp = (t) => '<tr class="grp"><td colspan="3">' + t + '</td></tr>'
+  const rows = []
+  if (g.act.length) rows.push(grp('🔶 지금 내가 해야 할 것 ' + g.act.length))
+  rows.push(...g.act.map((R) => tblRow(R, false)))
+  if (g.look.length) rows.push(grp('🔎 보거나 다시 연결할 것 ' + g.look.length))
+  rows.push(...g.look.map((R) => tblRow(R, false)))
   if (folded) {
     rows.push('<tr class="more" data-fold="slx"><td colspan="3">▸ 📨 slx ' + slxRows.length + ' <span class="m">세션 없는 멘션·incident · 펼치기</span></td></tr>')
     const open = slxRows.find((R) => R.row.key === cmd.row)
