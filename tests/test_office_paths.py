@@ -3,6 +3,8 @@
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -191,6 +193,70 @@ class ViewableTest(Home):
         self.say("~/exp/2026-11-04_termius_vra/2026-11-09_bridge-letter-ping_draft.md and a/b.ts")
         got = office.shown_paths(SID, ["~/exp/2026-11-04_termius_vra/2026-11-09_bridge-letter-ping_draft.md", "a/b.ts", "~/missing.md", "~/exp/x/unsaid.md"])
         self.assertEqual(got, {"~/exp/2026-11-04_termius_vra/2026-11-09_bridge-letter-ping_draft.md": str(self.draft), "a/b.ts": str(self.home / "src/a/b.ts")})
+
+
+# office/paths.js is a browser script (no exports): node runs it in a vm
+# context with no document, so only its pure parts load, and the test reads
+# pathCands and codePath off that context. The plugin test sandbox has no fs,
+# so this is where the browser scripts' tests live (as auth.js's and defer.js's).
+PATHS_HARNESS = """
+const vm = require('vm'), fs = require('fs')
+const ctx = { JSON, String }
+vm.createContext(ctx)
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx)
+process.stdout.write(JSON.stringify(vm.runInContext(process.argv[3], ctx)))
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class PathsJsTest(unittest.TestCase):
+    """Which runs of an answer's text office/paths.js asks the office about."""
+
+    def js(self, expr):
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(PATHS_HARNESS)
+        self.addCleanup(os.unlink, f.name)
+        src = pathlib.Path(__file__).parents[1] / "office" / "paths.js"
+        r = subprocess.run(["node", f.name, str(src), expr], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def code(self, *texts):
+        return self.js("(" + json.dumps(list(texts)) + ").map((t) => codePath(t))")
+
+    def cands(self, *texts):
+        return self.js("(" + json.dumps(list(texts)) + ").map((t) => pathCands(t).map((c) => c.p))")
+
+    def test_the_screenshot_draft_as_code_is_a_path(self):
+        d = "~/exp/2026-11-04_termius_vra/2026-11-09_bridge-letter-ping_draft.md"
+        self.assertEqual(self.code(d), [d])
+
+    def test_code_spans_that_are_not_paths_are_left_alone(self):
+        no = ["413421", "bun test", "a || b", "foo()", "--profile", "CP-852", "x", "and/or", "https://example.com/a.md"]
+        self.assertEqual(self.code(*no), [None] * len(no))
+        self.assertEqual(self.code("README.md", "office/paths.py:12", "~/exp/topic/"), ["README.md", "office/paths.py:12", "~/exp/topic"])
+
+    def test_absolute_tilde_and_relative_paths_in_plain_text_without_trailing_punctuation(self):
+        self.assertEqual(self.cands(
+            "초안은 ~/exp/a/b_draft.md 에 있습니다.",
+            "see /Users/me/exp/x.md, then ./src/a.ts:10.",
+            "edited office/paths.js and tests/test_office_paths.py",
+            "한글 ~/exp/2026_보고서/결과.md 도",
+        ), [
+            ["~/exp/a/b_draft.md"],
+            ["/Users/me/exp/x.md", "./src/a.ts:10"],
+            ["office/paths.js", "tests/test_office_paths.py"],
+            ["~/exp/2026_보고서/결과.md"],
+        ])
+
+    def test_a_colon_inside_a_folder_name_is_part_of_the_path_a_line_after_it_is_not(self):
+        f = "~/.claude/skills/sb:slack-followup/watch_thread_gestalt.py"
+        self.assertEqual(self.code(f), [f])
+        self.assertEqual(self.cands("ran ~/.claude/skills/sb:slack-followup/watch_ticket.py:40 again", "see http://127.0.0.1:8811/paths.js"),
+                         [["~/.claude/skills/sb:slack-followup/watch_ticket.py:40"], []])
+
+    def test_urls_and_prose_slashes_are_not_paths(self):
+        self.assertEqual(self.cands("https://github.com/keyolk/cc-mods/pull/102 and/or 1/2 of them", "read/write access"), [[], []])
 
 
 if __name__ == "__main__":
