@@ -17,6 +17,7 @@ import { filterPalette, paletteItems } from '../hooks/lib/palette'
 import { helpSections } from '../hooks/lib/help'
 import { displayName, healDue, healShown, healStuck, healTargets, healWanted, HEAL_GAPS_MS, HEAL_MAX_TRIES, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, resultText, serversNamed } from '../hooks/lib/mcpheal'
 import { goalChip, goalVisible, parseGoal } from '../hooks/lib/goal'
+import { deferredUntil, parseDeferred } from '../hooks/lib/defer'
 import { blockOf, nowAllowed, resumePrompt } from '../hooks/lib/unblock'
 import { accountStrip, bar, cacheHit, effortMix, hookName, modelStrip, seriesBy, parseCcoQuota, parseJev, parseQuota, parseUsage, share, shortModel, span, sparkline, until, usd, type Usage } from '../hooks/lib/usage'
 import { ROUTE_OFF, cacheGate, decide, resolveModel, routeLabel } from '../hooks/lib/route'
@@ -1903,6 +1904,21 @@ test('mcp heal: a server that failed at this session\'s start is a target; a liv
   expect(healTargets([], ['claude.ai Slack', 'portal'], ['portal', 'claude_ai_Gmail'])).toEqual(['claude.ai Slack'])
   expect(healTargets(['claude_ai_Slack'], ['claude.ai Slack'], [])).toEqual(['claude_ai_Slack'])
   expect(healTargets(['rea'], ['claude.ai Slack'], ['claude_ai_Slack'])).toEqual(['rea'])
+})
+
+test('lib/defer: the sessions set aside are the files whose until is ahead', () => {
+  const now = 1_800_000_000_000
+  const out = [
+    '11111111-1111-1111-1111-111111111111.json\t{"until": 1800003600.0, "seen": [], "memos": []}',
+    '22222222-2222-2222-2222-222222222222.json\t{"until": 1799999999, "memos": []}',
+    '33333333-3333-3333-3333-333333333333.json\t{"until": null, "memos": [{"id": "m1", "text": "x"}]}',
+    '../etc.json\t{"until": 1800003600}',
+    '44444444-4444-4444-4444-444444444444.json\tnot json',
+  ].join('\n')
+  expect([...parseDeferred(out, now)]).toEqual([['11111111-1111-1111-1111-111111111111', 1_800_003_600_000]])
+  expect(deferredUntil('{"until": 1800003600}', now)).toBe(1_800_003_600_000)
+  expect(deferredUntil(undefined, now)).toBe(undefined)
+  expect(deferredUntil('{"until": true}', now)).toBe(undefined)
 })
 
 test('mcp heal: only servers this session used are reconnected on their own', () => {

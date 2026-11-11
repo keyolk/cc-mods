@@ -8,13 +8,22 @@ about a session can be kept as a memo and sent to it later, or thrown away.
 
 One file per session, ~/.claude/state/office/defer/<sid>.json:
 
-  {"until": epoch|null, "since": epoch, "seen": [need keys], "woke": epoch|null,
-   "memos": [{"id", "text", "at"}]}
+  {"until": epoch|null, "since": epoch, "seen": [need keys], "ask": digest|null,
+   "woke": epoch|null, "memos": [{"id", "text", "at"}]}
 
 - until: set aside until then. `seen` are the needs the row held when it was
   set aside (office/turn.py need_keys); a need not among them (a new
-  question, a new wait, a new trigger) brings it back at once, and the time
-  is dropped.
+  decision, a new review, a new trigger) brings it back at once, and the
+  time is dropped. A wait on the session's own pane is told apart by what it
+  asks (`ask`, office.py ask_digest: the dialog on its screen, else the end
+  of its last answer), not by when the wait began: a session set aside goes
+  on idling, an MCP reconnect or a hook publishes waiting again, and the same
+  question asked again is not a new one (live 2026-11-11: gavin-jeong-f1,
+  set aside until Monday, was a new `c:<since>` within the hour).
+- Quiet everywhere while set aside (deferred_now): the floor's waiting
+  queue, the coordinator's wakes (hooks/coord.ts), the MCP auto-reconnect
+  (register.ts, whose /mcp reconnect makes the engine fire idle_prompt a
+  minute later) and the Notification hook's banner read this folder too.
 - woke: the time came. The row is in 내 차례 again (with its memos) until
   the person opens it.
 - memos: kept until sent (the session's reply, office.py memo_send) or
@@ -36,6 +45,9 @@ from datetime import datetime
 KINDS = ("defer_set", "defer_clear", "defer_seen", "memo_add", "memo_del", "memo_send")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
 MEMO_ID = re.compile(r"^m[0-9a-z]{1,24}$")
+DIGEST = re.compile(r"^[0-9a-f]{8,64}$")
+# What a session that asked nothing when it was set aside is kept as.
+NO_ASK = "0" * 16
 # A time: a duration (90m, 3h), or an ISO time (the slx 나중에 choices).
 UNTIL = re.compile(r"^(\d{1,4}[mh]|\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d))$")
 MAX_AHEAD = 31 * 86400
@@ -64,7 +76,8 @@ def _clean(d) -> dict:
         for m in d.get("memos") or []
         if isinstance(m, dict) and isinstance(m.get("id"), str) and MEMO_ID.match(m["id"]) and isinstance(m.get("text"), str)
     ]
-    return {"until": num(d.get("until")), "since": num(d.get("since")), "seen": [s for s in d.get("seen") or [] if isinstance(s, str)][:SEEN_MAX], "woke": num(d.get("woke")), "memos": memos}
+    ask = d.get("ask") if isinstance(d.get("ask"), str) and DIGEST.match(d.get("ask")) else None
+    return {"until": num(d.get("until")), "since": num(d.get("since")), "seen": [s for s in d.get("seen") or [] if isinstance(s, str)][:SEEN_MAX], "ask": ask, "woke": num(d.get("woke")), "memos": memos}
 
 
 def load(sid: str) -> dict:
@@ -109,6 +122,26 @@ def held(live: set[str]) -> dict[str, dict]:
     return out
 
 
+def deferred_now(now: float | None = None) -> dict[str, float]:
+    """sid -> until, for every session set aside now (its time not come).
+    Live or not: a reader outside the office (the Notification hook, a
+    coordinator) has no list of live sessions, and an ended one's file
+    names nothing that can ring."""
+    now = time.time() if now is None else now
+    out = {}
+    try:
+        names = os.listdir(folder())
+    except OSError:
+        return out
+    for n in names:
+        sid = n[:-5] if n.endswith(".json") else ""
+        if SID.match(sid):
+            u = load(sid)["until"]
+            if u and u > now:
+                out[sid] = u
+    return out
+
+
 def until_of(v: str, now: float | None = None) -> float | None:
     """A time the person picked as epoch seconds; None when it is not one, is
     past, or is more than a month away."""
@@ -137,10 +170,22 @@ def _wake(sid: str, why: str, now: float | None) -> None:
     d = load(sid)
     if not d["until"]:
         return
-    d.update(until=None, seen=[], since=None)
+    d.update(until=None, seen=[], since=None, ask=None)
     if why == "due":
         d["woke"] = time.time() if now is None else now
     save(sid, d)
+
+
+def adopt(sid: str, digest: str) -> None:
+    """A deferral kept without `ask` (set before it existed) takes the
+    question its session asks now as the one it was set aside on."""
+    if not DIGEST.match(digest or ""):
+        return
+    with _lock:
+        d = load(sid)
+        if d["until"] and not d["ask"]:
+            d["ask"] = digest
+            save(sid, d)
 
 
 def memo(sid: str, mid: str) -> dict | None:
@@ -162,31 +207,37 @@ def _memo_del(sid: str, mid: str) -> bool:
     return True
 
 
-def act(body: dict, live: set[str]) -> tuple[int, dict]:
+def act(body: dict, live: set[str], ask=None) -> tuple[int, dict]:
     """The person's choices on a session (memo_send is office.py's: it is the
     session's reply). `live`: the sessions up now; only those take a new
-    deferral or memo, a memo can still be thrown away."""
+    deferral or memo, a memo can still be thrown away. `ask`: sid -> what it
+    asks now (office.py ask_digest), read by the server when a deferral is
+    set, not taken from the page."""
     kind, sid = body.get("kind"), str(body.get("sid") or "")
     if not SID.match(sid):
         return 400, {"error": "bad sid"}
     if kind in ("defer_set", "memo_add") and sid not in live:
         return 404, {"error": "이 세션이 없습니다 (끝났거나 창이 닫혔습니다)"}
     with _lock:
-        return _act(kind, sid, body)
+        return _act(kind, sid, body, ask)
 
 
-def _act(kind, sid: str, body: dict) -> tuple[int, dict]:
+def _act(kind, sid: str, body: dict, ask=None) -> tuple[int, dict]:
     d = load(sid)
     if kind == "defer_set":
         until = until_of(body.get("until"))
         if until is None:
             return 400, {"error": "bad until"}
         seen = body.get("seen") if isinstance(body.get("seen"), list) else []
-        d.update(until=until, since=time.time(), seen=[str(s)[:300] for s in seen][:SEEN_MAX], woke=None)
+        # Read here, not taken from the page. Asking nothing is kept too
+        # (NO_ASK), so a question asked later is new; None is a file from
+        # before `ask`, or no reader.
+        digest = (ask(sid) or NO_ASK) if ask else None
+        d.update(until=until, since=time.time(), seen=[str(s)[:300] for s in seen][:SEEN_MAX], ask=digest if isinstance(digest, str) and DIGEST.match(digest) else None, woke=None)
         save(sid, d)
         return 200, {"ok": True, "until": until, "sent": datetime.fromtimestamp(until).strftime("%m/%d %H:%M") + "까지 미뤘습니다"}
     if kind == "defer_clear":
-        d.update(until=None, seen=[], since=None, woke=None)
+        d.update(until=None, seen=[], since=None, ask=None, woke=None)
         save(sid, d)
         return 200, {"ok": True, "sent": "다시 올렸습니다"}
     if kind == "defer_seen":

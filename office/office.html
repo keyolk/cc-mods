@@ -824,6 +824,11 @@ let meetingsNow = []
 let resourcesNow = []
 const meetingOf = (sid) => meetingsNow.find((m) => m.sids.includes(sid))
 let mutedSince = {}
+// Set aside in the 지휘 view (⏰ 나중에, office/defer.py): sid -> until. Out
+// of the queue and N/Tab like a 💤; a new question there lifts it (office.py
+// deferred), and /state stops naming it.
+let deferredUntil = {}
+const isDeferred = (id) => (deferredUntil[id] || 0) > Date.now() / 1000
 const isMuted = (id) => !!mutedSince[id] && (!mutedSince[id].until || mutedSince[id].until > Date.now() / 1000)
 const isZipped = (id) => !!mutedSince[id] && !mutedSince[id].until
 const wantsToTalk = (p) => p.doing === 'asking' || p.doing === 'alert'
@@ -831,7 +836,7 @@ const wantsToTalk = (p) => p.doing === 'asking' || p.doing === 'alert'
 // short one (under an hour) is glad, the rest just going home.
 function homeMood(p) { const a = ageOf(p) || 0; return a > 8 * 3600 || (p.tools || 0) > 2000 ? 'tired' : a < 3600 ? 'glad' : 'calm' }
 function waiting() {
-  return [...ents.values()].filter((e) => e.kind === 'session' && wantsToTalk(e.data) && !isMuted(e.id))
+  return [...ents.values()].filter((e) => e.kind === 'session' && wantsToTalk(e.data) && !isMuted(e.id) && !isDeferred(e.id))
     .map((e) => e.data)
     .sort((a, b) => (a.doing === 'alert' ? 0 : 1) - (b.doing === 'alert' ? 0 : 1) || (a.since || 0) - (b.since || 0))
 }
@@ -861,6 +866,14 @@ function renderQueue() {
       ? '💤 ' + e.data.name + ' · ' + Math.ceil((q.until - Date.now() / 1000) / 60) + '분' + (want ? ' ❗' : '')
       : '🤐 ' + e.data.name + (want ? ' · 할 말 참는 중' + (e.data.since ? ' ' + ago(e.data.since).replace('째', '') : '') : '')
     b.title = (q.until ? '미뤄 둠' : '먼저 말 걸 때까지 조용히 하는 중') + ' — 눌러서 카드 열기'
+    b.onclick = () => openCard(id); ask.appendChild(b)
+  }
+  for (const id of Object.keys(deferredUntil)) {
+    const e = ents.get(id); if (!e || !isDeferred(id) || isMuted(id)) continue
+    const b = document.createElement('button'); b.className = 'zz' + (id === cardSid ? ' on' : '')
+    const t = new Date(deferredUntil[id] * 1000)
+    b.textContent = '⏰ ' + e.data.name + ' · ' + (t.getMonth() + 1) + '/' + t.getDate() + ' ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + '까지'
+    b.title = '지휘에서 나중에로 미룸 — 새 질문이 오면 다시 올라옵니다. 눌러서 카드 열기'
     b.onclick = () => openCard(id); ask.appendChild(b)
   }
 }
@@ -3758,7 +3771,7 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []); staleStamp(j.stamp); modEnsure(true) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; deferredUntil = j.deferred || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []); staleStamp(j.stamp); modEnsure(true) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)
