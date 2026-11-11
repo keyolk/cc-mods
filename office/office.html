@@ -352,19 +352,77 @@ kbd { display: inline-block; min-width: 18px; text-align: center; font: 12px Jua
   </div>
   <div class="foot">답장을 보내면 다음 대기 agent로 넘어갑니다. TWeb normal 모드는 <kbd>g</kbd> <kbd>z</kbd> <kbd>x</kbd> <kbd>f</kbd> <kbd>j</kbd> <kbd>k</kbd> <kbd>c</kbd> <kbd>d</kbd> 같은 글자를 먼저 가져가니 <kbd>i</kbd>로 넘기거나 <kbd>⌥</kbd>를 붙이세요. 다른 창에서는 tmux <kbd>prefix</kbd> <kbd>O</kbd>.</div>
 </div>
-<script src="brands.js"></script>
-<script src="skins.js"></script>
-<script src="resources.js"></script>
-<script src="auth.js"></script>
-<script src="review.js"></script>
-<script src="crew.js"></script>
-<script src="look.js"></script>
-<script src="briefline.js"></script>
-<script src="slx.js"></script>
-<script src="table.js"></script>
-<script src="defer.js"></script>
-<script src="paths.js"></script>
-<script src="command.js"></script>
+<script>
+// Module guard. The page loads its modules (the <script src> tags below) one
+// by one, and a request that fails (the office restarting under load) skips
+// that file only: the page then runs without it, and the 지휘 view stays
+// empty (cmdRender calls tblHtml from table.js). /state keeps the same page
+// stamp across such a restart, so nothing else would ever reload the page.
+// So the page checks that every module defined its function (each probe is a
+// function declaration, which lands on window), and when one did not, it
+// reloads itself: after a short wait, a few times (the count is in
+// sessionStorage, so a file that never loads cannot make a reload loop),
+// then it stops and shows a banner with a button.
+var MODS = [['brands.js','brandOf'],['skins.js','guildSprite'],['resources.js','drawResourceBoard'],['auth.js','authHtml'],['review.js','revRenderList'],['crew.js','crewButtons'],['look.js','cmdView'],['briefline.js','cmdRenderBriefs'],['slx.js','slxFoot'],['table.js','tblHtml'],['defer.js','dfrUntil'],['hibernate.js','hibRow'],['paths.js','pathScan'],['command.js','cmdRender']]
+var MOD_KEY = 'office.modReload', MOD_TRIES = 5
+var MODFAIL = [], modTimer = 0, modBar = null
+function modErr(el) { MODFAIL.push(el.getAttribute('src')) }
+function modMissing() { return MODS.filter(function (m) { return typeof window[m[1]] !== 'function' }).map(function (m) { return m[0] }) }
+function modBanner(text, button) {
+  if (!modBar) {
+    modBar = document.createElement('div')
+    modBar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;padding:6px 12px;background:#7a1f1f;color:#fff;font:12px/1.5 system-ui,sans-serif;text-align:center'
+    document.body.appendChild(modBar)
+  }
+  modBar.textContent = text + ' '
+  if (button) {
+    var b = document.createElement('button')
+    b.textContent = '다시 불러오기'
+    b.style.cssText = 'margin-left:8px;font:inherit;cursor:pointer'
+    b.onclick = function () { try { sessionStorage.setItem(MOD_KEY, '0') } catch (e) {} location.reload() }
+    modBar.appendChild(b)
+  }
+}
+// late: called from the poll, when the person may be typing; a reload then
+// would lose what is typed, so it waits for the next poll.
+function modEnsure(late) {
+  var miss = modMissing()
+  if (!miss.length) {
+    if (modBar) { modBar.remove(); modBar = null }
+    try { sessionStorage.removeItem(MOD_KEY) } catch (e) {}
+    return true
+  }
+  if (modTimer) return false
+  var n = -1
+  try { n = +sessionStorage.getItem(MOD_KEY) || 0 } catch (e) {}
+  var what = '모듈 ' + miss.join(', ') + ' 을(를) 불러오지 못했습니다'
+  if (n < 0 || n >= MOD_TRIES) { modBanner(what + (n < 0 ? '' : ' (' + MOD_TRIES + '번 다시 불러왔지만 그대로입니다)') + '.', true); return false }
+  var a = document.activeElement
+  if (late && a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value) return false
+  var wait = Math.min(400 * Math.pow(2, n), 8000)
+  modBanner(what + ' — ' + Math.round(wait / 100) / 10 + '초 뒤 다시 불러옵니다 (' + (n + 1) + '/' + MOD_TRIES + ')')
+  modTimer = setTimeout(function () {
+    try { sessionStorage.setItem(MOD_KEY, String(n + 1)) } catch (e) {}
+    location.reload()
+  }, wait)
+  return false
+}
+</script>
+<script src="brands.js" onerror="modErr(this)"></script>
+<script src="skins.js" onerror="modErr(this)"></script>
+<script src="resources.js" onerror="modErr(this)"></script>
+<script src="auth.js" onerror="modErr(this)"></script>
+<script src="review.js" onerror="modErr(this)"></script>
+<script src="crew.js" onerror="modErr(this)"></script>
+<script src="look.js" onerror="modErr(this)"></script>
+<script src="briefline.js" onerror="modErr(this)"></script>
+<script src="slx.js" onerror="modErr(this)"></script>
+<script src="table.js" onerror="modErr(this)"></script>
+<script src="defer.js" onerror="modErr(this)"></script>
+<script src="hibernate.js" onerror="modErr(this)"></script>
+<script src="paths.js" onerror="modErr(this)"></script>
+<script src="command.js" onerror="modErr(this)"></script>
+<script>modEnsure(false)</script>
 <script>
 // The page's choices live in office.py's prefs.json as well as here (see
 // PREFS_FILE there): the browser's copy can be lost, so the server's is laid
@@ -1103,6 +1161,19 @@ addEventListener('keypress', (e) => {
 // and the jump to its window. Replies go through that session's cc-mods as
 // the person's own prompt; a dialog choice is its digit key.
 const TOKEN = '__OFFICE_TOKEN__'
+// The code this page was served with (office.py page_stamp). The server can
+// restart on new code with the same token, and the page then ran old code:
+// its presses lacked what the new server checks, and were refused.
+const STAMP = '__OFFICE_STAMP__'
+let stampOff = 0
+function staleStamp(s) {
+  if (!s || s === STAMP) { stampOff = 0; return }
+  // Not under the person's hands: wait while a box has focus (what is typed
+  // would be lost), at most a minute.
+  const a = document.activeElement, typing = a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value
+  if (typing && (stampOff = stampOff || Date.now()) && Date.now() - stampOff < 60000) return
+  toast('↻ office 코드가 바뀌어 페이지를 새로 불러옵니다'); setTimeout(() => location.reload(), 900)
+}
 const card = document.getElementById('card')
 const CARD_MIN_W = 380, CARD_MIN_H = 440
 const CARD_DEFAULT_W = 460, CARD_DEFAULT_H = 500
@@ -3687,14 +3758,17 @@ async function pollNext() {
 }
 pollNext()
 async function tick() {
-  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []) } catch { /* the server restarts: keep the last picture */ }
+  try { const r = await fetch('/state', { cache: 'no-store' }); const j = await r.json(); mutedSince = j.muted || {}; meetingsNow = j.meetings || []; resourcesNow = j.resources || []; authNow = j.auth || null; authTo = j.authTo || null; renderAuthChip(); renderMcpChip(j.people); if (typeof commandCount === 'function') commandCount(j.decisions || 0); apply(j.people, j.panes || [], j.alive); noteTalks(j.talks || []); staleStamp(j.stamp); modEnsure(true) } catch { /* the server restarts: keep the last picture */ }
   if (cardSid && card.busy) {
     if (card.inbox) { try { const d = await (await fetch('/detail?sid=' + encodeURIComponent(cardSid), { cache: 'no-store' })).json(); card.inbox = d.inbox } catch {} }
     renderBusy(cardSid)
   }
 }
 setSkin(savedSkin(), false)
-resize(); tick(); setInterval(tick, 2000); requestAnimationFrame(frame)
+// The next poll after this one answers, not on a fixed beat: a slow /state
+// (a cold office reading long transcripts) piled one request on another.
+async function tickLoop() { await tick(); setTimeout(tickLoop, 2000) }
+resize(); tickLoop(); requestAnimationFrame(frame)
 </script>
 </body>
 </html>

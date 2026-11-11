@@ -335,6 +335,52 @@ office/review.py seed <coordinator sid> <items.json|->` puts a list of items
 into a queue once (a one-off brief's items, for instance). A session's card shows the newest brief it is
 recorded on (`sessions[].id` in the sidecar) as a badge that opens it.
 
+**Sleeping sessions (💤 휴면).** A long-idle session holds 400 MB to 1 GB
+(claude and the ccproxy around it) while its conversation is on disk. The 지휘
+view says under the table `휴면 후보 N개 · 회수 예상 X GB [모두 내리기]` (a
+second press within 8 s puts them all to sleep) and folds `💤 휴면 N`, a row
+per sleeping session with its last request, the first line of its answer, how
+much it gave back and `깨우기`. A picked session's bar has 💤 (sleep now; the
+idle time is waived, nothing else) and 📌 (never propose it); a brief whose
+session sleeps has `💤 깨우기` in its bar. `office/hibernate.py` (who and
+when), `office/hibwake.py` (down and up), `office/hibproc.py` (processes, the
+launch), `office/hibstate.py` (files), `office/hibernate.js` (the page).
+
+- **Who**: waiting or done, waiting on nobody (its pane's own
+  `@cc_pane_attention`, not the window's), nothing in the last 12 h (its tmux
+  state and the last message in its transcript). Never a coordinator, an owned
+  worker, a session with subagents or background tasks, a pinned one, one
+  whose prompt holds a draft, whose pane a client showed in the last 30
+  minutes, with an office reply or a memo not taken yet, or with no
+  transcript. Each rule is checked again at the press; the list for
+  `모두 내리기` is the server's.
+- **Down**: the card `~/.claude/state/office/dormant/<sid>.json` (0600) is
+  written first: name, summary, cwd, window, last request and answer, its
+  newest brief, how much it holds, and how to launch it again (the wrapper's
+  argv read from the process, with `--resume <sid>` for `--session-id` and
+  without a first prompt; the env that picks an account or a config, never a
+  key or token). Then claude gets SIGTERM (ccproxy too if it outlives it) and
+  the pane closes; a window left empty closes with it.
+- **Up**: `claude --resume <sid>` the same way, in the same cwd, in a new pane
+  placed as a coordinator places a worker: a split of its old window while it
+  has room (a third of the longer side, 60 columns or 15 rows left on both
+  sides, at most 3 Claude sessions), else of a window working in the same
+  repository, else a new window in its tmux session. The card goes once the
+  session runs again (alive, or a message newer than the card).
+- **Memory pressure**: every 5 minutes the office checks
+  `kern.memorystatus_vm_pressure_level` (≥ 2) and swap left (< 512 MB) and,
+  while either says so, puts the candidates to sleep without asking.
+
+`~/.config/cc-mods/office.json`:
+
+```json
+{ "hibernate": { "idleHours": 12, "typedMinutes": 30, "auto": "pressure",
+                 "pane": "close", "swapFreeMB": 512, "pressureLevel": 2 } }
+```
+
+`auto`: `pressure` (default), `off` (only proposals), `always`. `pane: keep`
+instead leaves the pane with a `💤 휴면: …` line that wakes it on Enter.
+
 ## Archive folders (`~/exp/<date>_<topic>/`)
 
 What a session exchanged with an outside party (a vendor ticket, a Slack

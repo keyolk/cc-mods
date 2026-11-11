@@ -22,6 +22,7 @@ import hashlib
 from datetime import datetime
 import html
 import json
+import mmap
 import os
 import re
 import secrets
@@ -30,6 +31,7 @@ import threading
 import subprocess
 import sys
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,13 +42,14 @@ import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left 
 import crew  # noqa: E402 - office/crew.py, ending a session or releasing it from the command view
 import paths  # noqa: E402 - office/paths.py, which files the office may show
 import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes and a worker redeems
+import hibernate  # noqa: E402 - office/hibernate.py, long-idle sessions put to sleep and woken
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py", "hibernate.py", "hibproc.py", "hibstate.py", "hibwake.py")
 
 
 def code_stamp() -> str:
@@ -54,6 +57,20 @@ def code_stamp() -> str:
 
 
 STAMP = code_stamp()
+PAGE_FILES = ("office.html", "brands.js", "skins.js", "resources.js", "auth.js", "review.js", "crew.js", "look.js", "briefline.js", "slx.js", "table.js", "defer.js", "command.js", "paths.js", "hibernate.js")
+
+
+def page_stamp() -> str:
+    """The page's code with the server's: a page loaded before either changed
+    runs old code against this server (a press without what it now checks),
+    so the page compares this with the one it was served and reloads."""
+    st = []
+    for n in PAGE_FILES:
+        try:
+            st.append(f"{n}:{int(os.stat(os.path.join(HERE, n)).st_mtime)}")
+        except OSError:
+            pass
+    return STAMP + "|" + ",".join(st)
 FMT = "|".join(
     [
         "#{pane_id}",
@@ -163,22 +180,23 @@ def born(sid: str) -> float | None:
     return None
 
 
-def tool_counts(sid: str) -> dict:
-    path = transcript(sid)
-    if not path:
-        return {"total": 0, "by": {}, "compacts": 0, "compactAt": None, "preTokens": None}
-    st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0, "compacts": 0, "compactAt": None, "preTokens": None})
-    try:
-        size = os.path.getsize(path)
-        if size < st["off"]:
-            st.update(off=0, by={}, total=0, compacts=0, compactAt=None, preTokens=None)
-        with open(path, "rb") as f:
-            f.seek(st["off"])
-            chunk = f.read()
-    except OSError:
-        return {k: st[k] for k in ("total", "by", "compacts", "compactAt", "preTokens")}
-    end = chunk.rfind(b"\n") + 1  # a half-written last line waits for next time
-    for line in chunk[:end].splitlines():
+# A transcript is read forward in steps: a cold office meets transcripts of
+# 200 MB, and one read of a whole one (plus its lines) cost the process GBs.
+# Each call reads at most COUNT_STEP, COUNT_CHUNK at a time, so a long one
+# catches up over a few polls. One call per transcript at a time: two /state
+# polls that overlapped both added what they read to the same offset, which
+# then lay past the file's end, so the next call took it for rewritten and
+# read it whole again, poll after poll.
+COUNT_STEP = 32_000_000
+COUNT_CHUNK = 4_000_000
+COUNT_LINE_MAX = 8_000_000  # a longer line is a tool result, never a tool call: skipped unread
+_count_locks: dict[str, threading.Lock] = {}
+_count_guard = threading.Lock()
+COUNT_KEYS = ("total", "by", "compacts", "compactAt", "preTokens")
+
+
+def _count_lines(sid: str, st: dict, buf: bytes) -> None:
+    for line in buf.splitlines():
         # A compaction leaves a compact_boundary entry: how many, the last
         # one's time and how full it was before.
         if b'"compact_boundary"' in line:
@@ -207,8 +225,39 @@ def tool_counts(sid: str) -> dict:
                 st["total"] += 1
                 if b.get("name") == "SendMessage":
                     note_talk(sid, b, d.get("timestamp"))
-    st["off"] += end
-    return {"total": st["total"], "by": st["by"], "compacts": st["compacts"], "compactAt": st["compactAt"], "preTokens": st["preTokens"]}
+
+
+def tool_counts(sid: str) -> dict:
+    path = transcript(sid)
+    if not path:
+        return {"total": 0, "by": {}, "compacts": 0, "compactAt": None, "preTokens": None}
+    with _count_guard:
+        lock = _count_locks.setdefault(path, threading.Lock())
+    with lock:
+        st = _counts.setdefault(path, {"off": 0, "by": {}, "total": 0, "compacts": 0, "compactAt": None, "preTokens": None})
+        try:
+            if os.path.getsize(path) < st["off"]:
+                st.update(off=0, by={}, total=0, compacts=0, compactAt=None, preTokens=None)
+            with open(path, "rb") as f:
+                f.seek(st["off"])
+                left, carry = COUNT_STEP, b""
+                while left > 0:
+                    chunk = f.read(min(COUNT_CHUNK, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    buf = carry + chunk
+                    end = buf.rfind(b"\n") + 1  # a half-written last line waits for next time
+                    _count_lines(sid, st, buf[:end])
+                    carry = buf[end:]
+                    if len(carry) > COUNT_LINE_MAX:
+                        # Past the line's start; the rest of it, read next,
+                        # fails to parse and is skipped like any bad line.
+                        end, carry = len(buf), b""
+                    st["off"] += end
+        except OSError:
+            pass
+        return {k: st[k] for k in COUNT_KEYS}
 
 
 # Sessions talking to each other: every SendMessage a session sends, read
@@ -437,7 +486,7 @@ def compacting(pane: str) -> bool:
     return bool(re.search(r"Compacting conversation", out, re.I))
 
 
-def snapshot() -> list[dict]:
+def _snapshot() -> list[dict]:
     global _live_panes
     try:
         out = subprocess.run(["tmux", "list-panes", "-a", "-F", FMT], capture_output=True, text=True, timeout=3).stdout
@@ -491,7 +540,51 @@ def snapshot() -> list[dict]:
                 **coord.place(rel, sid),
             }
         )
+    if alive is not None:
+        forget_ended(alive)
     return people
+
+
+# One snapshot at a time: /state polls every 2 s without waiting for the last
+# one, and /command, /detail and the acts ask too. Each reads every session's
+# transcript, so callers that overlap share the one in flight (it began before
+# they asked: at most one poll old) instead of reading them all again beside it.
+_snap_lock = threading.Lock()
+_snap: dict = {"flight": None, "last": []}
+SNAP_WAIT = 60
+
+
+def snapshot() -> list[dict]:
+    with _snap_lock:
+        flight, lead = _snap["flight"], False
+        if flight is None:
+            flight = _snap["flight"] = {"done": threading.Event(), "out": None}
+            lead = True
+    if not lead:
+        if not flight["done"].wait(SNAP_WAIT) or flight["out"] is None:
+            return list(_snap["last"])
+        return list(flight["out"])
+    try:
+        out = _snapshot()
+        flight["out"] = _snap["last"] = out
+        return list(out)
+    finally:
+        with _snap_lock:
+            _snap["flight"] = None
+        flight["done"].set()
+
+
+def forget_ended(alive: set[str]) -> None:
+    """Drop what was kept on sessions that have ended: their transcript paths,
+    counts and the rest grew by one entry per session the office ever saw."""
+    gone = [sid for sid in list(_paths) if sid not in alive]
+    for sid in gone:
+        path = _paths.pop(sid, None)
+        for d in (_counts, _born, _count_locks):
+            d.pop(path, None)
+    for d in (_spoke, _proposals):
+        for sid in [k for k in list(d) if k not in alive]:
+            d.pop(sid, None)
 
 
 # ---- MCP connections, per session ----------------------------------------
@@ -574,6 +667,8 @@ OPTION = re.compile(r"^\s*([❯›>]\s*)?(\d)[.)]\s+(.+?)\s*$")
 # A dialog drawn beside a preview box (AskUserQuestion with a side panel)
 # pads each line out to the box's border: what is left of a line without it.
 FRAME = "│┃║|─━═╭╮╰╯┌┐└┘├┤ \t"
+# The rule Claude Code draws over a dialog (and over its prompt box).
+RULE = re.compile(r"^\s*[─━═╌]{8,}\s*$")
 
 
 def capture(pane: str) -> list[str]:
@@ -584,9 +679,44 @@ def capture(pane: str) -> list[str]:
     return [l.rstrip() for l in out.splitlines()]
 
 
+def _cells(s: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _cut_at(s: str, col: int) -> str:
+    """The part of s left of screen column col (wide characters take two)."""
+    n = 0
+    for i, c in enumerate(s):
+        n += 2 if unicodedata.east_asian_width(c) in "WF" else 1
+        if n > col:
+            return s[:i]
+    return s
+
+
+def unpanel(lines: list[str]) -> list[str]:
+    """The lines without a side panel drawn at the pane's right (a status
+    panel beside the chat, cc-mods' or another plugin's): everything from its
+    border column on. A panel's text changes on its own (request counts,
+    sparklines), so left in, it became a dialog's question and its about, and
+    the digest a press is bound to changed under the person's hand."""
+    cols: dict[int, int] = {}
+    full = [l for l in lines if l.strip()]
+    for l in full:
+        for m in re.finditer("[│┃║]", l):
+            c = _cells(l[: m.start()])
+            cols[c] = cols.get(c, 0) + 1
+    # The border is the one column most lines have a bar at, right of the
+    # middle: a box drawn in the chat has its bars at many columns, a few lines each.
+    width = max((_cells(l) for l in lines), default=0)
+    edge = min((c for c, k in cols.items() if k * 2 >= len(full) and c > width // 3), default=None)
+    if edge is None:
+        return lines
+    return [_cut_at(l, edge).rstrip() for l in lines]
+
+
 def dialog(lines: list[str]) -> dict | None:
     """A numbered choice with a cursor (❯) near the bottom of the screen."""
-    tail = [l for l in lines if l.strip()][-18:]
+    tail = [l for l in unpanel(lines) if l.strip()][-18:]
     opts, cursor, first = [], False, None
     for i, l in enumerate(tail):
         m = OPTION.match(l)
@@ -605,7 +735,10 @@ def dialog(lines: list[str]) -> dict | None:
     # What it asks about: the box above the question (a permission dialog's
     # tool and command). Two Bash dialogs in a row share their question and
     # options, so a press is bound to this, by its digest (act, kind key).
-    about = [tail[j].strip(FRAME) for j in range(max(0, first - 9), first) if tail[j].strip(FRAME) and not OPTION.match(tail[j])]
+    # Only the dialog's own box: it starts under a rule (────), and what is
+    # above that is the chat's scrollback, which changes on its own.
+    top = next((j + 1 for j in range(first - 1, max(-1, first - 10), -1) if RULE.match(tail[j])), max(0, first - 9))
+    about = [tail[j].strip(FRAME) for j in range(top, first) if tail[j].strip(FRAME) and not OPTION.match(tail[j])]
     about = [x for x in about if x != question][-6:]
     digest = hashlib.sha256("\n".join([*about, question, *(o["label"] for o in opts)]).encode()).hexdigest()[:16]
     return {"question": question[:160], "about": [x[:160] for x in about], "options": opts, "digest": digest}
@@ -823,15 +956,19 @@ VIEW_MAX = paths.VIEW_MAX
 NO_FRAME = {"Content-Security-Policy": "frame-ancestors 'none'", "X-Frame-Options": "DENY"}
 
 
-def _said(sid: str) -> bytes:
+def _said(sid: str):
     # The session's whole transcript, for paths.mentioned: a path it never
-    # wrote is not one the page may ask for. Read per request (tens of ms for
-    # a long one); a session that is gone has none.
+    # wrote is not one the page may ask for. Mapped, not read: a transcript of
+    # 200 MB copied onto the heap for every /paths and /file call was a large
+    # part of what the office held; mapped pages are the file's, the kernel
+    # drops them. A session that is gone (or a transcript still empty) has none.
     t = transcript(sid) if re.fullmatch(r"[0-9a-f-]{8,64}", sid or "") else None
     try:
         with open(t, "rb") as f:
-            return f.read()
-    except (OSError, TypeError):
+            if os.fstat(f.fileno()).st_size == 0:
+                return b""
+            return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    except (OSError, TypeError, ValueError):
         return b""
 
 
@@ -967,12 +1104,16 @@ def _gist(text: str) -> str:
     return ""
 
 
-def _turns(lines: list[str]) -> list[dict]:
+def _turns(lines) -> list[dict]:
     turns: list[dict] = []
     for line in lines:
         # Most of a transcript is tool calls and results; skip those lines
         # unparsed, or a long session's tail takes seconds to read.
-        if '"type":"text"' not in line and '"content":"' not in line:
+        if isinstance(line, bytes):
+            if b'"type":"text"' not in line and b'"content":"' not in line:
+                continue
+            line = line.decode("utf-8", "replace")
+        elif '"type":"text"' not in line and '"content":"' not in line:
             continue
         try:
             d = json.loads(line)
@@ -1012,8 +1153,12 @@ def history(sid: str, limit: int = HISTORY_TURNS) -> list[dict]:
             while True:
                 start = max(0, size - tail)
                 f.seek(start)
-                lines = f.read(size - start).decode("utf-8", "replace").splitlines()
-                turns = _turns(lines[1:] if start else lines)  # a seek cuts the first line
+                if start:
+                    f.readline()  # a seek cuts the first line
+                # Line by line, not read whole and decoded: a window of 64 MB
+                # held as bytes, text and a list of lines cost the office
+                # several times that for every card opened.
+                turns = _turns(line for line in iter(f.readline, b"") if f.tell() <= size)
                 if len(turns) > limit or not start or tail >= HISTORY_MAX:
                     break
                 tail *= 4
@@ -1472,6 +1617,9 @@ def act(body: dict) -> tuple[int, dict]:
         return command.act(body, lambda s, t: inbox_put(s, t, keep=True))
     if kind in crew.KINDS:
         return crew.act(body, snapshot(), inbox_put)
+    if kind in hibernate.KINDS:
+        # The card keeps the session's newest brief, so the brief can wake it.
+        return hibernate.act(body, snapshot(), inbox_put, brief=lambda s: command.latest_by_session().get(s))
     if kind == "memo_send":
         return memo_send(body)
     if kind in defer.KINDS:
@@ -1484,6 +1632,12 @@ def act(body: dict) -> tuple[int, dict]:
         return 404, {"error": "no such session"}
     pane = me["pane"]  # from tmux, never from the request
     if kind == "key":
+        # A press with no digest comes from a page loaded before the server
+        # learned to bind presses (#108): it is told 403, which every page,
+        # old ones too, takes as "reload me" (staleToken). A 409 here was
+        # only a toast, so the old page kept pressing and nothing moved.
+        if not body.get("digest"):
+            return 403, {"error": "this page is older than the office: reload it", "stale": True}
         d = dialog(capture(pane))
         o = next((o for o in (d or {}).get("options") or [] if str(o["n"]) == str(value)), None)
         if not d or not o:
@@ -1493,7 +1647,9 @@ def act(body: dict) -> tuple[int, dict]:
         # options) gets nothing.
         if body.get("digest") != d["digest"] or body.get("label") != o["label"]:
             return 409, {"error": "the dialog on its screen changed since the page drew it: look again", "dialog": d}
-        subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
+        r = subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
+        if r.returncode:
+            return 502, {"error": "tmux could not send the key to its pane"}
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
         # value: minutes to set it aside for, "speak" for until the person
@@ -1775,6 +1931,67 @@ def muted() -> dict:
     return d
 
 
+# ---- the office's own memory ---------------------------------------------
+#
+# What the system charges this process (macOS phys_footprint: resident plus
+# compressed), not RSS: the office that thrashed the machine showed 13 MB
+# resident and 845 MB of footprint, the rest compressed. Over MEM_WARN it says
+# so once in the server log (stderr), and again only after it came back under.
+MEM_WARN = int(os.environ.get("OFFICE_MEM_WARN_MB") or 1024) * 1_000_000
+MEM_EVERY = 30
+_mem = {"over": False}
+
+
+def footprint() -> int | None:
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+
+            class RUsage(ctypes.Structure):  # rusage_info_v2, enough for ri_phys_footprint
+                _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(n, ctypes.c_uint64) for n in (
+                    "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups", "pageins", "wired_size", "resident_size", "phys_footprint",
+                    "start_abstime", "exit_abstime", "child_user_time", "child_system_time", "child_pkg_idle_wkups", "child_interrupt_wkups",
+                    "child_pageins", "child_elapsed_abstime", "diskio_bytesread", "diskio_byteswritten")]
+
+            lib = ctypes.CDLL("/usr/lib/libproc.dylib")
+            ru = RUsage()
+            if lib.proc_pid_rusage(os.getpid(), 2, ctypes.byref(ru)) == 0:
+                return int(ru.phys_footprint)
+        except (OSError, AttributeError):
+            return None
+        return None
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
+
+
+def _warn(text: str) -> None:
+    print(text, file=sys.stderr, flush=True)
+
+
+def mem_check() -> None:
+    n = footprint()
+    if n is None:
+        return
+    if n > MEM_WARN and not _mem["over"]:
+        _warn(f"cc-office: memory footprint {n // 1_000_000} MB is over {MEM_WARN // 1_000_000} MB (pid {os.getpid()}, {threading.active_count()} threads, {len(_paths)} transcripts kept)")
+    _mem["over"] = n > MEM_WARN
+
+
+def _mem_watch() -> None:
+    while True:
+        time.sleep(MEM_EVERY)
+        try:
+            mem_check()
+        except Exception as e:  # the watch must not end the office; say why it failed
+            _warn(f"cc-office: memory check failed: {e!r}")
+
+
 # `prefix O` (tmux) bumps this; the page sees the bump and opens the next one.
 NEXT = {"n": 1}
 
@@ -1869,12 +2086,15 @@ class Handler(BaseHTTPRequestHandler):
             from urllib.parse import parse_qs, urlparse
 
             sid = (parse_qs(urlparse(self.path).query).get("sid") or [""])[0]
-            return self.send(200, json.dumps(asking(sid) if sid else command.view(snapshot())).encode(), "application/json")
+            if sid:
+                return self.send(200, json.dumps(asking(sid)).encode(), "application/json")
+            people = snapshot()
+            return self.send(200, json.dumps({**command.view(people), "hibernate": hibernate.view(people)}).encode(), "application/json")
         if self.path.startswith("/coord"):
             return self.send(200, json.dumps({"coordinators": coord.view()}).encode(), "application/json")
         if self.path.startswith("/state"):
             people, alive = snapshot(), alive_sessions()
-            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending())}).encode(), "application/json")
+            return self.send(200, json.dumps({"at": time.time(), "people": people, "panes": sorted(_live_panes), "alive": None if alive is None else sorted(alive), "muted": muted(), "talks": talks(), "meetings": meetings(), "resources": resources.snapshot(), "auth": auth(), "authTo": auth_target(people), "decisions": len(command.pending()), "stamp": page_stamp()}).encode(), "application/json")
         if self.path.startswith("/focus"):
             # A click on a worker: bring its pane in front (cc-focus switches
             # the clients and selects the window), the notification's action.
@@ -1886,17 +2106,25 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.Popen([focus, pane], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self.send(204, b"", "text/plain")
             return self.send(400, b"bad pane", "text/plain")
-        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js"):
+        if self.path in ("/brands.js", "/skins.js", "/resources.js", "/auth.js", "/review.js", "/crew.js", "/look.js", "/briefline.js", "/slx.js", "/table.js", "/defer.js", "/command.js", "/paths.js", "/hibernate.js"):
             with open(os.path.join(HERE, self.path.lstrip("/")), "rb") as f:
                 skin = f.read().replace(b"__OFFICE_OWNER__", json.dumps(owner())[1:-1].encode())
                 return self.send(200, skin, "text/javascript; charset=utf-8")
         if self.path in ("/", "/index.html"):
             with open(os.path.join(HERE, "office.html"), "rb") as f:
-                page = f.read().replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_PREFS__", json.dumps(prefs()).replace("<", "\\u003c").encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
+                page = f.read().replace(b"__OFFICE_STAMP__", page_stamp().encode()).replace(b"__OFFICE_TOKEN__", TOKEN.encode()).replace(b"__OFFICE_PREFS__", json.dumps(prefs()).replace("<", "\\u003c").encode()).replace(b"__OFFICE_OWNER__", html.escape(owner()).encode())
                 # Nothing frames the office: a link inside a framed brief that
                 # resolved to "/" once put the whole office in its own frame.
                 return self.send(200, page, "text/html; charset=utf-8", NO_FRAME)
         self.send(404, b"not found", "text/plain")
+
+
+class OfficeServer(ThreadingHTTPServer):
+    # The page asks for its 14 scripts at once, beside /state and /next. The
+    # default backlog (5) is smaller than that: while the office was busy and
+    # slow to accept, the extra connections were reset, the browser got only
+    # some of the scripts, and the 지휘 view stayed empty. 128 holds a burst.
+    request_queue_size = 128
 
 
 def main():
@@ -1905,7 +2133,9 @@ def main():
         port = int(sys.argv[sys.argv.index("--port") + 1])
     # Channels a previous office opened for a redeemed send and never closed.
     grants.close_leftovers()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=_mem_watch, name="mem-watch", daemon=True).start()
+    hibernate.start(snapshot, brief=lambda s: command.latest_by_session().get(s))  # memory-pressure sleep (office.json hibernate.auto)
+    srv = OfficeServer(("127.0.0.1", port), Handler)
     print(f"cc-office on http://127.0.0.1:{port}/", flush=True)
     srv.serve_forever()
 

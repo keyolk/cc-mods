@@ -114,6 +114,7 @@ const CMD_CSS = `
 #command .opt.armed { outline: 3px solid #2a2033; }
 #command .opt small { display: block; font: 11px -apple-system, sans-serif; color: #5a5070; }
 #command .grant { margin: 4px 0 2px; padding: 6px 8px; border: 1px solid #c9a227; border-radius: 6px; background: #fffaf0; font: 12px -apple-system, sans-serif; color: #3a2f10; }
+#command .refused { margin: 6px 0 2px; padding: 5px 8px; border-radius: 6px; background: #fde8e8; color: #7a1f1f; font: 12px -apple-system, sans-serif; }
 #command .about { margin: 4px 0; padding: 4px 6px; background: #f4f1fa; border-radius: 4px; white-space: pre-wrap; font: 11px ui-monospace, monospace; max-height: 120px; overflow: auto; }
 #command .grant pre { margin: 4px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font: 11px ui-monospace, monospace; }
 #command .key { display: inline-block; min-width: 16px; margin-right: 5px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; vertical-align: 1px; }
@@ -220,6 +221,8 @@ const cmdWorkers = () => (cmd.data?.coordinators || []).flatMap((c) => c.workers
 // review.js and slx.js, unless the server that sent this page has none.
 const cmdRev = () => typeof revList === 'function'
 const cmdSlx = () => typeof slxList === 'function'
+// hibernate.js, unless the server that sent this page has none.
+const cmdHib = () => typeof hibFoot === 'function'
 
 async function cmdAsk() {
   const sid = cmd.sel?.sid
@@ -239,17 +242,19 @@ function cmdRender() {
   if (!cmdEl.firstChild) {
     cmdEl.innerHTML = '<div class="pane left"><div class="say"></div><div class="briefs"></div><div class="list"></div></div><div class="pane right"><div class="rtabs"></div><div class="bar"></div><div class="doc"></div><div class="decide"></div></div>'
     cmdEl.querySelector('.list').onclick = cmdClick
-    cmdEl.querySelector('.briefs').onclick = cmdBriefClick
-    cmdEl.querySelector('.rtabs').onclick = tblTabClick
+    // A module the page failed to load (see the module guard in office.html)
+    // leaves its names undefined: skip that part, and draw the rest.
+    if (typeof cmdBriefClick === 'function') cmdEl.querySelector('.briefs').onclick = cmdBriefClick
+    if (typeof tblTabClick === 'function') cmdEl.querySelector('.rtabs').onclick = tblTabClick
   }
   // The table scrolls on its own: a redraw keeps where it was.
   const list = cmdEl.querySelector('.list'), keep = list.scrollTop, keepT = list.querySelector('.tblwrap')?.scrollTop || 0
   // The slx line under the table: what is hidden, what runs, the bulk choices.
-  list.innerHTML = tblHtml() + (cmdSlx() ? slxFoot() : '')
+  list.innerHTML = (typeof tblHtml === 'function' ? tblHtml() : '<div class="empty">table.js 를 불러오지 못했습니다. 곧 다시 불러옵니다.</div>') + (cmdHib() ? hibFoot() : '') + (cmdSlx() ? slxFoot() : '')
   list.scrollTop = keep
   const wrap = list.querySelector('.tblwrap')
   if (wrap) wrap.scrollTop = keepT
-  cmdRenderBriefs()
+  if (typeof cmdRenderBriefs === 'function') cmdRenderBriefs()
   cmdRenderSay()
   cmdRenderDoc()
 }
@@ -272,6 +277,7 @@ function cmdFold(which) {
 
 function cmdClick(ev) {
   if (cmdSlx() && slxClick(ev)) return
+  if (cmdHib() && hibClick(ev)) return
   // ⏹ on a row: the session opens beside the panel and its end is asked
   // there, where the warning and the second press are.
   const end = ev.target.closest('button[data-end]')
@@ -414,7 +420,8 @@ function cmdRenderSay() {
 // ↗ 밖으로 opens this brief alone in the browser (the server's `open`); the
 // office page is the person's screen and never moves.
 function cmdBriefBar(bar, s) {
-  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button><button class="act shut" title="닫기 (Esc)">✕</button>'
+  bar.innerHTML = '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>' + (cmdHib() ? hibBriefButton(s.file) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
+  if (cmdHib()) hibBriefWire(bar)
   bar.querySelector('.out').onclick = async () => { const j = await cmdPost({ kind: 'brief_open', file: s.file, via: lastPlace(s.path) }); if (j) toast('↗ ' + (j.sent || '열었습니다')) }
   bar.querySelector('.shut').onclick = cmdShut
 }
@@ -537,9 +544,10 @@ function cmdRenderCall(bar, doc, dec, s) {
     // 🙋 waits on the person; 👷 is a session at work, opened from its table.
     bar.innerHTML = '<b title="' + cmdEsc(cmdWho(s)) + '">' + (c ? '🙋 ' : '👷 ') + cmdEsc(s.summary || s.name) + '</b>' + (s.summary && s.summary !== s.name ? '<span class="slug">' + cmdEsc(s.name) + '</span>' : '') + '<span class="m">' + cmdEsc(s.window || '') + '</span>'
       + '<span class="seg" title="마지막 답 ↔ 카드 (T · 입력칸에서는 ⌥T)"><button data-v="said" title="마지막 답"><span class="key">T</span>답</button><button data-v="card" title="카드: 지난 대화, 파일, 작업, btw">🗂 카드</button></span>'
-      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗</button>' + (typeof crewButtons === 'function' ? crewButtons(s.sid) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
+      + '<button class="act go" title="이 세션의 tmux pane으로 (G · 입력칸에서는 ⌥G)"><span class="key">G</span>↗</button>' + (typeof crewButtons === 'function' ? crewButtons(s.sid) : '') + (cmdHib() ? hibButtons(s.sid) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
     bar.querySelector('.go').onclick = () => cmdFocus(s)
     if (typeof crewWire === 'function') crewWire(bar, s)
+    if (cmdHib()) hibWire(bar, s)
     bar.querySelector('.seg').onclick = (ev) => { const b = ev.target.closest('button[data-v]'); if (b) cmdView(b.dataset.v) }
     bar.querySelector('.shut').onclick = cmdShut
     doc.className = 'doc'; doc.style.cssText = 'flex:1;display:flex;flex-direction:column;min-height:0'
@@ -566,7 +574,9 @@ function cmdRenderCall(bar, doc, dec, s) {
     // The question is at the end of the answer.
     said.scrollTop = said.scrollHeight
   }
-  const key = JSON.stringify([a && [a.error, a.dialog, a.suggestions, a.inbox], cmd.armed, !!c])
+  // Shown while the screen still holds what was drawn again after it.
+  const refused = cmd.refused && cmd.refused.sid === s.sid && (a?.dialog?.digest || '') === cmd.refused.digest ? cmd.refused.text : ''
+  const key = JSON.stringify([a && [a.error, a.dialog, a.suggestions, a.inbox], cmd.armed, !!c, refused])
   if (dec.dataset.key === key) return
   const old = dec.querySelector('.note[data-call]'), typed = old?.value || '', focused = !!document.activeElement && dec.contains(document.activeElement)
   // A caret, a selection and an IME composition live in the input: it is taken out of the
@@ -581,6 +591,7 @@ function cmdRenderCall(bar, doc, dec, s) {
     + (a.inbox ? '<div class="m" style="margin-bottom:4px">📨 앞서 보낸 답이 아직 전달 전: ' + cmdEsc(a.inbox.text) + '</div>' : '')
     + '<div class="qa"><div class="ask">' + (a.dialog ? '🗳 ' + cmdEsc(a.dialog.question || '화면의 선택지') : '💬 답장') + '</div>' + (a.dialog && a.dialog.about && a.dialog.about.length ? '<pre class="about">' + cmdEsc(a.dialog.about.join('\n')) + '</pre>' : '') + '<div class="opts"></div>'
     // A choice drawn on its screen takes a key, not a prompt (as on the card).
+    + (refused ? '<div class="refused">✕ 전달하지 않았습니다: ' + cmdEsc(cmdRefusedText(refused)) + '</div>' : '')
     + (a.dialog ? '<div class="m" style="margin-top:4px">권한 확인 창은 글로 답할 수 없습니다: 위 선택지를 누르거나, 그 pane에서 답하세요 · G로 이동</div>' : '<div class="row"><input type="text" class="note" data-call="' + cmdEsc(s.sid) + '" placeholder="직접 쓴 답 (Enter 보내기 · ⌥Enter 메모로 · Esc 나가기)" title="Enter: 쓴 답이 있으면 그 답을, 없으면 고른 빠른 답을 보냅니다 · ⌥Enter: 보내지 않고 메모로 남깁니다"><button class="act memo" title="보내지 않고 이 세션의 메모로 남기기 (⌥Enter)">📝 메모로</button></div>') + '</div>'
   const opts = dec.querySelector('.opts')
   // 📝 메모로: the words kept on the session, not sent (defer.js). With a
@@ -613,6 +624,14 @@ function cmdRenderCall(bar, doc, dec, s) {
     cmdBoxKeys(note, (e) => cmdCallKey(e, s))
     if (focused) note.focus()
   }
+}
+
+// Why a press on a screen's choice was not sent, in the person's words.
+function cmdRefusedText(e) {
+  if (/changed since/.test(e)) return '그 사이 화면의 선택 창이 바뀌었습니다. 새로 그린 선택지를 보고 다시 누르세요'
+  if (/no dialog/.test(e)) return '그 화면에 이 선택지가 더는 없습니다 (이미 답했거나 창이 닫혔습니다)'
+  if (/tmux/.test(e)) return 'tmux가 그 pane에 키를 보내지 못했습니다. G로 가서 직접 답하세요'
+  return e
 }
 
 // Bring the picked session's pane in front in tmux, as the card's G does
@@ -662,6 +681,16 @@ async function cmdReply(s, body, label) {
   cmd.force = null
   const j = await cmdPost({ sid: s.sid, ...body, ...(force ? { force: true } : {}) }, true)
   if (!j) return false
+  if (j.refused) {
+    // Drawn again from what is on its screen now, with the reason under the
+    // buttons until the next press.
+    cmd.refused = { sid: s.sid, text: j.refused, digest: j.dialog ? j.dialog.digest : '' }
+    if (cmd.ask && cmd.ask.sid === s.sid) cmd.ask = { ...cmd.ask, dialog: j.dialog }
+    cmdRenderDoc()
+    cmdAsk()
+    return false
+  }
+  if (cmd.refused && cmd.refused.sid === s.sid) cmd.refused = null
   if (j.busy) {
     cmd.force = { sig, at: Date.now() }
     toast((j.busy === 'working' ? '🔨 일하는 중이라 보내면 끝난 뒤 이어서 처리됩니다' : '📨 앞서 보낸 답이 아직 전달 전입니다') + ' — 그래도 보내려면 한 번 더 Enter')
@@ -711,12 +740,16 @@ function cmdShut() {
 }
 
 // busyOk: a 409 that says busy comes back as { busy } for the caller to ask again.
+// A press on a screen's choice refused (its dialog changed) comes back as
+// { refused, dialog } so the caller shows why where the buttons are: a toast
+// at the floor's corner went by unseen, and the press looked dead.
 async function cmdPost(body, busyOk = false) {
   try {
     const r = await fetch('/act', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Office-Token': TOKEN }, body: JSON.stringify(body) })
     if (r.status === 403) { staleToken(); return null }
     const j = await r.json().catch(() => ({}))
     if (busyOk && r.status === 409 && j.busy) return j
+    if (body.kind === 'key' && !r.ok) return { refused: j.error || String(r.status), dialog: j.dialog || null }
     if (!r.ok) { toast('✕ ' + (j.error || r.status)); return null }
     return j
   } catch (e) { toast('✕ 못 보냈습니다: ' + e.message); return null }

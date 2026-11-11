@@ -279,7 +279,7 @@ class DialogKeyTest(unittest.TestCase):
             p = mock.patch.object(office, name, val)
             p.start()
             self.addCleanup(p.stop)
-        self.keys = mock.patch.object(office.subprocess, "run")
+        self.keys = mock.patch.object(office.subprocess, "run", return_value=mock.Mock(returncode=0))
         self.run = self.keys.start()
         self.addCleanup(self.keys.stop)
         p = mock.patch.object(office, "set_mute")
@@ -305,8 +305,80 @@ class DialogKeyTest(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_a_press_that_names_nothing_it_saw_gets_no_key(self):
-        self.assertEqual(office.act({"sid": WORKER, "kind": "key", "value": "1", "label": "Yes"})[0], 409)
+        self.assertEqual(office.act({"sid": WORKER, "kind": "key", "value": "1", "label": "Yes"})[0], 403)
+        self.assertEqual(office.act({"sid": WORKER, "kind": "key", "value": "1", "digest": "0" * 16, "label": "Yes"})[0], 409)
         self.run.assert_not_called()
+
+    def test_a_page_older_than_the_server_is_told_to_reload_not_left_pressing(self):
+        # A page loaded before #108 sends no digest: 403 makes every page reload (staleToken).
+        code, out = office.act({"sid": WORKER, "kind": "key", "value": "1"})
+        self.assertEqual((code, out.get("stale")), (403, True))
+        self.run.assert_not_called()
+
+    def test_a_key_tmux_could_not_send_is_not_reported_sent(self):
+        d = self.drawn()
+        self.run.return_value = mock.Mock(returncode=1)
+        self.assertEqual(office.act({"sid": WORKER, "kind": "key", "value": "1", "digest": d["digest"], "label": "Yes"})[0], 502)
+
+
+def _row(left: str, right: str, w: int = 100) -> str:
+    return left + " " * (w - office._cells(left)) + "││ " + right
+
+
+def warren_screen(reqs: int, retry: int = 899) -> list[str]:
+    """An AskUserQuestion with two questions and Submit, in a pane with a side
+    panel at its right whose numbers change on their own (the screen of the
+    press that did not go through)."""
+    return [
+        _row("⏺ Ran 1 shell command", "◆ claude-sendbird · opus-5-5 · medium"),
+        _row("  why: conversation stays on its account", "accounts claude-personal 73%"),
+        _row("◯ Goal not yet met… continuing", f"output ▁▂█ last 2520m · {reqs} requests"),
+        "─" * 100 + "┼" + "─" * 30,
+        _row("←  ☐ Slack 설치  ☐ 기본 쿼타  ✔ Submit  →", "Quota"),
+        _row("", f"○ anthropic/legacy-1 cooling · retry_in={retry}s"),
+        _row("warren Slack app 설치 요청(관리자에게 감)을 지금 제출할까요?", "5h 47% · 7d 0%"),
+        _row("", ""),
+        _row("❯ 1. 지금 제출 (Recommended)", "models opus 98%"),
+        _row("  2. 제출하지 않음", ""),
+        _row("  3. Type something.", ""),
+        _row("  4. Chat about this", f"{reqs} reqs"),
+    ]
+
+
+class ChoiceBesidePanelTest(unittest.TestCase):
+    """A choice window (AskUserQuestion) in a pane with a side panel."""
+
+    def test_the_panel_is_not_the_question_nor_what_it_asks(self):
+        d = office.dialog(warren_screen(1412))
+        self.assertEqual(d["question"], "warren Slack app 설치 요청(관리자에게 감)을 지금 제출할까요?")
+        self.assertEqual(d["about"], ["←  ☐ Slack 설치  ☐ 기본 쿼타  ✔ Submit  →"])
+        self.assertEqual([o["label"] for o in d["options"]], ["지금 제출 (Recommended)", "제출하지 않음", "Type something.", "Chat about this"])
+
+    def test_the_panel_moving_on_its_own_keeps_the_digest_so_the_press_goes_through(self):
+        drawn = office.dialog(warren_screen(1412))
+        now = warren_screen(1413, retry=870)
+        self.assertEqual(office.dialog(now)["digest"], drawn["digest"])
+        me = {"id": WORKER, "pane": "%9", "state": "waiting"}
+        with mock.patch.object(office, "snapshot", return_value=[me]), mock.patch.object(office, "capture", return_value=now), \
+                mock.patch.object(office.subprocess, "run", return_value=mock.Mock(returncode=0)) as run, mock.patch.object(office, "set_mute"):
+            code, _ = office.act({"sid": WORKER, "kind": "key", "value": "1", "digest": drawn["digest"], "label": "지금 제출 (Recommended)"})
+        self.assertEqual(code, 200)
+        self.assertEqual(run.call_args[0][0], ["tmux", "send-keys", "-t", "%9", "1"])
+
+    def test_the_next_question_of_the_same_window_is_another_digest(self):
+        a = office.dialog(warren_screen(1412))
+        nxt = warren_screen(1412)
+        nxt[6] = _row("기본 쿼타를 정할까요?", "5h 47% · 7d 0%")
+        self.assertNotEqual(office.dialog(nxt)["digest"], a["digest"])
+
+    def test_scrollback_above_the_rule_is_not_what_it_asks(self):
+        screen = ["⏺ Bash(ls)", "  ⎿  a b c", "─" * 60, "Bash command", "  rm -rf node_modules", "Do you want to proceed?", "❯ 1. Yes", "  2. No"]
+        self.assertEqual(office.dialog(screen)["about"], ["Bash command", "rm -rf node_modules"])
+
+    def test_a_box_in_the_chat_is_not_a_panel(self):
+        screen = ["╭" + "─" * 40 + "╮", "│ note" + " " * 35 + "│", "╰" + "─" * 40 + "╯", "Proceed?", "❯ 1. Yes", "  2. No", "  3. Later"]
+        d = office.dialog(screen)
+        self.assertEqual((d["question"], len(d["options"])), ("Proceed?", 3))
 
 
 if __name__ == "__main__":
