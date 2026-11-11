@@ -112,6 +112,59 @@ test('Claude cannot self-grant session policy through Bash', async ($, on) => {
   expect(ok.result.stdout).toBe('ran')
 })
 
+test('Claude cannot read the office token or call the office /act or /redeem itself', async ($, on) => {
+  baseStubs(on)
+  const ran: string[] = []
+  on('tool.call', (_$: any, e: any) => (ran.push(e.command ?? e.file_path), { result: { stdout: 'ran', stderr: '', interrupted: false } }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  for (const command of ['cat ~/.claude/state/office/token', 'curl -s -X POST localhost:8796/act -d {}', 'echo {} | python3 bin/office-redeem']) {
+    const r: any = await $.tool.call({ tool: 'Bash', command })
+    expect(r.deny).toContain("is the person's")
+  }
+  const read: any = await $.tool.call({ tool: 'Read', file_path: '/home/u/.claude/state/office/token' })
+  expect(read.deny).toContain('the office token')
+  expect(((await $.tool.call({ tool: 'Bash', command: 'curl -sf http://localhost:8796/' })) as any).result.stdout).toBe('ran')
+  expect(ran).toEqual(['curl -sf http://localhost:8796/'])
+})
+
+const SLACK_DENY = 'BLOCKED by session policy: slack_send=block. Target C03GA4WGBCK is not allowed.'
+const SEND = { tool: 'mcp__claude_ai_Slack__slack_send_message' as const, channel_id: 'C03GA4WGBCK', thread_ts: '1731300000.123456', message: 'the approved text' }
+
+test('a Slack send the policy denied is redeemed at the office once, retried once, and its channel closed after', async ($, on) => {
+  const redeems: any[] = []
+  const runs = baseStubs(on, {
+    run: (argv) => {
+      if (!String(argv[1] ?? '').endsWith('bin/office-redeem')) return undefined
+      return { code: 0, out: '{"status":200,"ok":true}' }
+    },
+    seen: (e) => { if (String(e.argv?.[1] ?? '').endsWith('bin/office-redeem')) redeems.push(JSON.parse(e.init?.stdin ?? '{}')) },
+  })
+  let calls = 0
+  on('tool.call', () => (++calls === 1 ? { deny: SLACK_DENY } : { result: { ok: true, ts: '1731300001.000001' } }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call(SEND)
+  expect(r.result.ok).toBe(true)
+  expect(calls).toBe(2)
+  expect(redeems).toEqual([
+    { sid: 'sid-1', kind: 'slack_send', channel: 'C03GA4WGBCK', thread: '1731300000.123456', text: 'the approved text' },
+    { sid: 'sid-1', kind: 'slack_send', channel: 'C03GA4WGBCK', done: true },
+  ])
+  // Claude's own policy is never touched from the session side.
+  expect(runs.some((a) => a.some((x) => String(x).endsWith('session_policy.py')) && a.includes('slack_send'))).toBe(false)
+})
+
+test('a Slack send no press covers stays denied, says how to ask, and is not retried', async ($, on) => {
+  baseStubs(on, { run: (argv) => (String(argv[1] ?? '').endsWith('bin/office-redeem') ? { code: 1, out: '{"status":403,"error":"the message differs from the approved text"}' } : undefined) })
+  let calls = 0
+  on('tool.call', () => (++calls, { deny: SLACK_DENY }))
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const r: any = await $.tool.call(SEND)
+  expect(calls).toBe(1)
+  expect(r.deny).toContain(SLACK_DENY)
+  expect(r.deny).toContain('the message differs')
+  expect(r.deny).toContain('bin/brief-grant')
+})
+
 test('a gh call for an owner org.json maps to a login is refused with the prefixed command, and that command runs as written', async ($, on) => {
   baseStubs(on, {})
   const ran: string[] = []

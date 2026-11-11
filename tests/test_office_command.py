@@ -920,7 +920,7 @@ class CommandKeysTest(unittest.TestCase):
             press('1'); press('Enter')
             return [nine, early, armed, replies]
         """)
-        self.assertEqual(got, [False, False, {"call": "s1", "i": 1}, [["s1", {"kind": "reply", "value": "아니요"}, "아니요"], ["s1", {"kind": "key", "value": "1"}, "Yes"]]])
+        self.assertEqual(got, [False, False, {"call": "s1", "i": 1}, [["s1", {"kind": "reply", "value": "아니요"}, "아니요"], ["s1", {"kind": "key", "value": "1", "question": "Proceed?", "label": "Yes"}, "Yes"]]])
 
     def test_enter_in_a_sessions_box_sends_the_words_or_the_armed_reply_or_says_what_to_do(self):
         got = self.run_js("""

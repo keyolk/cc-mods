@@ -38,6 +38,7 @@ import command  # noqa: E402 - office/command.py, briefs waiting on a decision
 import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 import crew  # noqa: E402 - office/crew.py, ending a session or releasing it from the command view
 import paths  # noqa: E402 - office/paths.py, which files the office may show
+import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes and a worker redeems
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
@@ -1463,8 +1464,13 @@ def act(body: dict) -> tuple[int, dict]:
     pane = me["pane"]  # from tmux, never from the request
     if kind == "key":
         d = dialog(capture(pane))
-        if not d or not any(str(o["n"]) == str(value) for o in d["options"]):
+        o = next((o for o in (d or {}).get("options") or [] if str(o["n"]) == str(value)), None)
+        if not d or not o:
             return 409, {"error": "no dialog with that choice on its screen now"}
+        # The press approves what the page drew: a permission dialog that
+        # changed since (the next tool call's) gets nothing.
+        if body.get("question") != d["question"] or body.get("label") != o["label"]:
+            return 409, {"error": "the dialog on its screen changed since the page drew it: look again", "dialog": d}
         subprocess.run(["tmux", "send-keys", "-t", pane, str(value)], timeout=3)
         return 200, {"ok": True, "sent": "key " + str(value)}
     if kind == "mute":
@@ -1774,7 +1780,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/next":
             NEXT["n"] += 1
             return self.send(204, b"", "text/plain")
-        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs", "/paths"):
+        if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs", "/paths", "/redeem"):
             return self.send(403, b"forbidden", "text/plain")
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 20_000)) or b"{}")
@@ -1787,6 +1793,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/prefs":
             ok = isinstance(body, dict) and set_pref(body.get("key"), body.get("value"))
             return self.send(204 if ok else 400, b"", "text/plain")
+        if self.path == "/redeem":
+            # A worker's cc-mods, after the guard denied a send a press may
+            # have allowed (office/grants.py). Never a press: it spends one.
+            code, out = grants.redeem(body if isinstance(body, dict) else {})
+            return self.send(code, json.dumps(out).encode(), "application/json")
         code, out = act(body)
         self.send(code, json.dumps(out).encode(), "application/json")
 

@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Declare what pressing an option of a decision brief allows.
+
+    brief-grant <brief> <option label> --slack <channel id> [--thread <ts>] --text-file <path>
+                [--qid q1]
+
+After `brief ask --new …`, a worker that needs a gated action to go on (today:
+one Slack message; its session policy keeps slack_send=block) says on the
+brief which option allows it. The office draws the action, whole, under that
+option; the person's press on it is a one-shot grant for exactly that message
+(office/grants.py). Writing this declaration grants nothing: only the press in
+the office does, and the office copies the action at the press.
+
+The text is the message exactly as it will be sent (`message` of
+slack_send_message): send that text unchanged after the answer comes back.
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
+CHANNEL = re.compile(r"^[CDGU](?=[A-Z]*\d)[A-Z0-9]{6,}$")
+THREAD = re.compile(r"^\d{6,}\.\d{1,9}$")
+MAX_TEXT = 5000  # office/grants.py MAX_TEXT
+
+
+def side_path(brief: str) -> str:
+    p = brief if os.path.isabs(brief) else os.path.join(ROOT, brief)
+    if not p.endswith(".html"):
+        p += ".html"
+    return p[: -len(".html")] + ".brief.json"
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="brief-grant", description=__doc__.split("\n\n")[0])
+    ap.add_argument("brief")
+    ap.add_argument("label")
+    ap.add_argument("--slack", required=True, help="channel or DM id (C…, G…, D…, U…)")
+    ap.add_argument("--thread", help="the parent message's ts, for a thread reply")
+    ap.add_argument("--text-file", required=True, help="the message, exactly as it will be sent")
+    ap.add_argument("--qid", help="the question (default: the only one, or the last asked)")
+    a = ap.parse_args(argv)
+    ch = a.slack.strip().upper()
+    if not CHANNEL.match(ch):
+        return fail("--slack: a Slack id like C0123ABCD45, not " + a.slack)
+    if a.thread and not THREAD.match(a.thread):
+        return fail("--thread: a message ts like 1731300000.123456")
+    with open(os.path.expanduser(a.text_file), encoding="utf-8") as f:
+        text = f.read()
+    if not text.strip() or len(text) > MAX_TEXT:
+        return fail(f"the text is empty or over {MAX_TEXT} characters")
+    path = side_path(a.brief)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        return fail(f"no sidecar for {a.brief} ({e}): run `brief ask` first")
+    decs = data.get("decisions")
+    if not isinstance(decs, list) or not decs:
+        return fail("the brief asks nothing: run `brief ask` first")
+    dec = next((d for d in decs if str(d.get("id")) == a.qid), None) if a.qid else (decs[0] if len(decs) == 1 else decs[-1])
+    if not dec:
+        return fail("no question " + str(a.qid))
+    if dec.get("answer"):
+        return fail(f"{dec.get('id')} is already answered: ask again")
+    if a.label not in [o.get("label") for o in dec.get("options") or []]:
+        return fail("no option " + repr(a.label) + "; have " + ", ".join(repr(o.get("label")) for o in dec.get("options") or []))
+    dec.setdefault("grants", {})[a.label] = {"kind": "slack_send", "channel": ch, "thread": a.thread or None, "text": text}
+    # The single-decision mirror office readers from before `decisions` use.
+    mirror = data.get("decision")
+    if isinstance(mirror, dict) and (mirror.get("id") or "q1") == (dec.get("id") or "q1") and mirror.get("question") == dec.get("question"):
+        data["decision"]["grants"] = dec["grants"]
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    os.replace(tmp, path)
+    print(f"{os.path.basename(path)} {dec.get('id')}: pressing {a.label!r} allows one Slack send to {ch}" + (f" thread {a.thread}" if a.thread else "") + f" ({len(text)} chars)")
+    return 0
+
+
+def fail(msg: str) -> int:
+    print("brief-grant: " + msg, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

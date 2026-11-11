@@ -8,6 +8,7 @@
 // and sets its limits. The tools refuse while it is off, so a session that
 // never turned it on can start nothing.
 
+import { briefGates, gateNote } from './lib/grant'
 import { COORD_CAPS, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
@@ -746,7 +747,7 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
     ? 'in pane ' + pane + ', split ' + (sp.split.dir === '-h' ? 'beside' : 'below') + (sp.kind === 'coordinator' ? ' yours' : ' ' + sp.target + ', next to ' + sp.workers.join(', ')) + ' (' + sp.split.size + (sp.split.dir === '-h' ? ' columns' : ' rows') + ') in window ' + window
     : 'in a new window ' + window + ' (pane ' + pane + ')' + (String(i.window ?? '') === 'new' ? ', as routed' : room.skipped.length ? ': ' + room.skipped.join('; ') : '')
   const note = placed.note ? ' (' + placed.note + ')' : ''
-  return { result: 'Started worker ' + req.slug + ' ' + where + note + ', session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') }
+  return { result: 'Started worker ' + req.slug + ' ' + where + note + ', session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') + gateNote(briefGates(req.brief)) }
 }
 
 // The absolute common git dir of a checkout or worktree, undefined outside git.

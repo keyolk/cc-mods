@@ -113,6 +113,8 @@ const CMD_CSS = `
 #command .opt.rec { background: #a8e6b0; }
 #command .opt.armed { outline: 3px solid #2a2033; }
 #command .opt small { display: block; font: 11px -apple-system, sans-serif; color: #5a5070; }
+#command .grant { margin: 4px 0 2px; padding: 6px 8px; border: 1px solid #c9a227; border-radius: 6px; background: #fffaf0; font: 12px -apple-system, sans-serif; color: #3a2f10; }
+#command .grant pre { margin: 4px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; font: 11px ui-monospace, monospace; }
 #command .key { display: inline-block; min-width: 16px; margin-right: 5px; font-size: 11px; background: #2a2033; color: #fff; border-radius: 5px; padding: 0 4px; text-align: center; vertical-align: 1px; }
 #command .row { display: flex; gap: 6px; align-items: center; }
 @media (max-width: 760px) { #command { --cmd-w: calc(100vw - 20px); } #command .pane.right { right: 10px; bottom: 50%; } #command.doc-on .pane.left { top: 50%; } }
@@ -486,13 +488,22 @@ function cmdRenderDoc() {
     q.options.forEach((o, i) => {
       const b = document.createElement('button')
       const armed = cmd.armed && cmd.armed.q === q.id && cmd.armed.i === i
+      const g = (q.grants || {})[o.label]
       b.className = 'act opt' + (i === q.recommended ? ' rec' : '') + (armed ? ' armed' : '')
       // Digits work on the active question only: its options carry the key.
-      b.innerHTML = (q === act ? '<span class="key">' + (i + 1) + '</span>' : '') + (i === q.recommended ? '★ ' : '') + cmdEsc(o.label) + (o.detail ? '<small>' + cmdEsc(o.detail) + '</small>' : '')
-      b.title = i === q.recommended ? '추천' : ''
+      b.innerHTML = (q === act ? '<span class="key">' + (i + 1) + '</span>' : '') + (i === q.recommended ? '★ ' : '') + (g ? '🔓 ' : '') + cmdEsc(o.label) + (o.detail ? '<small>' + cmdEsc(o.detail) + '</small>' : '')
+      b.title = (i === q.recommended ? '추천' : '') + (g ? ' · 누르면 아래 전송 1건을 허가합니다' : '')
       b.onclick = () => cmdAnswer(p, q, { label: o.label })
       opts.appendChild(b)
     })
+    // What an option allows when pressed, drawn whole: the press allows
+    // exactly this (office/grants.py), so the person reads it first.
+    for (const [label, g] of Object.entries(q.grants || {})) {
+      const d = document.createElement('div')
+      d.className = 'grant'
+      d.innerHTML = '🔓 「' + cmdEsc(label) + '」을 누르면 이 세션의 Slack 전송 1건을 허가합니다 → <b>' + cmdEsc(g.channel) + '</b>' + (g.thread ? ' · 스레드 ' + cmdEsc(g.thread) : '') + '<pre>' + cmdEsc(g.text) + '</pre>'
+      opts.after(d)
+    }
     const note = box.querySelector('.note')
     note.value = typed[q.id] || ''
     cmdBoxKeys(note, (e) => cmdNoteKey(e, p, q))
@@ -508,7 +519,8 @@ function cmdRenderDoc() {
 // (sent as that key), else the card's quick replies (sent as a reply).
 function cmdChoices(a) {
   if (!a || a.error) return []
-  if (a.dialog) return a.dialog.options.map((o) => ({ label: o.label, body: { kind: 'key', value: String(o.n) } }))
+  // question and label: what the person saw, checked against the screen at the press.
+  if (a.dialog) return a.dialog.options.map((o) => ({ label: o.label, body: { kind: 'key', value: String(o.n), question: a.dialog.question, label: o.label } }))
   return (a.suggestions || []).map((t) => ({ label: t, body: { kind: 'reply', value: t } }))
 }
 
@@ -715,7 +727,10 @@ async function cmdAnswer(p, q, { label = '', text = '' }) {
   const box = cmdEl.querySelector('.decide .qa[data-q="' + q.id + '"]')
   const note = text ? '' : box?.querySelector('.note')?.value || ''
   box?.querySelectorAll('button, input').forEach((b) => { b.disabled = true })
-  const j = await cmdPost({ kind: 'brief_answer', file: p.file, qid: q.id, label, note, text })
+  // seen: the digest of the action drawn under this option, so a declaration
+  // changed since the drawing is refused rather than allowed.
+  const seen = label && q.grants && q.grants[label] ? q.grants[label].digest : ''
+  const j = await cmdPost({ kind: 'brief_answer', file: p.file, qid: q.id, label, note, text, seen })
   if (!j) { box?.querySelectorAll('button, input').forEach((b) => { b.disabled = false }); return }
   toast('✅ ' + (j.sent || label || '직접 답'))
   q.answer = text ? { choice: '직접 답', note: text } : { choice: label, note }

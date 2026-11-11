@@ -42,6 +42,7 @@ import review  # noqa: E402 - office/review.py, finished work the person should 
 import turn  # noqa: E402 - office/turn.py, the one table of sessions and what each waits on
 import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat incidents)
 import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
+import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
@@ -182,6 +183,9 @@ def _one(d, qid: str) -> dict | None:
         "worker": d.get("worker") if isinstance(d.get("worker"), str) else None,
         "asked": d.get("asked"),
         "answer": d.get("answer") if isinstance(d.get("answer"), dict) else None,
+        # The action an option allows when pressed (office/grants.py), as the
+        # page draws it: only for an option the question has.
+        "grants": {k: a for k, v in (d.get("grants") or {}).items() if k in {str(o["label"]) for o in opts} and (a := grants.shown(v))} if isinstance(d.get("grants"), dict) else {},
     }
 
 
@@ -552,21 +556,35 @@ def _said(a: dict) -> str:
     return str(a.get("choice")) + (f" — {a['note']}" if a.get("note") else "")
 
 
+def _granted(q: dict) -> str:
+    """What the answer allowed, for the prompt: the worker reads that its
+    send is approved and goes on (no second ask)."""
+    a = q["grants"].get(str(q["answer"].get("choice"))) if q.get("answer") else None
+    if not a:
+        return ""
+    return f" [granted: one Slack send to {a['channel']}" + (f" thread {a['thread']}" if a["thread"] else "") + ", the text on the brief, exactly]"
+
+
 def message(file: str, qs: list[dict]) -> str:
     """The one prompt for whoever asked, once every question is answered:
     `[brief answer] <file>: <label> — <note>` as before for one question; for
     several, each q-id and choice on that line and each question under it. A
     free answer is `직접 답 — <the words>`, so the words always arrive."""
     if len(qs) == 1:
-        return f"[brief answer] {file}: {_said(qs[0]['answer'])}"
+        return f"[brief answer] {file}: {_said(qs[0]['answer'])}{_granted(qs[0])}"
     head = " · ".join(f"{q['id']} {q['answer'].get('choice')}" for q in qs)
-    return f"[brief answer] {file}: {head}\n" + "\n".join(f"- {q['id']} {q['question']} → {_said(q['answer'])}" for q in qs)
+    return f"[brief answer] {file}: {head}\n" + "\n".join(f"- {q['id']} {q['question']} → {_said(q['answer'])}{_granted(q)}" for q in qs)
 
 
-def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = "") -> tuple[int, dict]:
+def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = "", seen: str = "") -> tuple[int, dict]:
     """Record the person's answer to one question on the brief: one of its
     options (`label`, with `note`) or their own words (`text`). When it was
-    the brief's last open question, tell whoever asked every answer at once."""
+    the brief's last open question, tell whoever asked every answer at once.
+
+    An option that declares an action (`grants`) is a press that allows it:
+    `seen` is the digest of the action the page drew, and it must still be
+    the declared one. The grant goes to the worker the coordinator's ledger
+    names for the question (office/grants.py says why only here)."""
     if not NAME.match(file or "") or not brief_path(os.path.join(root(), file)):
         return 404, {"error": "no such brief"}
     side = _read_side(file, fresh=True)
@@ -585,6 +603,14 @@ def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = ""
         return 400, {"error": "an option or your own words, not both"}
     if not text and label not in [o["label"] for o in q["options"]]:
         return 400, {"error": "not one of its options"}
+    act = None if text else q["grants"].get(label)
+    grantee = None
+    if act:
+        if seen != act["digest"]:
+            return 409, {"error": "the action this option allows changed since the page drew it: look again"}
+        grantee = _worker_sid(q["worker"])
+        if not grantee:
+            return 409, {"error": "no live worker " + str(q["worker"]) + " to allow this for"}
     path = os.path.join(root(), file)
     if text:
         args = ["answer", path, qid, "--text", text, "--by", "office"]
@@ -599,18 +625,22 @@ def answer(file: str, qid: str, label: str, note: str, inbox_put, text: str = ""
         if not _write_answer(file, qid, ans):
             return 500, {"error": "could not record the answer", "cli": (r.stderr.strip()[-300:] if r else None)}
         via = "sidecar"
+    allowed = ""
+    if act and grantee:
+        grants.issue(grantee, act, file + " " + qid + " " + label)
+        allowed = f" · 허가: {act['channel']}{' 스레드' if act['thread'] else ''}에 1건 ({grants.TTL_S // 60}분)"
     qs = _decisions(_read_side(file, fresh=True))
     _pending["at"] = 0.0
     said = f"{FREE}: {text}" if text else label
     left = _open(qs)
     if left:
-        return 200, {"ok": True, "sent": f"{qid} {said} 기록 · 남은 질문 {len(left)}", "via": via, "left": len(left)}
+        return 200, {"ok": True, "sent": f"{qid} {said} 기록 · 남은 질문 {len(left)}{allowed}", "via": via, "left": len(left)}
     to = _target(qs[0], [str(s.get("id")) for s in side.get("sessions") or [] if isinstance(s, dict) and s.get("id")])
     if not to:
-        return 200, {"ok": True, "sent": "기록만 했습니다 (전할 세션 없음)", "via": via, "left": 0}
+        return 200, {"ok": True, "sent": "기록만 했습니다 (전할 세션 없음)" + allowed, "via": via, "left": 0}
     inbox_put(to, message(file, qs))
     who = "coordinator" if to == qs[0]["coordinator"] else "worker"
-    return 200, {"ok": True, "sent": f"{said} → {_coord_name(to) or who}" if len(qs) == 1 else f"답 {len(qs)}개 → {_coord_name(to) or who}", "via": via, "to": to, "left": 0}
+    return 200, {"ok": True, "sent": (f"{said} → {_coord_name(to) or who}" if len(qs) == 1 else f"답 {len(qs)}개 → {_coord_name(to) or who}") + allowed, "via": via, "to": to, "left": 0}
 
 
 SLUG = re.compile(r"^[\w.-]{1,64}$")
@@ -665,7 +695,7 @@ def say(coord_sid: str, slug: str, text: str, inbox_put, about: dict | None = No
 def act(body: dict, inbox_put) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
-        return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""))
+        return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""), str(body.get("seen") or ""))
     if kind == "brief_open":
         return open_outside(str(body.get("file") or ""), str(body.get("via") or ""))
     if kind in review.KINDS:
