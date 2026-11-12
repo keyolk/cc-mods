@@ -749,7 +749,8 @@ class SayAndViewTest(BriefsCase):
         # One record per brief for ~/briefs/index.html and 📚: `brief list --json`.
         self.brief("2026-11-08-a", {"coordinator": COORD}, title="옛 결정")
         out = json.dumps({"total": 2, "items": [
-            {"file": "2026-11-08-a.html", "date": "2026-11-08", "title": "옛 결정", "desc": "d", "topic": "결정", "state": "pending", "ask": "어느 쪽?", "result": None, "search": "옛 결정 결정 결정 대기"},
+            {"file": "2026-11-08-a.html", "date": "2026-11-08", "title": "옛 결정", "desc": "d", "topic": "결정", "state": "pending", "ask": "어느 쪽?", "result": None, "search": "옛 결정 결정 결정 대기",
+             "published": [{"target": "artifact", "id": "https://claude.ai/artifact/x", "state": "synced"}]},
             {"file": "../escape.html", "date": "x", "title": "x", "topic": "x", "state": "read", "search": ""}]}, ensure_ascii=False)
         command._no_list["until"] = 0.0
         with mock.patch.object(command, "_cli", return_value=subprocess.CompletedProcess([], 0, out, "")):
@@ -757,6 +758,8 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual([(b["file"], b["topic"], b["state"], b["ask"]) for b in d["items"]], [("2026-11-08-a.html", "결정", "pending", "어느 쪽?")])
         self.assertEqual((d["total"], d["topics"], d["counts"]["pending"]), (1, [("결정", 1)], 1))
         self.assertEqual(d["items"][0]["path"], os.path.join(command.root(), "2026-11-08-a.html"))
+        # Where it went out reaches the panel, which draws the index's publish badges from it.
+        self.assertEqual(d["items"][0]["published"], [{"target": "artifact", "id": "https://claude.ai/artifact/x", "state": "synced"}])
         # A CLI from before `list`: read here, the same fields, and not asked again for a while.
         with mock.patch.object(command, "_cli", return_value=subprocess.CompletedProcess([], 2, "", "invalid choice: 'list'")) as cli:
             d = command.library()
@@ -1445,6 +1448,26 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [False, True, 5, '{"library":true}', None, 3, True, True, True, True, True, True,
                                True, True, 2, True, True, True, 1, 1, True, {"file": "b.html", "path": "/b/b.html", "title": "끝난 일", "fromLib": True}])
+
+    def test_the_library_card_shows_where_a_brief_went_out_and_filters_by_it(self):
+        # The index's `artifact ↗` badges, in 📚 too: a press on the badge opens the copy, not
+        # the brief; "↗ 발행" keeps only the published ones; a stale copy says so.
+        got = self.run_js("""
+            press('c')
+            const opened = []
+            globalThis.open = (u) => { opened.push(u) }
+            blib.data = { total: 2, counts: { read: 2 }, topics: [['x', 2]], items: [
+              { file: 'a.html', path: '/b/a.html', title: 'A', date: '2026-11-01', state: 'read', topic: 'x', search: 'a',
+                published: [{ target: 'artifact', id: 'https://claude.ai/artifact/q', state: 'pull' }] },
+              { file: 'b.html', path: '/b/b.html', title: 'B', date: '2026-11-01', state: 'read', topic: 'x', search: 'b' }] }
+            const all = blibHtml(), facets = blibFacets()
+            blib.only = 'pub'; const only = (blibHtml().match(/data-lbrief=/g) || []).length; blib.only = ''
+            cmd.sel = null
+            blibClick({ target: { closest: (q) => (q === '[data-lpub]' ? { dataset: { lpub: 'https://claude.ai/artifact/q' } } : q === '[data-lbrief]' ? { dataset: { lbrief: '/b/a.html', title: 'A' } } : null) } })
+            return [/data-lpub="https:\/\/claude.ai\/artifact\/q"/.test(all), all.includes('artifact · 받기 필요 ↗'),
+              /data-lonly="pub"[^>]*>↗ 발행<small>1/.test(facets), only, opened, cmd.sel]
+        """)
+        self.assertEqual(got, [True, True, True, 1, ["https://claude.ai/artifact/q"], None])
 
     def test_the_library_grass_picks_a_range_and_a_type_and_esc_clears_the_range_first(self):
         # The person: pick a range on the grass (as ~/briefs/index.html), and a

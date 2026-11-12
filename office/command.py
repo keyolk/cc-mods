@@ -352,7 +352,7 @@ def _cli_list() -> list[dict] | None:
         return None
     if not isinstance(items, list):
         return None
-    keep = ("file", "date", "title", "desc", "topic", "type", "state", "ask", "result", "search")
+    keep = ("file", "date", "title", "desc", "topic", "type", "state", "ask", "result", "published", "search")
     return [{k: it.get(k) for k in keep} for it in items if isinstance(it, dict) and NAME.match(str(it.get("file") or "")) and it.get("state") in LIB_STATES]
 
 
