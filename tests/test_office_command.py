@@ -167,6 +167,51 @@ class BriefFrameTest(BriefsCase):
         for path in ("2026-11-08-escape.html", "sub/x.html", "..%2Fsecret.html", "%2E%2E/secret.html", "notes.txt", "missing.html", ""):
             self.assertEqual(self.get(base + "/briefs/" + path)[0], 404, path)
 
+    def post(self, url, data: bytes, headers: dict):
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def fake_brief_cli(self) -> pathlib.Path:
+        """A stand-in for `brief anno save <file> --from <json>`: copies the JSON beside the brief."""
+        b = self.tmp / "bin" / "brief"
+        b.parent.mkdir()
+        b.write_text("#!/bin/sh\n[ \"$1 $2\" = \"anno save\" ] || exit 2\n"
+                     "cp \"$5\" \"$BRIEFS_DIR/$(basename \"$3\" .html).anno.json\" && echo saved\n")
+        b.chmod(0o755)
+        p = mock.patch.object(command.shutil, "which", side_effect=lambda n: str(b) if n == "brief" else None)
+        p.start()
+        self.addCleanup(p.stop)
+        return b
+
+    def test_annotations_posted_from_a_served_brief_are_saved(self):
+        f = self.brief("2026-11-08-a")
+        self.fake_brief_cli()
+        base = self.serve()
+        body = json.dumps({"page": "2026-11-08-a", "cards": [{"id": "c", "text": "hi"}], "edges": [], "marks": []}).encode()
+        code, out = self.post(base + "/briefs/" + f + "/anno", body,
+                              {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(code, 200, out)
+        saved = json.loads((self.repo / "2026-11-08-a.anno.json").read_text())
+        self.assertEqual(saved["cards"][0]["text"], "hi")
+
+    def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
+        f = self.brief("2026-11-08-a")
+        self.fake_brief_cli()
+        base = self.serve()
+        good = json.dumps({"page": "2026-11-08-a", "cards": []}).encode()
+        evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        self.assertEqual(self.post(base + "/briefs/" + f + "/anno", good, evil)[0], 403)
+        self.assertEqual(self.post(base + "/briefs/index.html/anno", good, {"Origin": "null"})[0], 404)
+        self.assertEqual(self.post(base + "/briefs/../x.html/anno", good, {"Origin": "null"})[0], 404)
+        other = json.dumps({"page": "2026-11-09-b", "cards": []}).encode()
+        self.assertEqual(self.post(base + "/briefs/" + f + "/anno", other, {"Origin": "null"})[0], 400)
+        self.assertEqual(self.post(base + "/briefs/" + f + "/anno", b"{}", {"Origin": "null"})[0], 400)
+        self.assertFalse((self.repo / "2026-11-08-a.anno.json").exists())
+
     def test_the_brief_route_does_not_swallow_the_scripts(self):
         # /briefline.js shares the prefix: it must stay JavaScript.
         base = self.serve()
