@@ -608,6 +608,47 @@ test('status: a worker gets the tool, a call is written whole, and a turn withou
   expect(submitted.filter((t) => t.startsWith('[cc-mods] Your turn ended without')).length).toBe(1)
 })
 
+// A worker's turn that ends asking the person in words only is written for
+// the coordinator's tick (register.ts askExport); a turn that asked on a
+// status or a brief, or asked nothing, clears it.
+test('asks: a worker turn ending on a question with no brief or blocked:question is written; a proper ask clears it', async ($, on) => {
+  const COORD = '/home/u/.claude/state/office/coord/c9.json'
+  const ASK = '/home/u/.claude/state/office/asks/sid-1.json'
+  const files: Record<string, string> = { [COORD]: JSON.stringify({ on: true, sid: 'c9', name: 'cc-mods-d9', workers: [{ slug: 'luther', sid: 'sid-1', relation: 'owned', at: OLD }], log: [] }) }
+  const runs: string[][] = []
+  stubs(on, {
+    files,
+    runs,
+    submitted: [],
+    panes: () => '',
+    run: (argv) => (argv[0] === 'sh' && String(argv[2] ?? '').includes('for f in') ? Object.entries(files).filter(([k]) => k.startsWith(argv[3] + '/')).map(([, v]) => v).join('\n') + '\n' : undefined),
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  await clock.advance(10)
+  const removed = () => runs.filter((a) => a[0] === 'rm' && a.includes(ASK)).length
+
+  await $.turn.start({ turnId: 't1', text: 'onboard DP' })
+  await $.tool.call({ tool: 'mcp__cc-mods__status', state: 'working', step: 'thread' } as any)
+  await $.turn.complete({ turnId: 't1', answer: '확인했습니다.\n\n남은 결정은 하나입니다. 메시지 초안을 쓸지 정해 주세요.', durationMs: 5, isAborted: false, usage: null } as any)
+  expect(JSON.parse(files[ASK]!)).toMatchObject({ text: '메시지 초안을 쓸지 정해 주세요.', turnId: 't1' })
+
+  // The same question with a blocked:question status in the turn: cleared.
+  delete files[ASK]
+  await $.turn.start({ turnId: 't2', text: 'go on' })
+  await $.tool.call({ tool: 'mcp__cc-mods__status', state: 'blocked', kind: 'question', needs: '/b/x.html' } as any)
+  await $.turn.complete({ turnId: 't2', answer: '메시지 초안을 쓸지 정해 주세요.', durationMs: 5, isAborted: false, usage: null } as any)
+  expect(files[ASK]).toBeUndefined()
+  expect(removed()).toBe(1)
+
+  // A report: nothing asked, cleared again.
+  await $.turn.start({ turnId: 't3', text: 'go on' })
+  await $.tool.call({ tool: 'mcp__cc-mods__status', state: 'done' } as any)
+  await $.turn.complete({ turnId: 't3', answer: 'READY abc를 보냈습니다.', durationMs: 5, isAborted: false, usage: null } as any)
+  expect(files[ASK]).toBeUndefined()
+  expect(removed()).toBe(2)
+})
+
 test('coord: coord_answer presses the option only while that dialog is on the worker\'s screen', async ($, on) => {
   // Live: office-coord-row sat at "rm node_modules && git commit" and the
   // coordinator told the person "권한 확인 1건 대기" twice instead of answering.

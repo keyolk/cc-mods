@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, coordGodWanted, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, coordGodWanted, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, headsUpWakes, personAskWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -20,6 +20,7 @@ import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, ups
 import { clip } from './lib/text'
 import { dialogShown, dialogText, matches, parseDialog } from './lib/dialog'
 import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
+import { ASKS_DIR, parseAskFile, type AskSeen } from './lib/headsup'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
 import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
@@ -334,17 +335,22 @@ async function tick($: any) {
     // back (register.ts mcpExport writes state/office/mcp/<sid>.json).
     const files = await mcpFiles($, o.ledger)
     const m = files ? mcpWakes(o.ledger, files, sums) : { ledger: o.ledger, changes: [] }
-    const l = m.ledger
+    // The Heads up bands on the workers' screens (lib/headsup.ts), each pane
+    // read at most every HEADSUP_EVERY_MS; and the questions their turns
+    // ended on in words only (register.ts askExport).
+    const h = headsUpWakes(m.ledger, await screens($, m.ledger, seen), Date.now(), sums)
+    const a = personAskWakes(h.ledger, await askFiles($, h.ledger), sums)
+    const l = a.ledger
     // A worker the person set aside (office ⏰ 나중에, lib/defer.ts) is
     // recorded, not woken for, as a quiet worker is: its turns, asks and
     // MCP drops wait for its time, or for the office to bring it back on a
     // new question (the file then stops naming it).
     const asleep = await deferredSids($)
-    const changes = [...o.changes, ...m.changes].map((c) => (c.wake && asleep.has(c.sid) ? { ...c, wake: false } : c))
+    const changes = [...o.changes, ...m.changes, ...h.changes, ...a.changes].map((c) => (c.wake && asleep.has(c.sid) ? { ...c, wake: false } : c))
     let out = l
     // A quiet worker's asks are the person's own work: kept in its
     // row, not in the log the office shows.
-    for (const c of changes) if (c.wake || c.kind === 'gone' || c.kind === 'back') out = logged(out, 'event', c.text, Date.now())
+    for (const c of changes) if (c.wake || c.kind === 'gone' || c.kind === 'back' || c.kind === 'headsup') out = logged(out, 'event', c.text, Date.now())
     if (changes.length || l.mcpDown !== ledger.mcpDown || JSON.stringify(l.workers) !== JSON.stringify(ledger.workers)) await save($, out)
     // A worker coord_close is closing: its pane went first, its endedAt
     // comes when the close saves. Not news to the coordinator that closed it.
@@ -379,6 +385,42 @@ async function statusOf($: any, ids: string[]): Promise<Map<string, Status>> {
     const i = line.indexOf('\t')
     const st = i > 0 ? parseStatusFile(line.slice(i + 1)) : undefined
     if (st) m.set(line.slice(0, i), st)
+  }
+  return m
+}
+
+// The workers' screens to look for a Heads up band on, by session id: each
+// active worker's pane, at most once every HEADSUP_EVERY_MS. Every pane on
+// each 10 s tick was the office's 16 tmux starts in 13 s (office.py
+// COMPACT_TTL, sys-load brief D); a band stays up until it is answered, so
+// a minute late still tells it. A pane tmux did not answer is left out:
+// not read is not "no band".
+const HEADSUP_EVERY_MS = 45_000
+const capturedAt = new Map<string, number>()
+async function screens($: any, l: Ledger, seen: PaneSeen[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const now = Date.now()
+  const pane = new Map(seen.map((s) => [s.sid, s.pane]))
+  const due = active(l).filter((w) => pane.get(w.sid) && now - (capturedAt.get(w.sid) ?? 0) >= HEADSUP_EVERY_MS)
+  for (const w of due) {
+    capturedAt.set(w.sid, now)
+    const r = await sh($, ['tmux', 'capture-pane', '-p', '-t', pane.get(w.sid)!, '-S', '-40'], { timeoutMs: 3000 })
+    if (r.ok) out.set(w.sid, r.out)
+  }
+  for (const k of capturedAt.keys()) if (!pane.has(k)) capturedAt.delete(k)
+  return out
+}
+
+// The active workers' asks files (register.ts askExport): one read for all.
+async function askFiles($: any, l: Ledger): Promise<Map<string, AskSeen | undefined>> {
+  const m = new Map<string, AskSeen | undefined>()
+  const sids = active(l).map((w) => w.sid).filter((s) => /^[0-9a-f-]{8,64}$/.test(s))
+  if (!sids.length) return m
+  const r = await sh($, ['sh', '-c', READ_EACH, ctx!.home() + ASKS_DIR, ...sids], { timeoutMs: 3000 })
+  if (!r.ok) return m
+  for (const line of r.out.split('\n')) {
+    const i = line.indexOf('\t')
+    if (i > 0) m.set(line.slice(0, i), parseAskFile(line.slice(i + 1)))
   }
   return m
 }
@@ -1014,6 +1056,12 @@ async function close($: any, i: any): Promise<{ result: string } | { deny: strin
   if (!w) return { deny: 'no worker ' + i.slug }
   const now = Date.now()
   if (w.relation === 'adopted') {
+    if (i.force !== true) {
+      // Best effort: gh may be missing or the cwd not a repository.
+      const pr = await sh($, ['gh', 'pr', 'list', '--state', 'open', '--author', '@me', '--head', (await sh($, ['git', '-C', w.cwd, 'branch', '--show-current'])).out || '-', '--json', 'url', '--jq', '.[0].url'], { timeoutMs: 8000, cwd: w.cwd })
+      const why = handbackWarning(w, pr.ok && pr.out !== '')
+      if (why) return { deny: 'Not handed back: ' + why + '. Its intent is not finished: keep driving it with coord_send (answer its in-scope question yourself, relay open asks). Pass force: true only when the person said to hand it back.' }
+    }
     await save($, released(ledger!, w, now))
     return { result: 'Handed ' + w.slug + ' back to the person; it keeps running in its pane and is not adopted again.' }
   }

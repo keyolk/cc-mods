@@ -593,6 +593,15 @@ def status_of(w: dict) -> dict | None:
     return {k: st[k] for k in keep if st.get(k) not in (None, "")}
 
 
+def heads_up_of(w: dict) -> dict | None:
+    """The Heads up sentence a worker's pane showed when the coordinator last
+    read it ({text, at}); None when none is up."""
+    h = w.get("headsUp")
+    if not isinstance(h, dict) or not isinstance(h.get("text"), str) or not h["text"].strip():
+        return None
+    return {"text": h["text"][:240], "at": h.get("at")}
+
+
 def declared(by_sid: dict[str, dict], ledger_w: dict[str, dict]) -> dict[str, dict]:
     """sid -> what each live session declared with its status tool, read from
     its status file (hooks/lib/status.ts). The ledger holds a copy that a
@@ -674,6 +683,9 @@ def view(people: list[dict], ask=None, deps: list[dict] | None = None) -> dict:
                         # (hooks/lib/status.ts), as the coordinator's tick
                         # last copied it into the ledger.
                         "status": status_of(w),
+                        # The newest Heads up band read off its pane
+                        # (hooks/lib/headsup.ts), drawn small on its row.
+                        "headsUp": heads_up_of(w),
                     }
                     for w in c["workers"]
                 ],

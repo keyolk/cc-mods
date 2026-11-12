@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -732,4 +732,22 @@ test('review requests to #team-core-platform-pr-review are pre-approved in the c
   const rules = coordRules(on({}))
   expect(rules).toContain('C0AR17WDTQ9')
   expect(rules).toContain('without a decision brief')
+})
+
+test('coord: rules forbid an early hand-back and tell the coordinator to answer in-scope asks', () => {
+  const rules = coordRules(emptyLedger('sid', 'cc-mods-d9', NOW))
+  expect(rules).toContain('Do not `coord_close` (hand back) a worker whose intent is not finished')
+  expect(rules).toContain('answer yes yourself')
+  expect(rules).toContain('every open request of the other party')
+})
+
+test('handbackWarning: blocked:question or an open PR stops a hand-back', () => {
+  const a = worker({ relation: 'adopted' })
+  expect(handbackWarning(a)).toBeUndefined()
+  expect(handbackWarning({ ...a, status: { at: NOW, state: 'working' } })).toBeUndefined()
+  expect(handbackWarning({ ...a, status: { at: NOW, state: 'blocked', kind: 'question', needs: 'Luther 메시지 초안' } })).toContain('blocked:question')
+  expect(handbackWarning({ ...a, status: { at: NOW, state: 'blocked', kind: 'wait' } })).toBeUndefined()
+  expect(handbackWarning({ ...a, status: { at: NOW, state: 'working', link: 'https://github.com/o/r/pull/3' } })).toContain('open PR')
+  expect(handbackWarning({ ...a, status: { at: NOW, state: 'done', link: 'https://github.com/o/r/pull/3' } })).toBeUndefined()
+  expect(handbackWarning(a, true)).toContain('open PR')
 })

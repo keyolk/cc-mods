@@ -149,7 +149,10 @@ def take(st: dict, d: dict) -> None:
         if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
             return
         text = _text(content)
-        if not text.strip() or d.get("isMeta"):
+        # A peer message (a coordinator's SendMessage) is written isMeta; it
+        # still answers what the worker asked.
+        peer = (d.get("origin") or {}).get("kind") == "peer"
+        if not text.strip() or (d.get("isMeta") and not peer):
             return
         person = by_person(d, text)
         refs = refs_in(text)
@@ -159,7 +162,7 @@ def take(st: dict, d: dict) -> None:
             st["first"] = sorted(refs) if len(refs) <= LIST_MAX or not d.get("isCompactSummary") else []
         # A monitor event or a task's end wakes a session too, without
         # answering what it asked: only the person's and a coordinator's.
-        if person or (d.get("origin") or {}).get("kind") == "peer" or text.lstrip().startswith("[coordinator]"):
+        if person or peer or text.lstrip().startswith("[coordinator]"):
             st["prompted"] = max(st["prompted"], at)
         if person:
             st["typed"] = max(st["typed"], at)

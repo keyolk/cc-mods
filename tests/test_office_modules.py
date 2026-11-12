@@ -154,7 +154,7 @@ class GuardTest(unittest.TestCase):
 
 LIST_HARNESS = textwrap.dedent(r"""
     const vm = require('vm'), fs = require('fs')
-    const dir = process.argv[2], without = JSON.parse(process.argv[3])
+    const dir = process.argv[2], without = JSON.parse(process.argv[3]), data = process.argv[4] || '{ pending: [], coordinators: [], table: [] }'
     const kids = {}
     const el = () => { const e = { style: {}, dataset: {}, classList: { toggle() {} }, appendChild() {}, after() {}, firstChild: null, scrollTop: 0, _html: '', querySelectorAll: () => [], querySelector: () => null }
       Object.defineProperty(e, 'innerHTML', { get() { return this._html }, set(v) { this._html = v; if (v) this.firstChild = {} } }); return e }
@@ -168,7 +168,7 @@ LIST_HARNESS = textwrap.dedent(r"""
       vm.runInContext(fs.readFileSync(dir + '/' + f, 'utf8'), ctx)
     }
     vm.runInContext('cmdRenderSay = () => {}; cmdRenderDoc = () => {}; cmdFirstPick = () => {}', ctx)
-    vm.runInContext("cmd.data = { pending: [], coordinators: [], table: [] }", ctx)
+    vm.runInContext("cmd.data = " + data + "; if (typeof tbl === 'object') tbl.othersOpen = true", ctx)
     let threw = null
     try { vm.runInContext('cmdRender()', ctx) } catch (e) { threw = String(e) }
     const k = (s) => kids[s]
@@ -178,11 +178,11 @@ LIST_HARNESS = textwrap.dedent(r"""
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class ListWithoutModulesTest(unittest.TestCase):
-    def render(self, without):
+    def render(self, without, data=None):
         with tempfile.TemporaryDirectory() as d:
             h = pathlib.Path(d, "h.js")
             h.write_text(LIST_HARNESS)
-            r = subprocess.run(["node", str(h), str(HERE), json.dumps(without)], capture_output=True, text=True, timeout=30)
+            r = subprocess.run(["node", str(h), str(HERE), json.dumps(without), *([json.dumps(data)] if data else [])], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)
 
@@ -208,6 +208,19 @@ class ListWithoutModulesTest(unittest.TestCase):
         got = self.render(["hibernate.js", "slx.js", "defer.js"])
         self.assertIsNone(got["threw"])
         self.assertNotIn("불러오지 못했습니다", got["list"])
+
+    def test_a_worker_row_shows_its_heads_up_small_under_its_name(self):
+        hu = {"text": "2FA 중계가 사이트를 확인하지 않습니다 <b>", "at": 1}
+        row = {"key": "s:w1", "sid": "w1", "name": "relay-2fa", "summary": "2FA 중계", "relation": "owned", "state": "working", "live": True, "decisions": [], "reviews": [], "slx": [], "mcp": [], "headsUp": hu}
+        got = self.render([], {"pending": [], "coordinators": [], "table": [row]})
+        self.assertIsNone(got["threw"])
+        tbl = got["list"]
+        # Escaped, in its small line, marked with the band's star.
+        self.assertIn('class="hu"', tbl)
+        self.assertIn("✦ 2FA 중계가 사이트를 확인하지 않습니다 &lt;b&gt;", tbl)
+        # A row with none draws no such line.
+        got = self.render([], {"pending": [], "coordinators": [], "table": [{**row, "headsUp": None}]})
+        self.assertNotIn('class="hu"', got["list"])
 
 
 if __name__ == "__main__":

@@ -192,6 +192,12 @@ class TurnTest(Case):
         r = self.rows(self.status(T0), state="working")["s:" + WORKER]
         self.assertFalse(r["needs"])
         self.assertEqual(r["handled"]["how"], "working")
+        # A coordinator's SendMessage arrives as a peer prompt, written isMeta.
+        os.unlink(self.root / "p" / (WORKER + ".jsonl"))
+        handled._files.clear()
+        self.write(WORKER, [user(T0 + 60, "Another Claude session sent a message:\n<cross-session-message>[coordinator] 예</cross-session-message>", {"kind": "peer", "name": "cc-mods-d9"}, isMeta=True)])
+        r = self.rows(self.status(T0), state="working")["s:" + WORKER]
+        self.assertEqual((r["needs"], r["handled"]["how"]), (False, "working"))
         # A monitor event that woke it answers nothing.
         os.unlink(self.root / "p" / (WORKER + ".jsonl"))
         handled._files.clear()
