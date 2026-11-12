@@ -256,6 +256,17 @@ test('prs: a gh call for a mapped owner is handed back with the token in front, 
     ['git log | head', 'keyolk/cc-mods'],
     ['echo gh pr view 1', 'keyolk/cc-mods'],
   ] as const) expect(ghAsAccount(c, r)).toBeUndefined()
+  // gh api: the repo in the path / graphql query decides, not the session's.
+  expect(ghAsAccount('gh api repos/sendbird/soda-k8s/compare/main...abc', 'keyolk/cc-mods')).toBeUndefined()
+  expect(ghAsAccount('gh api /repos/sendbird/delight-ops-k8s/commits/abc/check-runs', 'keyolk/cc-mods')).toBeUndefined()
+  expect(ghAsAccount('gh api graphql -f query=\'{repository(owner:"sendbird",name:"x"){id}}\'', 'keyolk/cc-mods')).toBeUndefined()
+  expect(ghAsAccount('gh api repos/keyolk/cc-mods/pulls/1', undefined)?.account).toBe('keyolk')
+  expect(ghAsAccount('gh api /repos/keyolk/cc-mods/pulls/1', 'acme/infra-k8s')?.account).toBe('keyolk')
+  expect(ghAsAccount('gh api graphql -f query=\'{repository(owner:"keyolk",name:"cc-mods"){id}}\'', undefined)?.account).toBe('keyolk')
+  // Target unknown: no fallback to the session repo; {owner}/{repo} is the current repo.
+  expect(ghAsAccount('gh api orgs/sendbird/members', 'keyolk/cc-mods')).toBeUndefined()
+  expect(ghAsAccount('gh api repos/{owner}/{repo}/pulls', 'keyolk/cc-mods')?.account).toBe('keyolk')
+  expect(repoFromGh('gh api repos/acme/proxy/pulls --jq .[]')).toBe('acme/proxy')
   // What the model reads: the exact command to run, and why it is not done for it.
   const deny = ghAsAccountDeny(ghAsAccount('gh pr view 1 -R keyolk/cc-mods', undefined)!)
   expect(deny).toContain('\n' + tok('keyolk') + 'gh pr view 1 -R keyolk/cc-mods\n')

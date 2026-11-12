@@ -209,9 +209,29 @@ export function repoFromRemote(url: string): string | undefined {
   return m?.[1]
 }
 
-// Explicit `--repo owner/name` / `-R owner/name` in a gh command line.
+// The repo a gh command line names: `--repo owner/name` / `-R owner/name`, a
+// pull/issues URL, a `gh api repos/<owner>/<name>` path (leading `/` or not),
+// or a graphql `repository(owner:"o", name:"n")`.
 export function repoFromGh(command: string): string | undefined {
-  return /(?:--repo|-R)[ =]([\w.-]+\/[\w.-]+)/.exec(command)?.[1] ?? /github\.com\/([\w.-]+\/[\w.-]+)\/(?:pull|issues)\//.exec(command)?.[1]
+  return (
+    /(?:--repo|-R)[ =]([\w.-]+\/[\w.-]+)/.exec(command)?.[1] ??
+    /github\.com\/([\w.-]+\/[\w.-]+)\/(?:pull|issues)\//.exec(command)?.[1] ??
+    /\bgh\s+api\b[^|;&]*?(?:^|\s)["']?\/?repos\/([\w.-]+\/[\w.-]+)/.exec(command)?.[1] ??
+    graphqlRepo(command)
+  )
+}
+
+function graphqlRepo(command: string): string | undefined {
+  const m = /repository\(\s*owner:\s*\\?["']([\w.-]+)\\?["']\s*,\s*name:\s*\\?["']([\w.-]+)\\?["']/.exec(command)
+  return m ? m[1] + '/' + m[2] : undefined
+}
+
+// A `gh api` call whose target repo the line does not show (`gh api user`,
+// `orgs/<o>/...`): the session's repo says nothing about which account it
+// needs, so the caller must not fall back to it. `repos/{owner}/{repo}`
+// placeholders do mean the current repo, so those keep the fallback.
+function apiWithoutRepo(command: string): boolean {
+  return /^\s*(\w+=\S+\s+)*gh\s+api\b/.test(command) && !/\{owner\}/.test(command)
 }
 
 // A Bash `gh` call that must run as another login than gh's active one: the
@@ -229,7 +249,7 @@ export function repoFromGh(command: string): string | undefined {
 export function ghAsAccount(command: string, sessionRepo: string | undefined): { account: string; prefix: string; rerun: string } | undefined {
   if (!/^\s*(\w+=\S+\s+)*gh\s/.test(command) || /\bGH_TOKEN=/.test(command) || /\bgh\s+auth\b/.test(command)) return undefined
   if (/^\s*(\w+=\S+\s+)*gh\s+(--version|version|help|--help)\b/.test(command)) return undefined
-  const account = ghAccountFor(repoFromGh(command) ?? sessionRepo)
+  const account = ghAccountFor(repoFromGh(command) ?? (apiWithoutRepo(command) ? undefined : sessionRepo))
   if (!account) return undefined
   const prefix = 'GH_TOKEN="$(gh auth token --user ' + account + ')" '
   return { account, prefix, rerun: prefix + command.trimStart() }
