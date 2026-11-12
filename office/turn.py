@@ -75,7 +75,32 @@ def status_blocks_person(st: dict | None, now: float) -> bool:
     return not at or now - at < STATUS_STALE
 
 
-def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None, held: dict[str, dict] | None = None, declared: dict[str, dict] | None = None, deps: list[dict] | None = None) -> list[dict]:
+def answered(st: dict, r: dict, seen: dict) -> dict | None:
+    """Whether a worker's block on the person was answered since it was
+    declared (office/handled.py): the person typed to it after the status's
+    `at` (`typed`), it got a prompt since and is at work on it (`working`:
+    a coordinator answered for the person), or the thread it was started for
+    got a reply since (`reply`). A status declared later than these asks
+    again. None when not."""
+    at = epoch(st.get("at"))
+    sid = r["sid"]
+    if not at or not sid:
+        return None
+    typed = (seen.get("typed") or {}).get(sid) or 0
+    if typed > at:
+        return {"how": "typed", "at": typed, "sid": sid}
+    prompted = (seen.get("prompted") or {}).get(sid) or 0
+    if r.get("state") == "working" and prompted > at:
+        return {"how": "working", "at": prompted, "sid": sid}
+    # Judged by the work, not the session: the thread it was started for got
+    # a reply since, from it or any other session (the person had another
+    # worker answer Luther, and this one's "draft the reply?" stood on).
+    replied = seen.get("replied") or {}
+    hits = [replied[ref] for ref in (seen.get("work") or {}).get(sid) or [] if ref in replied and replied[ref]["at"] > at]
+    return max(hits, key=lambda h: h["at"]) if hits else None
+
+
+def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: list[dict], triggers: list[dict] | None = None, now: float | None = None, held: dict[str, dict] | None = None, declared: dict[str, dict] | None = None, deps: list[dict] | None = None, seen: dict | None = None) -> list[dict]:
     """The rows. `coords`: /command's coordinators, each with its workers. A
     waiting time not known counts as now: it has waited the least we can tell.
     `declared`: sid -> {name, summary, state, status} read from the status
@@ -83,7 +108,14 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     session no coordinator holds has none). `deps`: what an office feature
     needs installed or set up (office/agenda.py deps), a row each.
     `held`: the deferrals and memos of live sessions (office/defer.py), each
-    with `info` ({name, summary, state}) for a session that has no row."""
+    with `info` ({name, summary, state}) for a session that has no row.
+    `seen`: what the person already handled (office/handled.py): `typed` and
+    `prompted` (sid -> when), `slx` (trigger id -> {how, at, sid}), `work`
+    (sid -> the threads it was started for) and `replied` (thread -> the
+    newest send to it). A row
+    whose need it answered carries `handled` and needs nothing for it: it
+    is drawn under ✔ 처리 중, and up again once the session asks anew."""
+    seen = seen or {}
     now = time.time() if now is None else now
     rows: dict[str, dict] = {}
 
@@ -91,7 +123,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
         r = rows.get(key)
         if r is None:
             r = rows[key] = {"key": key, "sid": None, "name": "", "summary": None, "coord": None, "isCoord": False, "relation": None, "state": None, "live": False,
-                             "decisions": [], "call": False, "reviews": [], "slx": [], "mcp": [], "dep": None, "at": None, "needKeys": []}
+                             "decisions": [], "call": False, "reviews": [], "slx": [], "mcp": [], "dep": None, "at": None, "needKeys": [], "handled": None}
         for k, v in info.items():
             if v is not None and not r.get(k):
                 r[k] = v
@@ -151,6 +183,12 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
             r = row("x:" + x["id"], name=x.get("from") or x["id"])
             r["slx"].append(x["id"])
             waited(r, epoch(x.get("at")) or now)
+            # Taken up after it came: replied to, or typed to by the person
+            # (`handled`, out of 내 차례); only another session reading it
+            # (`relay`) stays, faint: "다른 세션이 처리 중일 수 있음".
+            h = (seen.get("slx") or {}).get(x["id"])
+            if h:
+                r["handled"] = h
     for sid, d in (declared or {}).items():
         st = d.get("status")
         r = rows.get("s:" + sid)
@@ -168,6 +206,10 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
     for r in rows.values():
         st = r.get("status")
         if r["sid"] and r["live"] is not False and not r["call"] and status_blocks_person(st, now):
+            h = answered(st, r, seen)
+            if h:
+                r["handled"] = h
+                continue
             at = epoch(st.get("at")) or now
             r["needKeys"].append("t:" + str(st.get("at") or ""))
             r["byStatus"] = True
@@ -178,7 +220,7 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
             row("s:" + sid, sid=sid, name=info.get("name"), summary=info.get("summary"), state=info.get("state"), live=True)
     out = list(rows.values())
     for r in out:
-        own = r["key"].startswith("x:")
+        own = r["key"].startswith("x:") and (r.get("handled") or {}).get("how") in (None, "relay")
         r["needs"] = bool(r["decisions"] or r["call"] or r["reviews"] or own or r.get("byStatus") or r["dep"] or any(x.get("stuck") for x in r["mcp"]))
         r["name"] = r["name"] or (r["sid"] or "")[:8]
         defer(r, (held or {}).get(r["sid"] or ""), now)

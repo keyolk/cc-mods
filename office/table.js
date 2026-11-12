@@ -61,7 +61,7 @@ document.head.appendChild(Object.assign(document.createElement('style'), { textC
 
 // othersOpen: the rows waiting on nobody unfolded; slxOpen: the triggers'
 // own rows unfolded.
-const tbl = { othersOpen: false, slxOpen: false, dfrOpen: false }
+const tbl = { othersOpen: false, slxOpen: false, dfrOpen: false, doneOpen: false }
 // defer.js, unless the server that sent this page has none.
 const tblDfr = () => typeof dfrUntil === 'function'
 // Triggers with no session up to this many show as rows; more fold to one
@@ -69,6 +69,11 @@ const tblDfr = () => typeof dfrUntil === 'function'
 // otherwise bury the table, the length the person complained about.
 const TBL_SLX_SHOWN = 3
 const tblOwnSlx = (R) => String(R.row.key).startsWith('x:')
+// What the person already did about a row (office/turn.py `handled`): a
+// relay (another session read the thread) only makes it faint.
+const tblHandled = (row) => !!row.handled && row.handled.how !== 'relay'
+const TBL_HOW = { reply: '스레드에 답함', typed: '내가 지시함', working: '지시 받고 일하는 중', relay: '다른 세션이 처리 중일 수 있음' }
+const tblHowText = (row) => (row.handled ? '✔ ' + (TBL_HOW[row.handled.how] || row.handled.how) + (row.handled.at ? ' ' + tblShort(row.handled.at) : '') : '')
 // The triggers' own rows fold away when there are many; one that is open
 // stays in sight.
 const tblSlxFolded = (all = tblAll()) => !tbl.slxOpen && all.filter((R) => R.needs && tblOwnSlx(R)).length > TBL_SLX_SHOWN
@@ -118,7 +123,10 @@ function tblAll() {
     const rs = cmdRev() ? (row.reviews || []).map(([co, id]) => revList().find((r) => r.coord === co && r.id === id)).filter(Boolean) : []
     // A trigger rides on its session's row; with none it is the row.
     const xs = tblSlxOn() ? (row.slx || []).map((id) => (slxData().items || []).find((x) => x.id === id)).filter(Boolean) : []
-    const own = String(row.key).startsWith('x:')
+    // Taken up already (office/handled.py): replied to or typed to, out of
+    // 내 차례 under ✔ 처리 중; only read by another session (relay), faint.
+    const done = tblHandled(row)
+    const own = String(row.key).startsWith('x:') && !done
     // Set aside: out of 내 차례 until its time or a need it did not hold
     // (office/turn.py says which); its time come: up, until it is left.
     const deferred = row.sid && tblDfr() ? dfrUntil(row) : null, woke = !deferred && row.sid && tblDfr() && dfrWoke(row)
@@ -340,13 +348,14 @@ const tblCmd = (R) => {
 const tblHeadsUp = (r) => r.headsUp && r.headsUp.text ? '<span class="hu" title="' + cmdEsc('Heads up · ' + r.headsUp.text) + '">✦ ' + cmdEsc(r.headsUp.text) + '</span>' : ''
 
 // A trigger's own row that slx judged to ask nothing of the person: drawn faint.
-const tblDim = (R) => tblOwnSlx(R) && R.xs.length > 0 && !!R.xs[0].dim && typeof slxWhy === 'function'
+const tblDim = (R) => tblOwnSlx(R) && R.xs.length > 0 && ((!!R.xs[0].dim && typeof slxWhy === 'function') || (R.row.handled || {}).how === 'relay')
+const tblDimWhy = (R) => ((R.row.handled || {}).how === 'relay' ? tblHowText(R.row) : slxWhy(R.xs[0]))
 
 function tblRow(R, other) {
   const r = R.row, slug = tblSlug(r), ask = tblAsk(R)
   // A trigger's own row has no session: no 창 없음 there.
   const faint = tblDim(R)
-  const sub = [faint ? slxWhy(R.xs[0]) : '', r.isCoord ? '🎖 coordinator' : r.relation === 'adopted' ? '입양' : '', r.sid && r.live === false ? '창 없음' : ''].filter(Boolean).join(' · ')
+  const sub = [faint ? tblDimWhy(R) : other && R.row.handled ? tblHowText(R.row) : '', r.isCoord ? '🎖 coordinator' : r.relation === 'adopted' ? '입양' : '', r.sid && r.live === false ? '창 없음' : ''].filter(Boolean).join(' · ')
   const end = other && r.sid && r.live !== false && !r.isCoord ? '<button class="end" data-end="' + cmdEsc(r.sid) + '" title="세션 끝내기 (옆에 열고 확인)">⏹</button>' : ''
   const cp = tblCmd(R) ? '<button class="end" data-copy="' + cmdEsc(R.row.key) + '" title="명령 복사: ' + cmdEsc(tblCmd(R)) + '">📋</button>' : ''
   // A trigger's own row carries its mark for the slx line's bulk choices.
@@ -359,7 +368,7 @@ function tblRow(R, other) {
       + '<span class="m">' + cmdEsc(who) + '</span>' + tblHeadsUp(r) + '</td>'
       + '<td class="st">' + tblCells(R) + cp + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
   }
-  return '<tr data-row="' + cmdEsc(r.key) + '"' + (faint ? ' title="' + cmdEsc(slxWhy(R.xs[0])) + '"' : '') + ' class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + (faint ? ' dim' : '') + (R.needs && tblIsAct(R) ? ' act' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
+  return '<tr data-row="' + cmdEsc(r.key) + '"' + (faint ? ' title="' + cmdEsc(tblDimWhy(R)) + '"' : '') + ' class="' + (cmd.row === r.key ? 'sel' : '') + (other ? ' other' : '') + (faint ? ' dim' : '') + (R.needs && tblIsAct(R) ? ' act' : '') + '"><td class="who"><b title="' + cmdEsc(tblName(r)) + '">' + mk + cmdEsc(tblName(r)) + '</b>'
     + (slug || sub || ask ? '<span class="m">' + (slug ? '<span class="slug">' + cmdEsc(slug) + '</span> ' : '') + cmdEsc([sub, ask].filter(Boolean).join(' · ')) + '</span>' : '') + tblHeadsUp(r) + '</td>'
     + '<td class="st">' + tblCells(R) + cp + end + '</td><td class="ago">' + (R.needs && r.at ? tblShort(r.at) : '') + '</td></tr>'
 }
@@ -367,12 +376,14 @@ function tblRow(R, other) {
 // The table for the list: the rows that need the person, then 👷 그 밖 N.
 // Nothing is drawn for what is empty.
 function tblHtml() {
-  const all = tblAll(), others = all.filter((R) => !R.needs && !R.deferred), later = all.filter((R) => R.deferred)
+  // ✔ 처리 중: what the person took up already, apart from the rest.
+  const all = tblAll(), done = all.filter((R) => !R.needs && !R.deferred && tblHandled(R.row)), others = all.filter((R) => !R.needs && !R.deferred && !tblHandled(R.row)), later = all.filter((R) => R.deferred)
   const g = tblSplit(all), slxRows = g.slx, needs = [...g.act, ...g.look]
   const folded = tblSlxFolded(all)
   tbl.order = tblOrder()
   // A row picked from under 그 밖 shows there even folded.
   const picked = !tbl.othersOpen && others.find((R) => R.row.key === cmd.row)
+  const pickedDone = !tbl.doneOpen && done.find((R) => R.row.key === cmd.row)
   const out = []
   // 내 차례 counts what sessions and briefs wait on; triggers are candidates, counted on their own line.
   if (needs.length || slxRows.length) out.push('<h3>✋ 내 차례 ' + needs.length + (slxRows.length ? ' <span class="m">+ 📨 ' + slxRows.length + (slxRows.filter(tblDim).length ? ' · 흐림 ' + slxRows.filter(tblDim).length : '') + '</span>' : '') + ' <span class="m">오래 기다린 순 · j/k 행 · Tab 탭</span></h3>')
@@ -396,6 +407,11 @@ function tblHtml() {
     const open = later.find((R) => R.row.key === cmd.row)
     if (tbl.dfrOpen) rows.push(...later.map((R) => tblRow(R, false)))
     else if (open) rows.push(tblRow(open, false))
+  }
+  if (done.length) {
+    rows.push('<tr class="more" data-fold="done"><td colspan="3">' + (tbl.doneOpen ? '▾' : '▸') + ' ✔ 처리 중 ' + done.length + ' <span class="m">내가 지시했거나 답한 것 · 다시 물으면 올라옵니다</span></td></tr>')
+    if (tbl.doneOpen) rows.push(...done.map((R) => tblRow(R, true)))
+    else if (pickedDone) rows.push(tblRow(pickedDone, true))
   }
   if (others.length) {
     rows.push('<tr class="more" data-fold="others"><td colspan="3">' + (tbl.othersOpen ? '▾' : '▸') + ' 👷 그 밖 ' + others.length + ' <span class="m">일하는 중 ' + others.filter((R) => R.row.state === 'working').length + '</span></td></tr>')
