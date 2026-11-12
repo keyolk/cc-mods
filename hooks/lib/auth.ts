@@ -441,13 +441,21 @@ export function argocdLabel(host: string): string {
   return host
 }
 
+// A kubectl read (get, describe, logs, events, top) goes through the ore
+// gateway on Okta, not AWS SSO: the kubectl shim reroutes it unless ORE_ROUTE=off.
+// Gating it on an expired SSO login blocked reads that would have worked.
+const KUBECTL_READ = /\bkubectl\b(?:\s+(?:--?[\w-]+(?:[ =](?!get|describe|logs|events|top)\S+)?))*\s+(?:get|describe|logs|events|top)\b/
+export function oreRoutedRead(command: string): boolean {
+  return !/\bORE_ROUTE=off\b/.test(command) && KUBECTL_READ.test(command)
+}
+
 // Which credential a Bash command depends on, so tool.call can stop it before
 // it fails. Only the probes this module can actually check are mapped.
 export function credentialFor(command: string): string | undefined {
   const sso = org().awsSsoProfiles
   const profile = /\baws\b[^|;&]*--profile[ =](\S+)/.exec(command)?.[1]
   if (profile && sso.some((p) => profile.startsWith(p))) return 'aws-sso'
-  if (/\bkubectl\b[^|;&]*--context[ =]/.test(command)) return 'aws-sso'
+  if (/\bkubectl\b[^|;&]*--context[ =]/.test(command) && !oreRoutedRead(command)) return 'aws-sso'
   if (/\bcoder\b/.test(command)) {
     const instances = Object.entries(org().coderInstances ?? {})
     const url = /(?:\bCODER_URL=|\bcoder\b[^|;&]*--url[ =])['"]?(https:\/\/[^\s'";&]+)/.exec(command)?.[1]?.replace(/\/$/, '')
