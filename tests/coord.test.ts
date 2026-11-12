@@ -254,6 +254,27 @@ test('coord: an approval the auto classifier settles between ticks is neither a 
   expect(done.changes.map((c) => c.text)).toEqual(['tmc-layout: finished its turn'])
 })
 
+test('coord: a worker that declared blocked:question/wait or done is not told as waiting on an approval', () => {
+  // Live 2026-11-12: a Heads up band made turn_question.py call the turn an
+  // action; the coordinator got "waiting on an approval" every few minutes.
+  const asking = parsePanes('%1\t@1\tw1\twaiting\taction\t/w/tmc-layout\t')
+  for (const status of [{ state: 'blocked', kind: 'question', at: NOW }, { state: 'blocked', kind: 'wait', at: NOW }, { state: 'done', at: NOW }] as const) {
+    let l = on({ workers: [worker({ attention: 'action', status })] })
+    for (let i = 0; i < 4; i++) {
+      const r = observe(l, asking, NOW + i * 10_000)
+      expect(r.changes.filter((c) => c.kind === 'ask')).toEqual([])
+      l = r.ledger
+    }
+  }
+  // A permission block, or no status, still wakes.
+  const l = on({ workers: [worker({ attention: 'action', status: { state: 'blocked', kind: 'permission', at: NOW } })] })
+  expect(observe(l, asking, NOW).changes.map((c) => c.kind)).toEqual(['ask'])
+  // A pending tool call (asks) is a real dialog whatever the status.
+  const call = parsePanes('%1\t@1\tw1\twaiting\taction\t/w/tmc-layout\t\tBash: rm x')
+  const l2 = on({ workers: [worker({ attention: 'action', asks: 'Bash: rm x', status: { state: 'blocked', kind: 'question', at: NOW } })] })
+  expect(observe(l2, call, NOW).changes.map((c) => c.kind)).toEqual(['ask'])
+})
+
 test('coord: a wake held through the coordinator\'s turn is delivered only while still true', () => {
   // Live: "its session is gone" was queued behind the coordinator's turn and
   // arrived two minutes later, after it had found out and respawned.
