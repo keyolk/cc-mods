@@ -167,6 +167,51 @@ class BriefFrameTest(BriefsCase):
         for path in ("2026-11-08-escape.html", "sub/x.html", "..%2Fsecret.html", "%2E%2E/secret.html", "notes.txt", "missing.html", ""):
             self.assertEqual(self.get(base + "/briefs/" + path)[0], 404, path)
 
+    def post(self, url, data: bytes, headers: dict):
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def fake_brief_cli(self) -> pathlib.Path:
+        """A stand-in for `brief anno save <file> --from <json>`: copies the JSON beside the brief."""
+        b = self.tmp / "bin" / "brief"
+        b.parent.mkdir()
+        b.write_text("#!/bin/sh\n[ \"$1 $2\" = \"anno save\" ] || exit 2\n"
+                     "cp \"$5\" \"$BRIEFS_DIR/$(basename \"$3\" .html).anno.json\" && echo saved\n")
+        b.chmod(0o755)
+        p = mock.patch.object(command.shutil, "which", side_effect=lambda n: str(b) if n == "brief" else None)
+        p.start()
+        self.addCleanup(p.stop)
+        return b
+
+    def test_annotations_posted_from_a_served_brief_are_saved(self):
+        f = self.brief("2026-11-08-a")
+        self.fake_brief_cli()
+        base = self.serve()
+        body = json.dumps({"page": "2026-11-08-a", "cards": [{"id": "c", "text": "hi"}], "edges": [], "marks": []}).encode()
+        code, out = self.post(base + "/briefs/" + f + "/anno", body,
+                              {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(code, 200, out)
+        saved = json.loads((self.repo / "2026-11-08-a.anno.json").read_text())
+        self.assertEqual(saved["cards"][0]["text"], "hi")
+
+    def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
+        f = self.brief("2026-11-08-a")
+        self.fake_brief_cli()
+        base = self.serve()
+        good = json.dumps({"page": "2026-11-08-a", "cards": []}).encode()
+        evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        self.assertEqual(self.post(base + "/briefs/" + f + "/anno", good, evil)[0], 403)
+        self.assertEqual(self.post(base + "/briefs/index.html/anno", good, {"Origin": "null"})[0], 404)
+        self.assertEqual(self.post(base + "/briefs/../x.html/anno", good, {"Origin": "null"})[0], 404)
+        other = json.dumps({"page": "2026-11-09-b", "cards": []}).encode()
+        self.assertEqual(self.post(base + "/briefs/" + f + "/anno", other, {"Origin": "null"})[0], 400)
+        self.assertEqual(self.post(base + "/briefs/" + f + "/anno", b"{}", {"Origin": "null"})[0], 400)
+        self.assertFalse((self.repo / "2026-11-08-a.anno.json").exists())
+
     def test_the_brief_route_does_not_swallow_the_scripts(self):
         # /briefline.js shares the prefix: it must stay JavaScript.
         base = self.serve()
@@ -704,7 +749,8 @@ class SayAndViewTest(BriefsCase):
         # One record per brief for ~/briefs/index.html and 📚: `brief list --json`.
         self.brief("2026-11-08-a", {"coordinator": COORD}, title="옛 결정")
         out = json.dumps({"total": 2, "items": [
-            {"file": "2026-11-08-a.html", "date": "2026-11-08", "title": "옛 결정", "desc": "d", "topic": "결정", "state": "pending", "ask": "어느 쪽?", "result": None, "search": "옛 결정 결정 결정 대기"},
+            {"file": "2026-11-08-a.html", "date": "2026-11-08", "title": "옛 결정", "desc": "d", "topic": "결정", "state": "pending", "ask": "어느 쪽?", "result": None, "search": "옛 결정 결정 결정 대기",
+             "published": [{"target": "artifact", "id": "https://claude.ai/artifact/x", "state": "synced"}]},
             {"file": "../escape.html", "date": "x", "title": "x", "topic": "x", "state": "read", "search": ""}]}, ensure_ascii=False)
         command._no_list["until"] = 0.0
         with mock.patch.object(command, "_cli", return_value=subprocess.CompletedProcess([], 0, out, "")):
@@ -712,6 +758,8 @@ class SayAndViewTest(BriefsCase):
         self.assertEqual([(b["file"], b["topic"], b["state"], b["ask"]) for b in d["items"]], [("2026-11-08-a.html", "결정", "pending", "어느 쪽?")])
         self.assertEqual((d["total"], d["topics"], d["counts"]["pending"]), (1, [("결정", 1)], 1))
         self.assertEqual(d["items"][0]["path"], os.path.join(command.root(), "2026-11-08-a.html"))
+        # Where it went out reaches the panel, which draws the index's publish badges from it.
+        self.assertEqual(d["items"][0]["published"], [{"target": "artifact", "id": "https://claude.ai/artifact/x", "state": "synced"}])
         # A CLI from before `list`: read here, the same fields, and not asked again for a while.
         with mock.patch.object(command, "_cli", return_value=subprocess.CompletedProcess([], 2, "", "invalid choice: 'list'")) as cli:
             d = command.library()
@@ -1400,6 +1448,26 @@ class CommandKeysTest(unittest.TestCase):
         """)
         self.assertEqual(got, [False, True, 5, '{"library":true}', None, 3, True, True, True, True, True, True,
                                True, True, 2, True, True, True, 1, 1, True, {"file": "b.html", "path": "/b/b.html", "title": "끝난 일", "fromLib": True}])
+
+    def test_the_library_card_shows_where_a_brief_went_out_and_filters_by_it(self):
+        # The index's `artifact ↗` badges, in 📚 too: a press on the badge opens the copy, not
+        # the brief; "↗ 발행" keeps only the published ones; a stale copy says so.
+        got = self.run_js("""
+            press('c')
+            const opened = []
+            globalThis.open = (u) => { opened.push(u) }
+            blib.data = { total: 2, counts: { read: 2 }, topics: [['x', 2]], items: [
+              { file: 'a.html', path: '/b/a.html', title: 'A', date: '2026-11-01', state: 'read', topic: 'x', search: 'a',
+                published: [{ target: 'artifact', id: 'https://claude.ai/artifact/q', state: 'pull' }] },
+              { file: 'b.html', path: '/b/b.html', title: 'B', date: '2026-11-01', state: 'read', topic: 'x', search: 'b' }] }
+            const all = blibHtml(), facets = blibFacets()
+            blib.only = 'pub'; const only = (blibHtml().match(/data-lbrief=/g) || []).length; blib.only = ''
+            cmd.sel = null
+            blibClick({ target: { closest: (q) => (q === '[data-lpub]' ? { dataset: { lpub: 'https://claude.ai/artifact/q' } } : q === '[data-lbrief]' ? { dataset: { lbrief: '/b/a.html', title: 'A' } } : null) } })
+            return [/data-lpub="https:\/\/claude.ai\/artifact\/q"/.test(all), all.includes('artifact · 받기 필요 ↗'),
+              /data-lonly="pub"[^>]*>↗ 발행<small>1/.test(facets), only, opened, cmd.sel]
+        """)
+        self.assertEqual(got, [True, True, True, 1, ["https://claude.ai/artifact/q"], None])
 
     def test_the_library_grass_picks_a_range_and_a_type_and_esc_clears_the_range_first(self):
         # The person: pick a range on the grass (as ~/briefs/index.html), and a

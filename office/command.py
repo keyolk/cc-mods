@@ -111,6 +111,38 @@ def serve_brief(name: str) -> tuple[int, bytes, str, dict]:
     return 200, body, "text/html; charset=utf-8", {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
 
 
+def save_brief_anno(name: str, raw: bytes) -> tuple[int, dict]:
+    """POST /briefs/<name>/anno: write the annotations drawn on a brief through `brief anno save`,
+    which validates them and re-inlines them into the page. Only a real brief, never index.html."""
+    import tempfile
+
+    path = brief_by_name(name)
+    if not path or os.path.basename(path) == "index.html":
+        return 404, {"ok": False, "error": "not a brief"}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return 400, {"ok": False, "error": "bad json"}
+    if not isinstance(data, dict) or not any(isinstance(data.get(k), list) for k in ("cards", "edges", "marks")):
+        return 400, {"ok": False, "error": "no annotations"}
+    if data.get("page") and data["page"] + ".html" != os.path.basename(path):
+        return 400, {"ok": False, "error": "page mismatch"}
+    brief = shutil.which("brief") or os.path.expanduser("~/.local/bin/brief")
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(data, f, ensure_ascii=False)
+        tmp = f.name
+    try:
+        r = subprocess.run([brief, "anno", "save", os.path.basename(path), "--from", tmp],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "BRIEFS_DIR": root()})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 500, {"ok": False, "error": str(e)}
+    finally:
+        os.unlink(tmp)
+    if r.returncode:
+        return 500, {"ok": False, "error": (r.stderr or r.stdout).strip()[:300]}
+    return 200, {"ok": True, "saved": r.stdout.strip()}
+
+
 def open_outside(name: str, via: str = "") -> tuple[int, dict]:
     """↗ 밖으로: the brief alone, in a window or tab of its own, never in the
     office page (the person's screen). Always the default browser's `open`:
@@ -320,7 +352,7 @@ def _cli_list() -> list[dict] | None:
         return None
     if not isinstance(items, list):
         return None
-    keep = ("file", "date", "title", "desc", "topic", "type", "state", "ask", "result", "search")
+    keep = ("file", "date", "title", "desc", "topic", "type", "state", "ask", "result", "published", "search")
     return [{k: it.get(k) for k in keep} for it in items if isinstance(it, dict) and NAME.match(str(it.get("file") or "")) and it.get("state") in LIB_STATES]
 
 

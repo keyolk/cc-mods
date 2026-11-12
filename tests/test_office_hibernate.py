@@ -134,7 +134,7 @@ class LaunchTest(unittest.TestCase):
         if got is None:
             self.skipTest("KERN_PROCARGS2 not available here")
         exe, argv, env = got
-        self.assertTrue(argv and os.path.basename(argv[0]).startswith("python"))
+        self.assertTrue(argv and os.path.basename(argv[0]).lower().startswith("python"))  # macOS framework builds run as .../MacOS/Python
         self.assertEqual(env.get("HOME"), os.environ["HOME"])
 
 

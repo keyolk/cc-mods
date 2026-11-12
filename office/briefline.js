@@ -61,6 +61,9 @@ const BRIEF_CSS = `
 #command .blib .card .meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #command .blib .card .topic { font-size: 11px; font-weight: 600; color: #3b5bdb; background: #e8edfd; border-radius: 6px; padding: 0 6px; }
 #command .blib .card .pend { font-size: 11px; font-weight: 600; color: #fff; background: #e0793a; border-radius: 6px; padding: 0 6px; }
+#command .blib .card .pub { font-size: 11px; color: #9a4a22; border: 1px solid #c9733f66; border-radius: 6px; padding: 0 6px; cursor: pointer; }
+#command .blib .card .pub:hover { background: #c9733f22; }
+#command .blib .card .pub.push, #command .blib .card .pub.pull, #command .blib .card .pub.conflict { color: #b03a2e; border-color: #b03a2e88; }
 #command .blib .card .donebadge { font-size: 11px; font-weight: 600; color: #1f7a50; background: #2f9e6c22; border-radius: 6px; padding: 0 6px; }
 #command .blib .card .answered { font-size: 11px; color: #9b9ba3; border: 1px dashed #e6e5e1; border-radius: 6px; padding: 0 5px; }
 #command .blib .card .tt { font-weight: 600; font-size: 13.5px; }
@@ -177,7 +180,7 @@ function blibToggle() {
 // The index's match (bin/brief.py index: apply()), and the state filter.
 function blibMatch(b) {
   const v = blib.q.trim().toLowerCase()
-  return (!v || String(b.search || '').includes(v)) && (!blib.topic || b.topic === blib.topic) && (!blib.only || b.state === blib.only)
+  return (!v || String(b.search || '').includes(v)) && (!blib.topic || b.topic === blib.topic) && (!blib.only || (blib.only === 'pub' ? !!(b.published || []).length : b.state === blib.only))
     && (!blib.ty || b.type === blib.ty) && (!blib.from || (b.date >= blib.from && b.date <= blib.to))
 }
 const blibItems = (d = blib.data) => (d?.items || []).filter(blibMatch)
@@ -302,8 +305,15 @@ blibReadHash()
 function blibCard(b, sel) {
   const badge = b.state === 'pending' ? '<span class="pend">결정 대기</span>' : b.state === 'done' ? '<span class="donebadge">✅ 완료</span>' : b.state === 'answered' ? '<span class="answered">답함</span>' : ''
   const sub = b.state === 'pending' && b.ask ? '<p class="ask">❓ ' + cmdEsc(b.ask) + '</p>' : b.state === 'done' && b.result ? '<p class="res">✅ ' + cmdEsc(b.result) + '</p>' : b.desc ? '<p class="ds">' + cmdEsc(b.desc) + '</p>' : ''
+  // The card is a <button>, so a publish badge cannot be an <a>: it carries the URL and the
+  // panel's click handler opens it (see data-lpub) instead of picking the brief.
+  const PUB_NOTE = { synced: '', push: ' · 올리기 필요', pull: ' · 받기 필요', conflict: ' · 충돌', unknown: ' · 확인 필요' }
+  const pubs = (b.published || []).map((x) => {
+    const href = /^https?:/.test(x.id || '') ? ' data-lpub="' + cmdEsc(x.id) + '"' : ''
+    return '<span class="pub ' + cmdEsc(x.state || '') + '"' + href + ' title="' + cmdEsc(x.id || '') + '">' + cmdEsc(x.target) + cmdEsc(PUB_NOTE[x.state] || '') + (href ? ' ↗' : '') + '</span>'
+  }).join('')
   return '<button class="card ' + cmdEsc(b.state) + (sel === b.path ? ' sel' : '') + '" data-lbrief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.file) + '">'
-    + '<span class="meta"><span class="topic">' + cmdEsc(b.topic || '기타') + '</span>' + badge + '</span>'
+    + '<span class="meta"><span class="topic">' + cmdEsc(b.topic || '기타') + '</span>' + badge + pubs + '</span>'
     + '<span class="tt">' + cmdEsc(b.title) + '</span>' + sub + '</button>'
 }
 function blibHtml(d = blib.data) {
@@ -327,6 +337,7 @@ function blibFacets(d = blib.data) {
   const tc = d?.types || {}
   const tys = '<div class="facets">' + Object.entries(BLIB_TYPES).filter(([k]) => tc[k] || blib.ty === k).map(([k, v]) => '<button class="facet ty" data-lty="' + k + '" aria-pressed="' + (blib.ty === k) + '">' + v + '<small>' + (tc[k] || 0) + '</small></button>').join('') + '</div>'
   return tys + '<div class="facets">' + ['pending', 'done'].map((k) => '<button class="facet st" data-lonly="' + k + '" aria-pressed="' + (blib.only === k) + '">' + BLIB_STATE[k][0] + ' ' + BLIB_STATE[k][1] + '<small>' + (c[k] || 0) + '</small></button>').join('')
+    + '<button class="facet st" data-lonly="pub" aria-pressed="' + (blib.only === 'pub') + '">↗ 발행<small>' + (d?.items || []).filter((b) => (b.published || []).length).length + '</small></button>'
     + '<span class="sep"></span>'
     + shown.map(([k, v]) => '<button class="facet" data-ltopic="' + cmdEsc(k) + '" aria-pressed="' + (blib.topic === k) + '">' + cmdEsc(k) + '<small>' + v + '</small></button>').join('')
     + (topics.length > BLIB_FACETS ? '<button class="facet more" data-lmore="1">' + (blib.more ? '접기' : '주제 ' + (topics.length - BLIB_FACETS) + '개 더') + '</button>' : '') + '</div>'
@@ -394,6 +405,8 @@ function blibClick(ev) {
     const i = cmdEl.querySelector('.blib input'); if (i) i.value = ''
     cmdRenderDoc(); return
   }
+  const pub = t.closest('[data-lpub]')
+  if (pub) { globalThis.open(pub.dataset.lpub, '_blank', 'noopener'); return }
   const b = t.closest('[data-lbrief]')
   if (!b) return
   cmd.libFrom = b.dataset.lbrief

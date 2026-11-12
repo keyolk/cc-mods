@@ -2116,6 +2116,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/next":
             NEXT["n"] += 1
             return self.send(204, b"", "text/plain")
+        if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/anno"):
+            # Annotations drawn on a brief shown here (keyolk/briefs bin/anno.js). The brief is
+            # served sandboxed (origin "null"), so it has no office token: accept only a same-
+            # machine request for a real brief's file name, never one a cross-site page sends
+            # (Sec-Fetch-Site cross-site with an Origin other than "null"), capped in size.
+            from urllib.parse import unquote
+
+            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
+            if site == "cross-site" and origin != "null":
+                return self.send(403, b"forbidden", "text/plain")
+            size = int(self.headers.get("Content-Length") or 0)
+            if size <= 0 or size > 1_000_000:
+                return self.send(413, b"too large", "text/plain")
+            name = unquote(self.path[len("/briefs/"):-len("/anno")])
+            code, out = command.save_brief_anno(name, self.rfile.read(size))
+            return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
         if not self.local() or self.headers.get("X-Office-Token") != TOKEN or self.path not in ("/act", "/prefs", "/paths", "/redeem"):
             return self.send(403, b"forbidden", "text/plain")
         try:
