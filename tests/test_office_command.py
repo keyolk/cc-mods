@@ -212,6 +212,40 @@ class BriefFrameTest(BriefsCase):
         self.assertEqual(self.post(base + "/briefs/" + f + "/anno", b"{}", {"Origin": "null"})[0], 400)
         self.assertFalse((self.repo / "2026-11-08-a.anno.json").exists())
 
+    def fake_open_cli(self) -> pathlib.Path:
+        """A stand-in for `brief open <file> --session N [--resume]`: records its argv."""
+        b = self.tmp / "bin2" / "brief"
+        b.parent.mkdir()
+        log = self.tmp / "open.log"
+        b.write_text(f"#!/bin/sh\n[ \"$1\" = open ] || exit 2\necho \"$@\" > {log}\necho \"opening it read-only\"\n")
+        b.chmod(0o755)
+        p = mock.patch.object(command.shutil, "which", side_effect=lambda n: str(b) if n == "brief" else None)
+        p.start()
+        self.addCleanup(p.stop)
+        return log
+
+    def test_a_served_brief_can_reopen_its_session(self):
+        f = self.brief("2026-11-08-a")
+        log = self.fake_open_cli()
+        base = self.serve()
+        hdr = {"Content-Type": "application/json", "Origin": "null", "Sec-Fetch-Site": "cross-site"}
+        code, out = self.post(base + "/briefs/" + f + "/open", json.dumps({"session": 1, "mode": "resume"}).encode(), hdr)
+        self.assertEqual(code, 200, out)
+        self.assertEqual(log.read_text().split(), ["open", f, "--session", "1", "--resume"])
+        self.assertTrue(json.loads(out)["what"].startswith("opening"))
+
+    def test_session_open_refuses_other_sites_the_index_and_bad_input(self):
+        f = self.brief("2026-11-08-a")
+        log = self.fake_open_cli()
+        base = self.serve()
+        ok = json.dumps({"session": 0, "mode": "view"}).encode()
+        evil = {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        self.assertEqual(self.post(base + "/briefs/" + f + "/open", ok, evil)[0], 403)
+        self.assertEqual(self.post(base + "/briefs/index.html/open", ok, {"Origin": "null"})[0], 404)
+        for bad in ({"session": -1}, {"session": "0"}, {"session": True}, {"mode": "rm -rf"}):
+            self.assertEqual(self.post(base + "/briefs/" + f + "/open", json.dumps(bad).encode(), {"Origin": "null"})[0], 400, bad)
+        self.assertFalse(log.exists())
+
     def test_the_brief_route_does_not_swallow_the_scripts(self):
         # /briefline.js shares the prefix: it must stay JavaScript.
         base = self.serve()

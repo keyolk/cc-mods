@@ -111,6 +111,32 @@ def serve_brief(name: str) -> tuple[int, bytes, str, dict]:
     return 200, body, "text/html; charset=utf-8", {"Content-Security-Policy": "sandbox allow-scripts allow-popups", "X-Content-Type-Options": "nosniff"}
 
 
+def open_brief_session(name: str, raw: bytes) -> tuple[int, dict]:
+    """POST /briefs/<name>/open: bring back a session that made this brief (keyolk/briefs
+    `brief open`): mode "view" opens it read-only beside the office pane, "resume" continues it
+    in a new tmux window; a session that is still running is switched to instead of resumed twice.
+    The page names only its own file, a session index and the mode; the CLI does the rest."""
+    path = brief_by_name(name)
+    if not path or os.path.basename(path) == "index.html":
+        return 404, {"ok": False, "error": "not a brief"}
+    try:
+        data = json.loads(raw or b"{}")
+    except ValueError:
+        return 400, {"ok": False, "error": "bad json"}
+    i, mode = data.get("session", 0), data.get("mode", "view")
+    if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < 100 or mode not in ("view", "resume"):
+        return 400, {"ok": False, "error": "session must be a small index and mode view|resume"}
+    brief = shutil.which("brief") or os.path.expanduser("~/.local/bin/brief")
+    argv = [brief, "open", os.path.basename(path), "--session", str(i)] + (["--resume"] if mode == "resume" else [])
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=20, env={**os.environ, "BRIEFS_DIR": root()})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 500, {"ok": False, "error": str(e)}
+    if r.returncode:
+        return 400, {"ok": False, "error": (r.stderr or r.stdout).strip()[:300]}
+    return 200, {"ok": True, "what": r.stdout.strip().splitlines()[0] if r.stdout.strip() else mode}
+
+
 def save_brief_anno(name: str, raw: bytes) -> tuple[int, dict]:
     """POST /briefs/<name>/anno: write the annotations drawn on a brief through `brief anno save`,
     which validates them and re-inlines them into the page. Only a real brief, never index.html."""
