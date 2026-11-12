@@ -561,7 +561,7 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
     // calls 10 s apart each caught there read as one stuck ask (live: a cp to
     // the worker's scratchpad after a python run, told as a dialog nobody saw).
     const asks = s.attention === 'ask' || s.attention === 'action'
-    const open = s.attention === 'ask' || (s.attention === 'action' && w.attention === 'action' && w.asks === s.asks)
+    const open = !declaredNotDialog(next) && (s.attention === 'ask' || (s.attention === 'action' && w.attention === 'action' && w.asks === s.asks))
     const about = s.asks ?? s.attention
     if (!asks) next.asked = undefined
     if (open && w.asked !== about) {
@@ -578,6 +578,19 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
     return next
   })
   return { ledger: { ...l, workers }, changes }
+}
+
+// A turn that ended on a question or a wait (turn_question.py reads it as an
+// ask/action) while the worker declared it is waiting on a brief answer, on
+// CI or a review, or is done, and no tool call is pending (`asks` empty), has
+// no permission dialog on its screen: the Heads up band or its last words
+// made the classifier say so. Live 2026-11-12: n8n-inventory and
+// luther-dp-onboarding were told "waiting on an approval" 3+ times each.
+// The brief or the status carries that wait; a real dialog has `asks`.
+export function declaredNotDialog(w: Pick<Worker, 'asks' | 'status'>): boolean {
+  const st = w.status
+  if (!st || w.asks) return false
+  return st.state === 'done' || (st.state === 'blocked' && (st.kind === 'question' || st.kind === 'wait'))
 }
 
 // What a turn's wake says about where the work stands: the worker's
@@ -745,7 +758,7 @@ export function current(c: Change, l: Ledger, now: number): boolean {
   // Asked and not answered: the worker has not started a turn since (it
   // would be working, or the file cleared and askTold kept).
   if (c.kind === 'person') return w.state !== 'working'
-  if (c.kind === 'ask') return w.attention === 'ask' || w.attention === 'action'
+  if (c.kind === 'ask') return (w.attention === 'ask' || w.attention === 'action') && !declaredNotDialog(w)
   return rested(w)
 }
 
