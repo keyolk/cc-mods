@@ -2116,6 +2116,20 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/next":
             NEXT["n"] += 1
             return self.send(204, b"", "text/plain")
+        if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/open"):
+            # The 만든 세션 buttons of a brief shown here: same guard as /anno (this machine, and no
+            # other site's page), and the brief only names a session index and a mode.
+            from urllib.parse import unquote
+
+            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
+            if site == "cross-site" and origin != "null":
+                return self.send(403, b"forbidden", "text/plain")
+            size = int(self.headers.get("Content-Length") or 0)
+            if size > 1000:
+                return self.send(413, b"too large", "text/plain")
+            name = unquote(self.path[len("/briefs/"):-len("/open")])
+            code, out = command.open_brief_session(name, self.rfile.read(size))
+            return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
         if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/anno"):
             # Annotations drawn on a brief shown here (keyolk/briefs bin/anno.js). The brief is
             # served sandboxed (origin "null"), so it has no office token: accept only a same-
