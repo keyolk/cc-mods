@@ -561,7 +561,10 @@ export function comesBack(l: Ledger, seen: readonly PaneSeen[]): Set<Worker> {
 // were.
 // `statuses`: each worker's declared status (lib/status.ts) as read this
 // tick; a worker it does not name keeps the one it had.
-export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map(), statuses: ReadonlyMap<string, Status> = new Map()): { ledger: Ledger; changes: Change[] } {
+// `drawn`: whether a permission dialog is on a worker's screen
+// (lib/dialog.ts parseDialog), read only for a pane whose action names no
+// call (dialogUnsure); a pane not read keeps what its attention says.
+export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: ReadonlySet<string> = new Set(), sums: ReadonlyMap<string, string> = new Map(), statuses: ReadonlyMap<string, Status> = new Map(), drawn: ReadonlyMap<string, boolean> = new Map()): { ledger: Ledger; changes: Change[] } {
   const bySid = new Map(seen.map((s) => [s.sid, s]))
   const changes: Change[] = []
   const back = comesBack(l, seen)
@@ -572,7 +575,8 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
       w = { ...w, endedAt: undefined, goneAt: undefined, missed: undefined }
       changes.push({ slug: w.slug, sid: w.sid, kind: 'back', text: who(w.slug, sums.get(w.sid)) + ': ' + BACK, wake: !quiet(w) })
     }
-    const s = bySid.get(w.sid)
+    const s0 = bySid.get(w.sid)
+    const s = s0 && dialogUnsure(s0) && drawn.get(w.sid) === false ? { ...s0, attention: 'none' } : s0
     if (!s) {
       // Not yet published: a worker just started has no @cc_pane_session for
       // its first seconds.
@@ -642,6 +646,22 @@ export function declaredNotDialog(w: Pick<Worker, 'asks' | 'status'>): boolean {
   const st = w.status
   if (!st || w.asks) return false
   return st.state === 'done' || st.state === 'blocked'
+}
+
+// An action that names no call (`asks` empty) is not a permission ask:
+// every ask cc-mods publishes for a call carries its label (register.ts
+// publishAsks/dialogShown, bin/cc-ask-dialog). It is Jev's reading of the
+// turn's last answer (register.ts turn.complete: "merge는 … 뒤에 해야
+// 합니다" reads as an action). Only the screen can say a dialog is up, so
+// the watch reads it (hooks/coord.ts dialogScreens) and observe takes a
+// screen with no dialog as a finished turn. Live 2026-11-16 ~11:55 and
+// ~11:56: common-gw (pane %47) ended its turn with a monitor running, once
+// under an old Heads up band ("1: Learn more  2: Knew this already
+// 0: Dismiss": no cursor, not a dialog) and once with nothing on screen;
+// both times the coordinator heard "waiting on an approval in its pane".
+// An ask stays as it is: AskUserQuestion's dialog names no call either.
+export function dialogUnsure(s: Pick<PaneSeen, 'attention' | 'asks'>): boolean {
+  return s.attention === 'action' && !s.asks
 }
 
 // What a turn's wake says about where the work stands: the worker's

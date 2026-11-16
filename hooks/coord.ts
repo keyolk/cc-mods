@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, coordGodWanted, PANES_FMT, WINDOWS_FMT, parseWindows, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, headsUpWakes, personAskWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, coordGodWanted, PANES_FMT, WINDOWS_FMT, parseWindows, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, headsUpWakes, personAskWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, limitsText, released, unadopt, coordRules, coordRoster, current, dialogUnsure, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -358,7 +358,7 @@ async function tick($: any) {
     // state/office/status/<sid>.json), read before observe so a turn's wake
     // carries the one declared in that turn.
     const statuses = await statusFiles($, ledger)
-    const o = observe(ledger, seen, Date.now(), live, sums, statuses)
+    const o = observe(ledger, seen, Date.now(), live, sums, statuses, await dialogScreens($, ledger, seen))
     // MCP servers the coordinator's and its workers' cc-mods could not get
     // back (register.ts mcpExport writes state/office/mcp/<sid>.json).
     const files = await mcpFiles($, o.ledger)
@@ -436,6 +436,36 @@ async function screens($: any, l: Ledger, seen: PaneSeen[]): Promise<Map<string,
     if (r.ok) out.set(w.sid, r.out)
   }
   for (const k of capturedAt.keys()) if (!pane.has(k)) capturedAt.delete(k)
+  return out
+}
+
+// Whether a permission dialog is on the screen of each active worker whose
+// pane says action with no call named (lib/coord.ts dialogUnsure): Jev's
+// reading of a turn's words, which no dialog may back. Read again at most
+// every DIALOG_EVERY_MS a pane while it stays so; a dialog that comes later
+// names its call and is not read for. A pane tmux did not answer is left
+// out: not read is not "no dialog".
+const DIALOG_EVERY_MS = 30_000
+const dialogRead = new Map<string, { at: number; drawn: boolean }>()
+async function dialogScreens($: any, l: Ledger, seen: PaneSeen[]): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>()
+  const now = Date.now()
+  const mine = new Set(active(l).map((w) => w.sid))
+  const unsure = seen.filter((s) => mine.has(s.sid) && dialogUnsure(s))
+  for (const s of unsure) {
+    const was = dialogRead.get(s.sid)
+    if (was && now - was.at < DIALOG_EVERY_MS) {
+      out.set(s.sid, was.drawn)
+      continue
+    }
+    const r = await sh($, ['tmux', 'capture-pane', '-p', '-J', '-t', s.pane], { timeoutMs: 3000 })
+    if (!r.ok) continue
+    const drawn = parseDialog(r.out) !== undefined
+    dialogRead.set(s.sid, { at: now, drawn })
+    out.set(s.sid, drawn)
+  }
+  const keep = new Set(unsure.map((s) => s.sid))
+  for (const k of dialogRead.keys()) if (!keep.has(k)) dialogRead.delete(k)
   return out
 }
 
