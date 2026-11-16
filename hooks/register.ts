@@ -85,7 +85,7 @@ import { section } from './views/common'
 import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/proceed'
 import { noteText, sentDigests, userTexts, type NoteBlock } from './lib/notes'
 import { ASKS_DIR, askedProperly, endsAsking } from './lib/headsup'
-import { SELF_CHECK_PROMPT, STATUS_DIR, STATUS_TOOL, parseStatus, selfCheckDue, workerOf } from './lib/status'
+import { SELF_CHECK_PROMPT, STATUS_DIR, STATUS_TOOL, parseStatus, selfCheckDue, stampTurn, workerOf } from './lib/status'
 import { coordCommand, coordGodEnded, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
 
 const P = 'cc-mods'
@@ -2040,6 +2040,25 @@ async function statusCall($: any, e: any): Promise<{ result: string } | { deny: 
   statusAt = now
   selfStreak = 0
   return { result: 'status recorded: ' + st.state + (st.kind ? ':' + st.kind : '') + (workerCoord ? ' (the coordinator sees it on its next look)' : '') }
+}
+
+// A main turn starts: the status declared in an earlier turn no longer
+// says where the work stands (lib/status.ts turnAt), so its file is stamped
+// with this turn's start; the coordinator and the office show it as stale
+// until the turn declares again. The self-check's own turn does not stamp:
+// it is the turn that declares. A file read or write that fails leaves the
+// record as it was.
+async function stampStatusTurn($: any, now: number) {
+  if (!home || !sid) return
+  const f = home + STATUS_DIR + '/' + sid + '.json'
+  try {
+    if (!(await $.fs.exists(f))) return
+    const r = await $.fs.read(f)
+    const next = stampTurn(typeof r === 'string' ? r : r?.text, now)
+    if (next) await $.fs.write(f, next)
+  } catch (err) {
+    $.ui.log('status: could not stamp ' + f + ': ' + String(err))
+  }
 }
 
 // At a worker's main turn's end: the question its answer ends on, when it
@@ -3997,6 +4016,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       turnStartedAt = Date.now()
       turnTools = []
       if (e.text === SELF_CHECK_PROMPT) selfTurn = true
+      // Awaited: a status call later in this turn must not be overwritten
+      // by the stamp's write of the older record.
+      else await stampStatusTurn($, turnStartedAt)
       await update($, turnA, () => ({ turnId: e.turnId, at: Date.now() }))
     }
     const ev = !e.agentId && e.text ? parseMonitor(e.text) : undefined

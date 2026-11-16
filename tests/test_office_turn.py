@@ -83,6 +83,26 @@ class TurnTest(unittest.TestCase):
         self.assertEqual(r["status"], blk)
         self.assertTrue(r["needs"])
 
+    def test_a_block_declared_before_the_turn_the_session_runs_now_needs_nobody(self):
+        # Live 2026-11-16: common-gw declared blocked:auth, the person logged
+        # in and said 계속; it worked for minutes while its row still asked
+        # the person for `aws sso login`.
+        N = 1794786300
+        auth = {"state": "blocked", "kind": "auth", "needs": "aws sso login --profile cloud-chat-prod", "at": (N - 300) * 1000}
+        stale = {**auth, "turnAt": (N - 120) * 1000}
+        self.assertTrue(turn.status_blocks_person(auth, N))
+        self.assertFalse(turn.status_blocks_person(stale, N))
+        coords = [{"sid": COORD, "name": "c", "workers": [{"slug": "w", "sid": OWNED, "live": True, "status": auth}]}]
+        r = {x["sid"]: x for x in turn.table([], [], [], coords, now=N)}[OWNED]
+        self.assertTrue(r["needs"])
+        # The status file stamped by the new turn beats the ledger's copy of
+        # the same record (same `at`), and the row needs nobody.
+        r = {x["sid"]: x for x in turn.table([], [], [], coords, now=N, declared={OWNED: {"status": stale}})}[OWNED]
+        self.assertEqual(r["status"], stale)
+        self.assertFalse(r["needs"])
+        # A stamp older than the record (a status declared in the turn) is no stamp.
+        self.assertTrue(turn.status_blocks_person({**auth, "turnAt": (N - 400) * 1000}, N))
+
     def test_a_block_a_few_hours_old_still_needs_the_person(self):
         N = 1794410000
         st = {"state": "blocked", "kind": "permission", "needs": "merge it", "at": (N - 4 * 3600) * 1000}

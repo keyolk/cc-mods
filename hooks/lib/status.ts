@@ -44,6 +44,14 @@ export type Status = {
   target?: string
   submit?: string
   at: number // ms, when it was declared
+  // ms, when a later main turn of the same session started (register.ts
+  // turn.start stamps the file): the record was declared in an earlier turn
+  // and the session has moved on since, so it no longer says where the work
+  // stands. Live 2026-11-16: common-gw declared blocked:auth, the person
+  // logged in and said 계속, it deleted Route53 records for minutes while the
+  // coordinator and the office still showed `blocked:auth · needs aws sso
+  // login`.
+  turnAt?: number
 }
 
 export const STATUS_DIR = '/.claude/state/office/status'
@@ -136,10 +144,36 @@ export function parseStatusFile(json: string | undefined): Status | undefined {
   try {
     const d = JSON.parse(json ?? '')
     const s = parseStatus(d, Number(d?.at) || 0)
-    return typeof s === 'string' ? undefined : s
+    if (typeof s === 'string') return undefined
+    const t = Number(d?.turnAt)
+    if (Number.isFinite(t) && t > s.at) s.turnAt = t
+    return s
   } catch {
     return undefined
   }
+}
+
+// Declared in an earlier turn: the session started a turn since (turnAt).
+export function staleStatus(s: Status | undefined): boolean {
+  return !!s?.turnAt && s.turnAt > s.at
+}
+
+// The status file's text with this turn's start stamped on it, when the
+// record was declared before `now` and not stamped yet; undefined when
+// nothing changes (no file, a broken one, already stamped). Each turn
+// declares again before it ends (the self-check asks for it), so the stamp
+// lasts only while the turn runs or until a turn ends without a status.
+export function stampTurn(json: string | undefined, now: number): string | undefined {
+  let d: any
+  try {
+    d = JSON.parse(json ?? '')
+  } catch {
+    return undefined
+  }
+  const at = Number(d?.at)
+  if (!d || typeof d !== 'object' || !Number.isFinite(at) || at >= now) return undefined
+  if (Number(d.turnAt) > at) return undefined
+  return JSON.stringify({ ...d, turnAt: now })
 }
 
 // One line for the coordinator: `blocked:question · brief 대기 · needs … · next … · 60%`.
@@ -164,7 +198,7 @@ export function statusLine(s: Status): string {
 // only when a worker's status changed.
 export function sameStatus(a?: Status, b?: Status): boolean {
   if (!a || !b) return a === b
-  return statusLine(a) === statusLine(b) && a.at === b.at
+  return statusLine(a) === statusLine(b) && a.at === b.at && a.turnAt === b.turnAt
 }
 
 // This session as a worker, from the coordinators' ledgers (one JSON text

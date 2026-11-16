@@ -647,8 +647,23 @@ def status_of(w: dict) -> dict | None:
     st = w.get("status")
     if not isinstance(st, dict) or st.get("state") not in STATUS_STATES:
         return None
-    keep = ("state", "kind", "step", "next", "needs", "progress", "msg", "link", "pane", "ask", "target", "submit", "at")
-    return {k: st[k] for k in keep if st.get(k) not in (None, "")}
+    keep = ("state", "kind", "step", "next", "needs", "progress", "msg", "link", "pane", "ask", "target", "submit", "at", "turnAt")
+    out = {k: st[k] for k in keep if st.get(k) not in (None, "")}
+    # Declared before a turn the session started since (hooks/lib/status.ts
+    # turnAt): the work moved on, so the record is drawn as stale and asks
+    # nothing of the person.
+    if stale_status(out):
+        out["stale"] = True
+    return out
+
+
+def stale_status(st: dict | None) -> bool:
+    """Whether a declared status was declared before the session's current
+    turn started (its file stamped `turnAt` later than `at`)."""
+    if not isinstance(st, dict):
+        return False
+    at, turn_at = st.get("at"), st.get("turnAt")
+    return isinstance(at, (int, float)) and isinstance(turn_at, (int, float)) and turn_at > at
 
 
 def heads_up_of(w: dict) -> dict | None:

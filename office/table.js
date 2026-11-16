@@ -327,6 +327,12 @@ function tblAskNow(R) {
 const TBL_STATUS = { working: '⚙', blocked: '⏸', done: '✅', error: '⚠', idle: '·' }
 const TBL_KIND = { question: '결정 대기', permission: '권한 대기', auth: '로그인 대기', wait: '외부 대기' }
 function tblStatus(s) {
+  // Declared before the turn the session runs now (hooks/lib/status.ts
+  // turnAt): the work moved on; the old words stay, marked, for context.
+  if (s.stale) return ('지난 상태 · ' + tblStatusText(s)).slice(0, 120)
+  return tblStatusText(s)
+}
+function tblStatusText(s) {
   const head = (TBL_STATUS[s.state] || '') + ' ' + (s.kind ? TBL_KIND[s.kind] || s.kind : s.state)
   const tail = s.state === 'blocked' ? s.needs : s.state === 'done' ? s.link || s.msg : s.next
   return [head + (s.progress != null ? ' ' + s.progress + '%' : ''), s.step, tail].filter(Boolean).join(' · ').slice(0, 120)

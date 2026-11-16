@@ -94,6 +94,11 @@ def wait_of(sid: str, now: float | None = None) -> dict | None:
     at = (st.get("at") or 0) / 1000
     if at and (now or time.time()) - at > STALE:
         return None
+    # A turn started since it was declared (hooks/lib/status.ts turnAt): the
+    # session went on, the login it waited on is no longer the wait.
+    turn_at = st.get("turnAt")
+    if isinstance(turn_at, (int, float)) and turn_at / 1000 > at:
+        return None
     return {"pane": pane, "ask": ask, "target": str(st.get("target") or ""), "submit": str(st.get("submit") or ""), "needs": str(st.get("needs") or ""), "at": at}
 
 

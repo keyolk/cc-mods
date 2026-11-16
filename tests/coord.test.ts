@@ -1,7 +1,7 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { adoptName, parseWindows, WINDOWS_FMT, COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
@@ -254,11 +254,13 @@ test('coord: an approval the auto classifier settles between ticks is neither a 
   expect(done.changes.map((c) => c.text)).toEqual(['tmc-layout: finished its turn'])
 })
 
-test('coord: a worker that declared blocked:question/wait or done is not told as waiting on an approval', () => {
+test('coord: a worker that declared blocked (any kind) or done, with no call pending, is not told as waiting on an approval', () => {
   // Live 2026-11-12: a Heads up band made turn_question.py call the turn an
   // action; the coordinator got "waiting on an approval" every few minutes.
   const asking = parsePanes('%1\t@1\tw1\twaiting\taction\t/w/tmc-layout\t')
-  for (const status of [{ state: 'blocked', kind: 'question', at: NOW }, { state: 'blocked', kind: 'wait', at: NOW }, { state: 'done', at: NOW }] as const) {
+  // blocked:auth too (live 2026-11-16, common-gw: `aws sso login` declared,
+  // "waiting on an approval" told, no dialog on its screen), and permission.
+  for (const status of [{ state: 'blocked', kind: 'question', at: NOW }, { state: 'blocked', kind: 'wait', at: NOW }, { state: 'blocked', kind: 'auth', at: NOW }, { state: 'blocked', kind: 'permission', at: NOW }, { state: 'done', at: NOW }] as const) {
     let l = on({ workers: [worker({ attention: 'action', status })] })
     for (let i = 0; i < 4; i++) {
       const r = observe(l, asking, NOW + i * 10_000)
@@ -266,9 +268,14 @@ test('coord: a worker that declared blocked:question/wait or done is not told as
       l = r.ledger
     }
   }
-  // A permission block, or no status, still wakes.
-  const l = on({ workers: [worker({ attention: 'action', status: { state: 'blocked', kind: 'permission', at: NOW } })] })
-  expect(observe(l, asking, NOW).changes.map((c) => c.kind)).toEqual(['ask'])
+  // No status, or a working one, still wakes.
+  for (const status of [undefined, { state: 'working', at: NOW } as const]) {
+    const l = on({ workers: [worker({ attention: 'action', status })] })
+    expect(observe(l, asking, NOW).changes.map((c) => c.kind)).toEqual(['ask'])
+  }
+  // The wake held through the coordinator's turn is dropped for blocked:auth too.
+  const held = on({ workers: [worker({ attention: 'ask', status: { state: 'blocked', kind: 'auth', at: NOW } })] })
+  expect(current({ slug: 'tmc-layout', sid: 'w1', kind: 'ask', text: '', wake: true }, held, NOW)).toBe(false)
   // A pending tool call (asks) is a real dialog whatever the status.
   const call = parsePanes('%1\t@1\tw1\twaiting\taction\t/w/tmc-layout\t\tBash: rm x')
   const l2 = on({ workers: [worker({ attention: 'action', asks: 'Bash: rm x', status: { state: 'blocked', kind: 'question', at: NOW } })] })
@@ -585,6 +592,36 @@ test('coord: a slug from the session name, SLUG-shaped and unique among the acti
   // Two sessions with one name, adopted in one pass.
   const { adopted } = autoAdopt(on(), [live('s1aaaaaa'), live('s2bbbbbb')], new Map([['s1aaaaaa', 'cc-mods'], ['s2bbbbbb', 'cc-mods']]), new Set(), NOW)
   expect(adopted.map((w) => w.slug)).toEqual(['cc-mods', 'cc-mods-s2bb'])
+})
+
+test('coord: an adopted session is named after its own window, not after a closed worker whose folder it opened in', () => {
+  // Live 2026-11-16: daily-checkin-1116 (owned) was closed; a new session in
+  // its task folder, writing an sbcorp Wi-Fi post in a window the person
+  // named `wifi`, was adopted as `daily-checkin-1116-34` (Claude Code's
+  // registry name: the folder and two hex digits).
+  const closed = worker({ slug: 'daily-checkin-1116', sid: 'e4ccf0d0', cwd: '/r/daily-checkin-1116', endedAt: NOW - 60_000 })
+  const l = on({ workers: [closed] })
+  const wifi = live('6b898d7b', { pane: '%167', window: '@61', cwd: '/r/daily-checkin-1116' })
+  const windows = parseWindows(['@61\t0\twifi', '@62\t0\tw:office-state-drift', '@63\t1\tfish', '@64\t0\t2026-10-13-common-gw-0e', 'junk', ''].join('\n'))
+  expect([...windows]).toEqual([['@61', 'wifi'], ['@62', 'w:office-state-drift'], ['@64', '2026-10-13-common-gw-0e']])
+  expect(WINDOWS_FMT).toBe('#{window_id}\t#{automatic-rename}\t#{window_name}')
+  const reg = new Map([['6b898d7b', 'daily-checkin-1116-34']])
+  expect(autoAdopt(l, [wifi], reg, new Set(), NOW, windows).adopted.map((w) => w.slug)).toEqual(['wifi'])
+  // Its window holds other sessions, or has no name the person gave: the
+  // registry name, except one made from a worker's folder: the sid's start.
+  const shared = [wifi, live('other', { window: '@61' })]
+  expect(autoAdopt(l, shared, reg, new Set(), NOW, windows).adopted[0]!.slug).toBe('6b898d7b')
+  expect(autoAdopt(l, [wifi], reg, new Set(), NOW).adopted[0]!.slug).toBe('6b898d7b')
+  // The same session with no worker of that folder: its registry name, as before.
+  expect(autoAdopt(on(), [wifi], reg, new Set(), NOW).adopted[0]!.slug).toBe('daily-checkin-1116-34')
+  // Names cc-mods or Claude Code made are not given names.
+  expect(adoptName(l, 's', 'ops-k8s', { name: 'w:office-state-drift', shared: false })).toBe('ops-k8s')
+  expect(adoptName(l, 's', 'ops-k8s', { name: '2026-10-13-common-gw-0e', shared: false })).toBe('ops-k8s')
+  expect(adoptName(l, 's', 'ops-k8s', { name: '와이파이', shared: false })).toBe('ops-k8s')
+  // A name the person gave the session itself still counts.
+  expect(adoptName(l, 's', 'Wi-Fi post', undefined)).toBe('Wi-Fi post')
+  // The worker's own session (taken back after a reload) keeps its folder name.
+  expect(adoptName(l, 'e4ccf0d0', 'daily-checkin-1116-34', undefined)).toBe('daily-checkin-1116-34')
 })
 
 test('coord: the office asks a release and this coordinator applies it to its own ledger', () => {

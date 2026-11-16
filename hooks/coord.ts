@@ -9,7 +9,7 @@
 // never turned it on can start nothing.
 
 import { briefGates, gateNote } from './lib/grant'
-import { COORD_CAPS, coordGodWanted, PANES_FMT, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, headsUpWakes, personAskWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
+import { COORD_CAPS, coordGodWanted, PANES_FMT, WINDOWS_FMT, parseWindows, WAKE_PREFIX, WORKER_CAPS, active, mcpWakes, headsUpWakes, personAskWakes, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, limitsText, released, unadopt, coordRules, coordRoster, current, logged, mergeRepos, observe, overlaps, parseLedger, parseLimits, parsePanes, policyArgvs, policyOf, recheck, spawnRefusal, statusTail, titleArgv, typedLately, typedNote, unseen, workerArgv, workerPrompt, type Change, type Ledger, type Made, type PaneSeen, type Worker } from './lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from './lib/trust'
 import { restoreArgvs } from './lib/rca'
 import { repoFromRemote } from './lib/prs'
@@ -20,6 +20,7 @@ import { confirmed, countText, parseReview, pruned, reviewLine, reviewTable, ups
 import { clip } from './lib/text'
 import { dialogShown, dialogText, matches, parseDialog } from './lib/dialog'
 import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
+import { briefState, decisionLines, stampRelayed, withLogged } from './lib/coorddecide'
 import { ASKS_DIR, parseAskFile, type AskSeen } from './lib/headsup'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
 import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
@@ -234,7 +235,33 @@ export function coordLedger(): Ledger | undefined {
 // conversation rows where that is out of reach (register.ts contextNotes),
 // the rules sent once and the roster when it changed.
 export function coordParts(now: number): { rules: string; roster: string } | undefined {
-  return ledger?.on ? { rules: coordRules(ledger, 'Korean'), roster: coordRoster(ledger, now, reviewLine(review)) } : undefined
+  return ledger?.on ? { rules: coordRules(ledger, 'Korean'), roster: coordRoster(ledger, now, reviewLine(review), decisionsText(now)) } : undefined
+}
+
+// The decision briefs this coordinator asked (lib/coorddecide.ts), as the
+// roster's lines. The sidecars that name this coordinator are read at most
+// every BRIEFS_EVERY_MS (grep -l keeps the read to those: the folder holds
+// every coordinator's briefs, 200 and more); the lines are made again from
+// what was read on each use, so a coord_send that relays one takes its line
+// away at once. A failed read keeps what the last one found.
+const BRIEFS_EVERY_MS = 30_000
+let briefsRead: { at: number; ok: boolean; files: Map<string, string> } = { at: 0, ok: false, files: new Map() }
+async function readBriefs($: any) {
+  if (Date.now() - briefsRead.at < BRIEFS_EVERY_MS) return
+  briefsRead.at = Date.now()
+  const r = await sh($, ['sh', '-c', 'for f in $(grep -l -- "$1" "$0"/*.brief.json 2>/dev/null); do b=${f##*/}; printf "%s\\t%s\\n" "${b%.brief.json}" "$(tr -d "\\n" < "$f")"; done; true', ctx!.home() + '/briefs', ctx!.sid()], { timeoutMs: 5000 })
+  if (!r.ok) return
+  const files = new Map<string, string>()
+  for (const line of r.out.split('\n')) {
+    const t = line.indexOf('\t')
+    if (t > 0) files.set(line.slice(0, t), line.slice(t + 1))
+  }
+  briefsRead = { at: briefsRead.at, ok: true, files }
+}
+function decisionsText(now: number): string | undefined {
+  if (!ledger?.on || !briefsRead.ok) return undefined
+  const live = new Set(active(ledger).map((w) => w.slug))
+  return decisionLines(briefState(briefsRead.files, ledger.sid, withLogged(ledger.relayed, ledger.log), live, now))
 }
 
 async function readOps($: any) {
@@ -312,6 +339,7 @@ let ticking = false
 async function tick($: any) {
   if (ledger?.on && !ticking) await readReview($)
   if (ledger?.on && !ticking) await readOps($)
+  if (ledger?.on && !ticking) await readBriefs($).catch(() => undefined)
   if (ticking || !ledger?.on || (!active(ledger).length && !ledger.limits.autoAdopt)) return
   ticking = true
   try {
@@ -464,8 +492,11 @@ async function adoptLive($: any, seen: PaneSeen[], full: boolean) {
     const known = new Set([l.sid, ...l.released, ...active(l).map((w) => w.sid)])
     if (seen.every((s) => known.has(s.sid))) return
   }
-  const [n, others] = await Promise.all([names($), sh($, ['sh', '-c', 'for f in "$0"/*.json; do [ "$f" = "$1" ] || jq -c . "$f" 2>/dev/null; done', dir(), file()], { timeoutMs: 3000 })])
-  const r = autoAdopt(ledger!, seen, n, foreign(others.out.split('\n').filter(Boolean), ledger!.sid), Date.now())
+  // The window names too: a session's slug comes from the name the person
+  // gave its window before the one Claude Code made from its cwd
+  // (lib/coord.ts adoptName). A failed read is no names: the registry's.
+  const [n, others, wins] = await Promise.all([names($), sh($, ['sh', '-c', 'for f in "$0"/*.json; do [ "$f" = "$1" ] || jq -c . "$f" 2>/dev/null; done', dir(), file()], { timeoutMs: 3000 }), sh($, ['tmux', 'list-windows', '-a', '-F', WINDOWS_FMT], { timeoutMs: 3000 })])
+  const r = autoAdopt(ledger!, seen, n, foreign(others.out.split('\n').filter(Boolean), ledger!.sid), Date.now(), wins.ok ? parseWindows(wins.out) : new Map())
   if (r.ledger !== ledger) await save($, r.ledger)
 }
 
@@ -622,7 +653,10 @@ async function roster($: any): Promise<string> {
       const rel = s.sid === ledger!.sid ? 'self' : (w?.relation ?? 'observed') + (w?.auto ? ' (auto)' : '')
       return '| ' + (n.get(s.sid) ?? s.sid.slice(0, 8)) + ' | ' + rel + (w ? ' ' + w.slug : '') + ' | ' + s.pane + ' | ' + (s.state || '?') + (s.attention && s.attention !== 'none' ? ' (' + s.attention + ')' : '') + (w && typedLately(w, now) ? ' person typed ' + new Date(w.typedAt!).toTimeString().slice(0, 5) : '') + ' | ' + (w?.status ? statusTail(w.status, now).slice(' — status '.length) : '-') + ' | ' + s.cwd + ' | ' + (doing.get(s.sid) ?? '').replace(/\|/g, '/') + ' |'
     })
-  return '| name | relation | pane | state | status | cwd | doing |\n|---|---|---|---|---|---|---|\n' + rows.join('\n')
+  briefsRead.at = 0
+  await readBriefs($).catch(() => undefined)
+  const dec = decisionsText(now)
+  return '| name | relation | pane | state | status | cwd | doing |\n|---|---|---|---|---|---|---|\n' + rows.join('\n') + (dec ? '\n\n' + dec : '')
 }
 
 // The newest prompts of each session, off the tail of its transcript (the
@@ -991,7 +1025,11 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
     via = 'left in its office inbox (no peer message: ' + clip(String(peer?.reason ?? 'refused'), 120) + '); it goes in when its turn ends, and a [coord] wake tells you if it never does'
   }
   // The first instruction ends a quiet worker's quiet: its reply is news.
-  const l = w.instructed ? ledger! : { ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, instructed: now } : x)) }
+  const l0 = w.instructed ? ledger! : { ...ledger!, workers: ledger!.workers.map((x) => (x.sid === w.sid && !x.endedAt ? { ...x, instructed: now } : x)) }
+  // A brief named in it is relayed now (lib/coorddecide.ts): its answer
+  // leaves the roster's 미전달 line.
+  const relayed = stampRelayed(l0.relayed, text, now)
+  const l = relayed ? { ...l0, relayed } : l0
   await save($, logged(l, 'send', w.slug + ': ' + text.slice(0, 200), now))
   return { result: 'Sent to ' + w.slug + ' (' + (w.pane ?? '') + '): ' + via + '.' + (body !== text ? ' Its ' + text.length + ' characters went to a file; the message carries the head and the path.' : '') + typedNote(w, now) }
 }

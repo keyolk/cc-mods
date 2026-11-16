@@ -3,7 +3,7 @@
 // coordinator sees it (observe's wake, the roster, the prompts). No engine.
 import { expect, test } from 'claude-code/testing'
 
-import { ASKS, KINDS, SELF_CHECK_MAX, STATES, STATUS_TOOL, parseStatus, parseStatusFile, sameStatus, selfCheckDue, statusLine, workerOf, type Status } from '../hooks/lib/status'
+import { ASKS, KINDS, SELF_CHECK_MAX, STATES, STATUS_TOOL, parseStatus, parseStatusFile, sameStatus, selfCheckDue, staleStatus, stampTurn, statusLine, workerOf, type Status } from '../hooks/lib/status'
 import { STATUS_OLD_MS, STATUS_RULE, coordRoster, coordRules, emptyLedger, observe, parsePanes, statusTail, workerPrompt, type Ledger, type Worker } from '../hooks/lib/coord'
 
 const NOW = 1_800_000_000_000
@@ -111,6 +111,38 @@ test('status: a turn\'s wake carries the status the worker declared, and its age
   // None ever declared: the wake is as before.
   expect(observe(l, parsePanes('%1\t@1\tw1\tdone\tnone\t/w/tmc-layout\t'), NOW + 10_000).changes.map((c) => c.text)).toEqual(['tmc-layout: finished its turn'])
   expect(statusTail(undefined, NOW)).toBe('')
+})
+
+test('status: a record declared before the turn the session runs now is stale, in the file, the wake and the roster', () => {
+  // Live 2026-11-16: common-gw declared blocked:auth (`aws sso login`) at
+  // 08:41; the person logged in and said 계속; it deleted Route53 records for
+  // minutes while the coordinator and the office still showed the block.
+  const auth = parseStatus({ state: 'blocked', kind: 'auth', step: 'webhook ALB 정리 확인', needs: 'aws sso login --profile cloud-chat-prod' }, NOW) as Status
+  const file = JSON.stringify(auth)
+  // The next turn's start stamps it; a second stamp in that turn changes nothing.
+  const stamped = stampTurn(file, NOW + 180_000)!
+  expect(JSON.parse(stamped)).toEqual({ ...auth, turnAt: NOW + 180_000 })
+  expect(stampTurn(stamped, NOW + 200_000)).toBeUndefined()
+  // A record declared at or after the turn's start, a broken file or none: not stamped.
+  expect(stampTurn(file, NOW)).toBeUndefined()
+  expect(stampTurn('{', NOW)).toBeUndefined()
+  expect(stampTurn(undefined, NOW)).toBeUndefined()
+  // A new status written in the turn replaces the file whole: it is fresh again.
+  const read = parseStatusFile(stamped)!
+  expect(read.turnAt).toBe(NOW + 180_000)
+  expect(staleStatus(read)).toBe(true)
+  expect(staleStatus(parseStatusFile(file))).toBe(false)
+  expect(parseStatusFile(JSON.stringify({ ...auth, turnAt: NOW - 1 }))!.turnAt).toBeUndefined()
+  // The stamp is a change the ledger keeps.
+  expect(sameStatus(read, auth)).toBe(false)
+  // The coordinator reads it as stale, first, with both ages.
+  const tail = statusTail(read, NOW + 240_000)
+  expect(tail).toStartWith(' — status stale (declared 4 min ago, before the turn it started 1 min ago')
+  expect(tail).toContain('blocked:auth')
+  const l = on({ workers: [worker({ status: auth, instructed: NOW })] })
+  const o = observe(l, parsePanes('%1\t@1\tw1\tworking\tnone\t/w/tmc-layout\t'), NOW + 240_000, new Set(), new Map(), new Map([['w1', read]]))
+  expect(o.ledger.workers[0]!.status).toEqual(read)
+  expect(coordRoster(o.ledger, NOW + 240_000)).toContain('| working | stale (declared 4 min ago')
 })
 
 test('status: the roster has a status column, and the prompts tell both sides about it', () => {

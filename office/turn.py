@@ -64,15 +64,26 @@ def status_blocks_person(st: dict | None, now: float) -> bool:
     """Whether a worker's declared status (hooks/lib/status.ts) says it waits
     on the person: blocked on a question, a permission or a login, or blocked
     with no kind but a `needs` text. `wait` (CI, a review) is no person's
-    turn. A status that old (STATUS_STALE) is dropped: the worker may have
-    moved on without declaring it."""
+    turn. A status that old (STATUS_STALE), or declared before the turn the
+    session started since (`turnAt`), is dropped: the worker moved on
+    without declaring it."""
     if not isinstance(st, dict) or st.get("state") != "blocked":
+        return False
+    # Declared before the turn the session runs now (hooks/lib/status.ts
+    # turnAt): it went on without the person, so the block holds no more.
+    turn_at = st.get("turnAt")
+    if isinstance(turn_at, (int, float)) and turn_at > (st.get("at") or 0):
         return False
     kind = st.get("kind")
     if kind not in PERSON_KINDS and not (kind is None and st.get("needs")):
         return False
     at = epoch(st.get("at"))
     return not at or now - at < STATUS_STALE
+
+
+def _fresh(st: dict | None) -> tuple[float, float]:
+    st = st or {}
+    return (epoch(st.get("at")), epoch(st.get("turnAt")))
 
 
 def answered(st: dict, r: dict, seen: dict) -> dict | None:
@@ -194,7 +205,9 @@ def table(waiting: list[dict], calls: list[dict], reviews: list[dict], coords: l
         r = rows.get("s:" + sid)
         if r is None and status_blocks_person(st, now):
             r = row("s:" + sid, sid=sid, name=d.get("name"), summary=d.get("summary"), state=d.get("state"), live=True)
-        if r is not None and epoch((st or {}).get("at")) > epoch((r.get("status") or {}).get("at")):
+        # The newer record wins: declared later, or the same one stamped
+        # since by a turn that started (hooks/lib/status.ts turnAt).
+        if r is not None and _fresh(st) > _fresh(r.get("status")):
             r["status"] = st
     for x in deps or []:
         r = row("d:" + x["id"], name=x.get("title") or x["id"])
