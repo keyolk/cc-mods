@@ -26,8 +26,9 @@
 import type { Cap, CapValue, Policy } from './policy'
 import { ONE_BROWSER } from './webpane'
 import { grantRule } from './grant'
-import { sameStatus, statusLine, type Status } from './status'
+import { sameStatus, staleStatus, statusLine, type Status } from './status'
 import { parseHeadsUp } from './headsup'
+import { given } from './coordsum'
 
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 export type Effort = (typeof EFFORTS)[number]
@@ -115,6 +116,10 @@ export type Ledger = {
   // was on: it stays off, across reloads, until the next /coord on.
   godOff?: boolean
   mcpDown?: string[] // the coordinator's own, as Worker.mcpDown
+  // Decision brief name → when a coord_send last named it
+  // (lib/coorddecide.ts): an answered brief not named since its answer is
+  // listed in the roster as not relayed.
+  relayed?: Record<string, number>
 }
 
 export const LOG_MAX = 200
@@ -162,6 +167,7 @@ export function parseLedger(json: string | undefined, sid: string, name: string,
     policyBefore: raw.policyBefore && typeof raw.policyBefore === 'object' ? raw.policyBefore : undefined,
     godOff: raw.godOff === true ? true : undefined,
     mcpDown: Array.isArray(raw.mcpDown) ? raw.mcpDown.filter((x: unknown) => typeof x === 'string') : undefined,
+    relayed: raw.relayed && typeof raw.relayed === 'object' && !Array.isArray(raw.relayed) ? Object.fromEntries(Object.entries(raw.relayed).filter(([k, v]) => typeof v === 'number' && k.length <= 200)) as Record<string, number> : undefined,
     at: Number(raw.at) || now,
   }
 }
@@ -218,8 +224,9 @@ export function spawnRefusal(l: Ledger, r: SpawnRequest): string | undefined {
 
 // A worker slug from the session's name: SLUG-shaped, and not one an active
 // worker already has (the sid's start tells two of the same name apart).
+const slugClean = (x: string) => x.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '')
 export function adoptSlug(name: string | undefined, sid: string, taken: ReadonlySet<string>): string {
-  const clean = (x: string) => x.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+/, '')
+  const clean = slugClean
   const base = clean(name ?? '').slice(0, 40).replace(/-+$/, '') || clean(sid).slice(0, 8)
   if (!taken.has(base)) return base
   const tag = clean(sid).slice(0, 4)
@@ -227,6 +234,43 @@ export function adoptSlug(name: string | undefined, sid: string, taken: Readonly
     const s = base.slice(0, 34).replace(/-+$/, '') + '-' + tag + (i ? String(i) : '')
     if (!taken.has(s)) return s
   }
+}
+
+// The name an adopted session's slug is made from (adoptSlug). Claude Code
+// names a session after its cwd (`daily-checkin-1116-34`: the folder and two
+// hex digits), so a new session opened in a closed worker's task folder came
+// out as that worker (live 2026-11-16: a session writing an sbcorp Wi-Fi post,
+// in a window the person named `wifi`, was adopted as `daily-checkin-1116-34`
+// right after daily-checkin-1116 was closed). In order:
+//   1. the name the person gave its window (`wifi`), when no other session
+//      shares that window; not one cc-mods or Claude Code made (`w:<slug>`,
+//      `<word>-<2 hex>`, a relay head: lib/coordsum.ts given)
+//   2. the registry name, unless it is Claude Code's own and its folder part
+//      is a worker's slug in this ledger, live or ended
+//   3. none: adoptSlug falls back to the session id's start
+// `window`: its window's name; `shared`: other sessions live in that window.
+export function adoptName(l: Pick<Ledger, 'workers'>, sid: string, registry: string | undefined, window?: { name: string; shared: boolean }): string | undefined {
+  // A window name with no slug letters in it (`와이파이`) gives no slug.
+  const w = window && !window.shared ? given(window.name) : undefined
+  if (w && /[a-z0-9]/.test(slugClean(w))) return w
+  const n = (registry ?? '').trim()
+  const auto = /^([\w.-]+)-[0-9a-f]{2}$/.exec(n)
+  if (auto && l.workers.some((x) => x.sid !== sid && x.slug === auto[1]!.toLowerCase())) return undefined
+  return n || undefined
+}
+
+// Window id → the name the person gave it, from `tmux list-windows -a -F
+// WINDOWS_FMT`. A window tmux names after its running command
+// (automatic-rename on: `fish`, `2.1.3`) was given no name.
+export const WINDOWS_FMT = '#{window_id}\t#{automatic-rename}\t#{window_name}'
+export function parseWindows(out: string): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const line of out.split('\n')) {
+    const [id, auto, ...name] = line.split('\t')
+    const n = name.join('\t').trim()
+    if (id && /^@\d+$/.test(id) && auto !== '1' && n) m.set(id, n)
+  }
+  return m
 }
 
 // The sessions other coordinators keep: each one that is on, and its live
@@ -259,7 +303,7 @@ export function quiet(w: Worker): boolean {
 // turned coordinator) is dropped, and so is an ended quiet one: neither says
 // anything the ledger needs, and the list would grow with every session that
 // came and went.
-export function autoAdopt(l: Ledger, seen: readonly PaneSeen[], names: ReadonlyMap<string, string>, skip: ReadonlySet<string>, now: number): { ledger: Ledger; adopted: Worker[] } {
+export function autoAdopt(l: Ledger, seen: readonly PaneSeen[], names: ReadonlyMap<string, string>, skip: ReadonlySet<string>, now: number, windows: ReadonlyMap<string, string> = new Map()): { ledger: Ledger; adopted: Worker[] } {
   if (!l.on || !l.limits.autoAdopt) return { ledger: l, adopted: [] }
   // Taken for gone and seen again: observe takes that record back.
   const back = comesBack(l, seen)
@@ -272,7 +316,8 @@ export function autoAdopt(l: Ledger, seen: readonly PaneSeen[], names: ReadonlyM
   for (const s of seen) {
     if (s.sid === l.sid || mine.has(s.sid) || handed.has(s.sid) || skip.has(s.sid)) continue
     mine.add(s.sid)
-    const slug = adoptSlug(names.get(s.sid), s.sid, taken)
+    const wname = windows.get(s.window)
+    const slug = adoptSlug(adoptName(l, s.sid, names.get(s.sid), wname === undefined ? undefined : { name: wname, shared: seen.some((o) => o.window === s.window && o.sid !== s.sid) }), s.sid, taken)
     taken.add(slug)
     // typedAt: the person's last prompt there, from before its adoption too.
     adopted.push({ slug, sid: s.sid, relation: 'adopted', auto: true, pane: s.pane, window: s.window, cwd: s.cwd, at: now, state: s.state, attention: s.attention, asks: s.asks, typedAt: s.humanAt })
@@ -587,20 +632,31 @@ export function observe(l: Ledger, seen: PaneSeen[], now: number, alive: Readonl
 // made the classifier say so. Live 2026-11-12: n8n-inventory and
 // luther-dp-onboarding were told "waiting on an approval" 3+ times each.
 // The brief or the status carries that wait; a real dialog has `asks`.
+// Every blocked kind counts, auth and permission too: a permission dialog
+// cc-mods draws always publishes its call (@cc_pane_asks, register.ts
+// publishAsks/dialogShown), so a blocked worker with none pending ended its
+// turn on its own words. Live 2026-11-16: common-gw declared blocked:auth
+// (`aws sso login`) and the coordinator was told "waiting on an approval in
+// its pane" with no dialog on the screen.
 export function declaredNotDialog(w: Pick<Worker, 'asks' | 'status'>): boolean {
   const st = w.status
   if (!st || w.asks) return false
-  return st.state === 'done' || (st.state === 'blocked' && (st.kind === 'question' || st.kind === 'wait'))
+  return st.state === 'done' || st.state === 'blocked'
 }
 
 // What a turn's wake says about where the work stands: the worker's
 // declared status, so the coordinator need not read its pane or ask again;
 // with its age when it was declared over STATUS_OLD_MS ago (the worker may
 // not have called the tool this turn). None declared: nothing added.
+// Declared in an earlier turn (the session started one since: lib/status.ts
+// turnAt): `stale`, said first, so a block nobody waits on any more is not
+// read as one.
 export const STATUS_OLD_MS = 10 * 60_000
 export function statusTail(s: Status | undefined, now: number): string {
   if (!s) return ''
-  const old = now - s.at > STATUS_OLD_MS ? ' (declared ' + Math.round((now - s.at) / 60_000) + ' min ago)' : ''
+  const mins = (t: number) => Math.max(0, Math.round((now - t) / 60_000))
+  if (staleStatus(s)) return ' — status stale (declared ' + mins(s.at) + ' min ago, before the turn it started ' + mins(s.turnAt!) + ' min ago; ask it or wait for its next status): ' + statusLine(s)
+  const old = now - s.at > STATUS_OLD_MS ? ' (declared ' + mins(s.at) + ' min ago)' : ''
   return ' — status ' + statusLine(s) + old
 }
 
@@ -798,8 +854,8 @@ export function overlaps(seen: PaneSeen[], l: Ledger, dir: string, git?: { commo
 
 // What the coordinator reads every turn: its role, its limits, its workers,
 // and the review queue's line (lib/coordreview.ts reviewLine) when it has any.
-export function coordSection(l: Ledger, now: number, language = 'Korean', review?: string): string {
-  return coordRules(l, language) + '\n' + coordRoster(l, now, review)
+export function coordSection(l: Ledger, now: number, language = 'Korean', review?: string, decisions?: string): string {
+  return coordRules(l, language) + '\n' + coordRoster(l, now, review, decisions)
 }
 
 // The two halves of coordSection. The rules change only with the limits or
@@ -828,7 +884,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- When the person must decide (two or more options, a step hard to undo, a scope call), the default is a decision brief, not a question in chat alone. " + DECISION_BRIEF + " Add `--coordinator " + l.sid + "`, and `--worker <slug>` when it is about a worker. The office's 지휘 view lists every waiting decision: while the office is up (`curl -sf http://localhost:8796/` answers), never run `brief show`, which covers the office's pane and its controls; only without the office does `brief show <brief>` put it in a tweb pane. In chat write one line and the brief path; you may also ask with AskUserQuestion, the recommended option first.",
     '- Only a yes/no on one small step that is easy to undo goes to the person in chat alone, without a brief.',
     "- A worker's `QUESTION … — <brief path>` already asks the person on that brief: do not ask it again; it is in the office's 지휘 view.",
-    "- A worker declares where its work stands with its `status` tool (state working/blocked/done/error/idle, with blocked a kind: question, permission, auth or wait; step, next, needs). It shows in the status column above, in coord_roster, and after `finished its turn — status …` on its turn's wake. Act on that line: `blocked:question` waits on its decision brief (needs), `blocked:wait` on CI or a review, `done` with a link is ready for you to verify, `working` will report again; ask the worker only when no status was declared or it is old (`declared N min ago`).",
+    "- A worker declares where its work stands with its `status` tool (state working/blocked/done/error/idle, with blocked a kind: question, permission, auth or wait; step, next, needs). It shows in the status column above, in coord_roster, and after `finished its turn — status …` on its turn's wake. Act on that line: `blocked:question` waits on its decision brief (needs), `blocked:wait` on CI or a review, `done` with a link is ready for you to verify, `working` will report again; ask the worker only when no status was declared, it is old (`declared N min ago`), or it is `stale` (declared before the turn it runs now: the work has moved on, so do not act on that block or report it to the person).",
     "- The person gives intent and judgment; what it takes to carry them out is yours to arrange. coord_spawn's result names the gates a brief will meet (a Slack send, a merge, a prod write): the worker asks every approval it needs on its first decision brief, together, and an approval the person already gave (a brief answered, or their words in this conversation) is not asked again. A worker's Slack send the person approved on a brief (`[granted: …]` on the answer) goes through on its own: never tell the person to change a policy for it.",
     "- Gather the person's questions: say once in chat `결정 N건 대기` with the brief paths, not a message per question, and ask them on one occasion, not as each arrives. Ask alone and at once only what stops a worker entirely.",
     "- Finished work goes to the person's review queue, not only to chat: when you have verified and merged a worker's READY (or a worker finished something the person must judge), call `coord_review` add with id = the worker slug or the PR (cc-mods#85), title, changed (what changed, in the person's terms), verified (what you checked: tests, live run, CI on the sha; and what you did not), check (what the person should look at or try), risk, links (PR, brief, files). A later step of the same work (a follow-up PR, a fix after an issue) is `coord_review` update on the same id, not a new item. In chat say only the one line the tool returns, `검토 대기 N건`, never the items: the office's 지휘 view shows them under 🔎 검토. Do not write a one-off brief for finished work.",
@@ -847,7 +903,7 @@ export function coordRules(l: Ledger, language = 'Korean'): string {
     "- `[coord] <summary> (<slug>): 사람에게 물음: \"<question>\"` is a worker's turn that ended asking the person in words only, with no brief and no blocked:question status: the question sits in its pane where nobody may look. Do not leave it. When it is inside the scope the person already asked for (go on, which of two equal ways, send the report), answer it yourself with `coord_send`. When it is a real judgment, put it on a decision brief for the person (or have the worker do so) and say so in one line.",
     "- `[coord] <summary> (<slug>): 지시 전달 실패 (<why>, N회 시도): \"<head>\"` is an instruction of yours that never went into that worker: send it again with `coord_send`; when it fails again, tell the person the worker's pane.",
     "- `[coord] <summary> (<slug>): MCP <server> 끊김 (<why>)` (`coordinator: MCP …` for your own session) is an MCP server that session's cc-mods could not reconnect on its own: it keeps retrying (1, 2, 4 … 30 minutes apart), and the office shows 🔌 on that session's row with a 다시 연결 button. Tell the person once in chat `MCP 끊김: <server> (<who>)` with the why. When the why says 이름 매핑 실패, that is a cc-mods bug: route a fix with its text. Do not tell the worker to reconnect it, and do not run /mcp for it.",
-    '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`). `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',
+    '- A prompt `[brief answer] <brief>: <label> — <note>` is the person\'s pick from the office: instruct the worker with it (`coord_send`), naming the brief file (`<brief>.html`) in the text. The roster\'s `결정 대기 N` line is read from the brief files every turn and is the count to report (not what you remember); a `확인 필요: 답 받았으나 전달 기록 없음 — <brief> → <worker>: <choice>` line is an answer with no coord_send naming that brief on record: check whether the worker already has it (its pane, its status, a later brief that changed it) before anything else; never push an old answer into a worker by reflex, it may have been narrowed since. When it truly never went on, relay it with `coord_send`, the brief file named, and the line goes away. `[office→coord] <slug>: <text>` is the person\'s instruction for that worker: relay it with `coord_send`. `[office→coord] <text>` with no worker slug is a task the person typed in the office\'s 지휘 box: hand it out at once with `coord_route` (task: the text) and act on its answer; never ask the person where it goes; when the router is unsure, spawn in the most plausible repository and report the reason in one line. The office shows the person where it went from your next `coord_send` or `coord_spawn`, so make that call before anything else for this task. `[office→coord] (re: <brief file>, worker <slug>) <text>` or `[office→coord] (re: review <id>) <text>` is about what the person has open in the office: pass it to that brief\'s or review item\'s worker with `coord_send`; when it names no worker or that worker is gone, `coord_route` it.',
     ONE_BROWSER + ' Tell workers the same when a brief needs a browser.',
     '- Report to the person in ' + language + ', briefly, with tables.',
     'Limits (the person sets them with /coord limits): ' + limitsText(l.limits),
@@ -865,7 +921,11 @@ export function handbackWarning(w: Worker, openPr = false): string | undefined {
   return why.length ? why.join('; and ') : undefined
 }
 
-export function coordRoster(l: Ledger, now: number, review?: string): string {
+// `decisions`: the decision briefs this coordinator asked, as their
+// sidecars stand (lib/coorddecide.ts decisionLines): what waits on the
+// person and what was answered but not passed on, read every tick so a lost
+// `[brief answer]` prompt cannot leave it saying "결정 N건 대기" for days.
+export function coordRoster(l: Ledger, now: number, review?: string, decisions?: string): string {
   // The quiet ones (every session the person runs, often twenty or more) go
   // on one line, so the table that rides on every turn stays the workers'.
   const mute = active(l).filter(quiet)
@@ -873,6 +933,7 @@ export function coordRoster(l: Ledger, now: number, review?: string): string {
   return [
     rows.length ? '| worker | relation | model/effort | state | status | cwd |\n|---|---|---|---|---|---|\n' + rows.join('\n') : 'No workers yet.',
     ...(mute.length ? ['Adopted, the person\'s (not instructed yet; coord_roster has their state): ' + mute.map((w) => w.slug + ' ' + w.cwd).join(', ') + '.'] : []),
+    ...(decisions ? [decisions] : []),
     ...(review ? [review] : []),
   ].join('\n')
 }

@@ -81,6 +81,15 @@ class Relay(unittest.TestCase):
         p = os.path.join(self.d, "calls")
         return [json.loads(l) for l in open(p)] if os.path.exists(p) else []
 
+    def test_a_login_wait_declared_before_the_turn_the_session_runs_now_is_no_wait(self):
+        # The session started a turn since it declared the wait (its status
+        # file stamped turnAt): the login was done, nothing to relay.
+        now = int(time.time() * 1000)
+        self.status(ask="otp", target="#otp", at=now - 60_000)
+        self.assertIsNotNone(relay.wait_of(SID))
+        self.status(ask="otp", target="#otp", at=now - 60_000, turnAt=now - 10_000)
+        self.assertIsNone(relay.wait_of(SID))
+
     def test_a_code_goes_to_the_input_on_stdin_and_is_sent_and_nowhere_else(self):
         self.status(ask="otp", target="#otp", submit="#verify")
         code, out = self.act(kind="relay_otp", value=" " + CODE + " ")
