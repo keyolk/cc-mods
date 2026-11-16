@@ -1,10 +1,12 @@
 // Coordinator mode's rules (hooks/lib/coord.ts): no engine, just functions.
 import { expect, test } from 'claude-code/testing'
 
-import { adoptName, parseWindows, WINDOWS_FMT, COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
+import { adoptName, parseWindows, WINDOWS_FMT, COORD_CAPS, coordGodWanted, coordRules, DECISION_BRIEF, MCP_WAIT, CC_MODS_WT_RULE, REVIEW_REQUEST_RULE, mcpText, mcpWakes, parseMcpState, wakeWorker, who, TYPED_MS, PANES_FMT, WORKER_CAPS, adoptSlug, applyOps, autoAdopt, closeArgv, foreign, handbackWarning, released, unadopt, coordSection, current, parsePending, mergeRepos, policyArgvs, policyOf, emptyLedger, typedLately, typedNote, observe, dialogUnsure, overlaps, parseLedger, parseLimits, parsePanes, recheck, spawnRefusal, splitPlan, titleArgv, unseen, workerArgv, workerPrompt, type Change, type Ledger, type PaneSeen, type Worker } from '../hooks/lib/coord'
 import { canonicalOf, parseProjects, placement, trustTarget, trustedBy } from '../hooks/lib/trust'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from '../hooks/lib/asks'
 import { publishArgv } from '../hooks/lib/tmux'
+import { parseDialog } from '../hooks/lib/dialog'
+import { parseHeadsUp } from '../hooks/lib/headsup'
 
 const NOW = 1_800_000_000_000
 const on = (over: Partial<Ledger> = {}): Ledger => ({ ...emptyLedger('coord-sid', 'cc-mods-d9', NOW), on: true, ...over })
@@ -280,6 +282,61 @@ test('coord: a worker that declared blocked (any kind) or done, with no call pen
   const call = parsePanes('%1\t@1\tw1\twaiting\taction\t/w/tmc-layout\t\tBash: rm x')
   const l2 = on({ workers: [worker({ attention: 'action', asks: 'Bash: rm x', status: { state: 'blocked', kind: 'question', at: NOW } })] })
   expect(observe(l2, call, NOW).changes.map((c) => c.kind)).toEqual(['ask'])
+})
+
+// Live 2026-11-16 ~11:55 KST, common-gw (pane %47), as `tmux capture-pane`
+// gave it (right padding trimmed): the turn ended with a monitor running,
+// an old Heads up band above the prompt box, no dialog.
+const PANE_47_HEADSUP = [
+  '  - PR 감시를 걸어 두었습니다. 지금은 CI가 진행 중이고 리뷰를 기다리고 있습니다.',
+  '  - merge는 1단계 sync 4건이 모두 끝난 뒤(ap5 19:35Z 이후)에 해야 합니다. 먼저 merge하면 1단계 sync 직전의 diff 확인이 실패해 sync가 중단됩니다. coordinator에게도 이 점을 전달했습니다.                    │',
+  '✻ Cooked for 2m 25s · done 11:52 AM · 1 shell, 1 monitor still running',
+  '✦ Heads up · 사용자는 cepext ap2의 1건만 보고 함께 지우자고 했습니다. 그 뒤 us3·eu1·ap8 ALB에도 정상 응답이 다시 나와서, 이 세 리전도 "7일 연속 0건" 기준을 채우지 못했습니다.                          │',
+  '  1: Learn more   2: Knew this already   0: Dismiss',
+  '─'.repeat(120),
+  '❯ ',
+  '─'.repeat(120),
+  '  in ~/exp/2026-10-13_common_gw',
+  '  -- INSERT -- ⏵⏵ bypass permissions on · 1 shell, 1 monitor · ← 11 agents',
+].join('\n')
+// ~11:56, the same pane: no band at all, the turn over, a shell and a monitor running.
+const PANE_47_BARE = PANE_47_HEADSUP.split('\n').filter((l) => !l.includes('Heads up') && !l.includes('Dismiss')).join('\n')
+
+test('coord: an action with no call named and no dialog on the screen (a Heads up band, or nothing) is a finished turn, not an approval', () => {
+  // The band is read as one (office ✦, headsUpWakes); it is not a dialog.
+  expect(parseHeadsUp(PANE_47_HEADSUP)).toContain('사용자는 cepext ap2의 1건만')
+  for (const screen of [PANE_47_HEADSUP, PANE_47_BARE]) expect(parseDialog(screen)).toBeUndefined()
+  // Jev read the turn's last words as an action; the pane names no call.
+  const action = parsePanes('%47\t@27\tw1\twaiting\taction\t/w/common-gw\t')
+  expect(dialogUnsure(action[0]!)).toBe(true)
+  // A call named, or a question (AskUserQuestion names none), is not read for.
+  expect(dialogUnsure(parsePanes('%47\t@27\tw1\twaiting\taction\t/w/common-gw\t\tBash: rm x')[0]!)).toBe(false)
+  expect(dialogUnsure(parsePanes('%47\t@27\tw1\twaiting\task\t/w/common-gw\t')[0]!)).toBe(false)
+  const noDialog = new Map([['w1', false]])
+  for (const status of [undefined, { state: 'working', at: NOW } as const]) {
+    let l = on({ workers: [worker({ state: 'working', attention: 'none', status })] })
+    const told: string[] = []
+    for (let i = 0; i < 4; i++) {
+      const r = observe(l, action, NOW + i * 10_000, new Set(), new Map(), new Map(), noDialog)
+      told.push(...r.changes.map((c) => c.kind))
+      l = r.ledger
+    }
+    // Once, as its turn's end; never "waiting on an approval".
+    expect(told).toEqual(['turn'])
+    expect(l.workers[0]!.attention).toBe('none')
+    expect(current({ slug: 'tmc-layout', sid: 'w1', kind: 'ask', text: '', wake: true }, l, NOW)).toBe(false)
+  }
+  // A real dialog on the screen, or a screen not read: the approval wake stays.
+  for (const drawn of [new Map([['w1', true]]), new Map<string, boolean>()]) {
+    let l = on({ workers: [worker({ state: 'working', attention: 'none' })] })
+    const told: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const r = observe(l, action, NOW + i * 10_000, new Set(), new Map(), new Map(), drawn)
+      told.push(...r.changes.map((c) => c.text))
+      l = r.ledger
+    }
+    expect(told).toEqual(['tmc-layout (pane %47, window @27): waiting on an approval in its pane'])
+  }
 })
 
 test('coord: a wake held through the coordinator\'s turn is delivered only while still true', () => {
