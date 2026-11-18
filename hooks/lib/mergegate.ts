@@ -58,7 +58,8 @@ export function mergeQuery(ref: PrRef): string {
     ` pullRequest(number: ${ref.number}) { state isDraft mergeable headRefOid baseRefName` +
     ` reviewThreads(first: 100) { nodes { isResolved } }` +
     ` commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 80) { nodes {` +
-    ` ... on StatusContext { context state description } ... on CheckRun { name status conclusion } } } } } } } } } }`
+    ` ... on StatusContext { context state description isRequired(pullRequestNumber: ${ref.number}) }` +
+    ` ... on CheckRun { name status conclusion isRequired(pullRequestNumber: ${ref.number}) } } } } } } } } } }`
   )
 }
 
@@ -69,8 +70,14 @@ export type MergeFacts = {
   head: string
   base: string
   unresolved: number
+  // The CI clause's verdict: over the required checks when branch protection
+  // names any, over every check otherwise (a repo with no required checks).
   checks: 'pass' | 'fail' | 'pending' | 'none'
   failing: string[]
+  // Checks that failed but are not required (a repo-wide failing linter, a
+  // flaky scanner): reported beside a refusal, never a reason for one.
+  advisory: string[]
+  requiredOnly: boolean // the verdict above is over required checks only
 }
 
 export function parseMergeFacts(json: string): MergeFacts | undefined {
@@ -82,7 +89,27 @@ export function parseMergeFacts(json: string): MergeFacts | undefined {
   }
   if (!pr?.headRefOid) return undefined
   const rollup = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup
-  const v = checkVerdict(rollup?.contexts?.nodes, rollup?.state)
+  const nodes: any[] = Array.isArray(rollup?.contexts?.nodes) ? rollup.contexts.nodes : []
+  const required = nodes.filter((n) => n?.isRequired === true)
+  // Branch protection decides which failed check blocks a merge, as it does
+  // for GitHub itself (a failed optional check is mergeStateStatus UNSTABLE,
+  // still mergeable). A failure outside it is advisory: Gordon fails on every
+  // sendbird/context PR (no catalog-info.yaml) and that repo requires no
+  // check, so counting every failure there would leave only --admin.
+  // A check still running holds the merge either way: waiting is cheap, and
+  // with nothing required it is the only CI signal the rule keeps.
+  let v: ReturnType<typeof checkVerdict>
+  let advisory: string[]
+  if (required.length) {
+    v = checkVerdict(required)
+    advisory = checkVerdict(nodes.filter((n) => n?.isRequired !== true)).failing
+  } else {
+    const all = checkVerdict(nodes, rollup?.state)
+    advisory = all.failing
+    const rest = nodes.filter((n) => !advisory.includes(String(n?.name ?? n?.context ?? '')))
+    // No named failure (only the rollup said FAILURE): keep that verdict.
+    v = advisory.length ? checkVerdict(rest) : all
+  }
   return {
     state: pr.state ?? '',
     isDraft: !!pr.isDraft,
@@ -92,6 +119,8 @@ export function parseMergeFacts(json: string): MergeFacts | undefined {
     unresolved: (pr.reviewThreads?.nodes ?? []).filter((t: any) => !t.isResolved).length,
     checks: v.checks,
     failing: v.failing,
+    advisory,
+    requiredOnly: required.length > 0,
   }
 }
 
@@ -106,8 +135,9 @@ export function mergeProblems(call: MergeCall, f: MergeFacts, behindBy: number |
     out.push('--match-head-commit ' + call.matchHead + ' is not the head (' + f.head.slice(0, 9) + '): the branch moved after READY; verify the new head first')
   if (call.admin) return out
   if (f.isDraft) out.push('the PR is a draft')
-  if (f.checks === 'fail') out.push('CI failed on the head' + (f.failing.length ? ': ' + f.failing.slice(0, 5).join(', ') : ''))
-  else if (f.checks === 'pending') out.push('CI is still running on the head')
+  const what = f.requiredOnly ? 'a required check' : 'CI'
+  if (f.checks === 'fail') out.push(what + ' failed on the head' + (f.failing.length ? ': ' + f.failing.slice(0, 5).join(', ') : ''))
+  else if (f.checks === 'pending') out.push(what + ' is still running on the head')
   if (f.unresolved > 0) out.push(f.unresolved + ' unresolved review thread' + (f.unresolved > 1 ? 's' : ''))
   if (f.mergeable === 'CONFLICTING') out.push('the head conflicts with ' + (f.base || 'the base'))
   if (behindBy === undefined) out.push('could not read whether the head contains ' + (f.base || 'the base') + ' (compare failed)')
@@ -115,11 +145,12 @@ export function mergeProblems(call: MergeCall, f: MergeFacts, behindBy: number |
   return out
 }
 
-export function mergeDeny(call: MergeCall, problems: readonly string[]): string {
+export function mergeDeny(call: MergeCall, problems: readonly string[], advisory: readonly string[] = []): string {
   return (
     'BLOCKED by the cc-mods merge check (' + call.repo + '#' + call.number + '):\n' +
     problems.map((p) => '  - ' + p).join('\n') +
-    '\nThe coordinator merge rule: head = READY sha (--match-head-commit), CI passed on that sha, no unresolved threads, head contains the base. ' +
+    (advisory.length ? '\nNot required, so not a reason (failed): ' + advisory.slice(0, 5).join(', ') : '') +
+    '\nThe coordinator merge rule: head = READY sha (--match-head-commit), required checks passed on that sha (all checks when none is required), no unresolved threads, head contains the base. ' +
     '--admin (only on the person\'s typed order) skips all but the head match.'
   )
 }

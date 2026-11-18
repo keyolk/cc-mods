@@ -1421,7 +1421,10 @@ async function mergeCheck($: any, call: MergeCall): Promise<string | undefined> 
       behind = c.exitCode === 0 && /^\d+$/.test(out) ? Number(out) : undefined
     }
     const problems = mergeProblems(call, facts, behind)
-    return problems.length ? mergeDeny(call, problems) : undefined
+    // A failed check that is not required is named beside a refusal only; on
+    // a merge that passes it says nothing (no channel here reaches the model
+    // without blocking the call).
+    return problems.length ? mergeDeny(call, problems, facts.advisory) : undefined
   } catch (err) {
     return mergeDeny(call, ['could not read the PR: ' + clip(String(err), 200)])
   }

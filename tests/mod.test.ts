@@ -837,7 +837,7 @@ test('a merge the policy allows is read first and refused with the rule clause t
   box.pr = pr({ commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING', contexts: { nodes: [{ name: 'test', status: 'IN_PROGRESS', conclusion: null }] } } } }] } })
   box.behind = '2'
   const d = String(((await merge(' --match-head-commit abc1234')) as any).deny)
-  expect(d).toContain('CI is still running')
+  expect(d).toContain('is still running on the head')
   expect(d).toContain('lacks 2 commits of main')
   expect(ran).toBe(0)
   // All clauses hold: the merge runs.
