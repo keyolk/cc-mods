@@ -185,7 +185,9 @@ async function names($: any): Promise<Map<string, string>> {
     try {
       const d = JSON.parse(line)
       if (d.s) m.set(d.s, d.n || String(d.s).slice(0, 8))
-    } catch {}
+    } catch {
+      // a torn or foreign line: skipped
+    }
   }
   return m
 }
