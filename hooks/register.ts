@@ -51,6 +51,7 @@ import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
 import { BYPASS_DENY, SLACK_SENDS, heldDeny, noGrantText, officeBypass, officeTokenPath, parseRedeem, redeemRequest } from './lib/grant'
 import { CAPS, GOD_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, ghAsAccount, ghAsAccountDeny, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
+import { compareArgv, mergeDeny, mergeProblems, mergeQuery, parseMerge, parseMergeFacts, type MergeCall } from './lib/mergegate'
 import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
@@ -413,7 +414,9 @@ async function startMcpLogin($: any, server: string) {
     let stillNeeds = true
     try {
       stillNeeds = server in (cache ? JSON.parse(cache) : {})
-    } catch {}
+    } catch {
+      // a broken cache: assume the server still needs auth
+    }
     if (!stillNeeds) return finishMcpLogin($, server, 'logged in')
     if (Date.now() - started > 10 * 60_000) return void update($, mcpLoginA, (x) => x && { ...x, status: 'failed', msg: 'no login seen in 10 minutes: paste the callback URL or start again' })
     mcpPoll = $.clock.after(3000, tick)
@@ -1281,7 +1284,9 @@ async function pollPrsOnce($: any, refs: NonNullable<ReturnType<typeof parsePrKe
                 Object.assign(s.iac, gitopsFromComments(c.stdout, s.head))
                 gitopsRead.set(s.key, now)
               }
-            } catch {}
+            } catch {
+              // comments unread this tick: the last summary stays
+            }
           } else if (old?.iac) Object.assign(s.iac, { argodiff: old.iac.argodiff, codex: old.iac.codex })
         }
         cache[s.key] = s
@@ -1374,7 +1379,9 @@ async function notePrLimit($: any, account: string, env: Record<string, string>)
     const r = await $.process.run(['gh', 'api', 'rate_limit', '--jq', '.resources.graphql.reset'], { env, timeoutMs: 8000 })
     const reset = Number(r.stdout.trim())
     if (reset > 0) until = reset * 1000
-  } catch {}
+  } catch {
+    // no reset time: the default backoff stands
+  }
   const first = !prLimit
   prLimit = { account, until }
   if (first && interactive) $.ui.toast('GitHub API limit for ' + (account || 'gh') + ': PR status is stale until ' + new Date(until).toTimeString().slice(0, 5))
@@ -1387,6 +1394,42 @@ function prLimitNote(now: number): string | undefined {
 // A token read is a gh process (and through the shim, pass): kept 10 minutes,
 // not read again on every poll.
 const ghTokens = new Map<string, { env: Record<string, string>; at: number }>()
+// Whether this session's policy lets a merge into `repo` through: allowed, or
+// scoped to that repo, or left to the global default (inherit), which this
+// hook cannot see. Read without loadPolicy's side effects (resume, publish).
+async function mergePolicyOpen($: any, mergeRepo: string): Promise<boolean> {
+  const p = parsePolicy(sid ? await readText($, home + '/.claude/state/session_policy/' + sid + '.json') : undefined)
+  const v = p.caps.gh_merge
+  return v === 'allow' || v === 'inherit' || (p.scopes.gh_merge ?? []).includes(mergeRepo)
+}
+
+// lib/mergegate.ts: read the PR right before a merge runs and refuse the call
+// with the clause of the merge rule that fails. A read that fails refuses too:
+// a merge is outward and cannot be undone, and the reason names the failure.
+async function mergeCheck($: any, call: MergeCall): Promise<string | undefined> {
+  if (!call.number || !call.repo) return mergeDeny(call, ['name the PR by number or URL, with -R owner/repo and --match-head-commit <READY sha>'])
+  try {
+    const acct = ghAccountFor(call.repo)
+    const env = acct ? await ghEnv($, acct) : {}
+    const q = await $.process.run(['gh', 'api', 'graphql', '-f', 'query=' + mergeQuery(call)], { env, timeoutMs: 20000 })
+    const facts = q.exitCode === 0 ? parseMergeFacts(q.stdout) : undefined
+    if (!facts) return mergeDeny(call, ['could not read the PR (gh api graphql exit ' + q.exitCode + '): ' + clip(String(q.stderr ?? '').trim(), 200)])
+    let behind: number | undefined
+    if (!call.admin && facts.base) {
+      const c = await $.process.run(['gh', ...compareArgv(call.repo, facts.base, facts.head)], { env, timeoutMs: 20000 })
+      const out = String(c.stdout ?? '').trim()
+      behind = c.exitCode === 0 && /^\d+$/.test(out) ? Number(out) : undefined
+    }
+    const problems = mergeProblems(call, facts, behind)
+    // A failed check that is not required is named beside a refusal only; on
+    // a merge that passes it says nothing (no channel here reaches the model
+    // without blocking the call).
+    return problems.length ? mergeDeny(call, problems, facts.advisory) : undefined
+  } catch (err) {
+    return mergeDeny(call, ['could not read the PR: ' + clip(String(err), 200)])
+  }
+}
+
 async function ghEnv($: any, account: string): Promise<Record<string, string>> {
   const kept = ghTokens.get(account)
   if (kept && Date.now() - kept.at < 10 * 60_000) return kept.env
@@ -2158,7 +2201,9 @@ async function pollNarwhal($: any) {
   let shared: { at?: number; body?: string } = {}
   try {
     shared = JSON.parse((await readText($, home + NARWHAL_SHARED)) ?? '{}')
-  } catch {}
+  } catch {
+    // no shared file yet: empty
+  }
   // Nobody has answered for a while (the daemon is down): keep what was shown.
   if (!shared.body || (await clockNow($)) - Number(shared.at ?? 0) > 3 * NARWHAL_POLL_MS) return
   const items = parseAttention(shared.body).filter((it) => it.origin?.session_id === sid)
@@ -2169,7 +2214,9 @@ async function pollNarwhal($: any) {
     try {
       const r = await $.process.run(['/usr/bin/curl', '-s', '-m', '5', base + '/api/v1/control/runs?session=' + encodeURIComponent(sid)], { timeoutMs: 8000 })
       runs = parseRuns(r.stdout)
-    } catch {}
+    } catch {
+      // narwhal not running: no runs
+    }
   }
   const live = new Set(items.map(itemKey))
   const fresh = freshItems(items, prev.told)
@@ -2245,7 +2292,9 @@ async function refreshElsewhere($: any) {
   try {
     const r = await $.process.run(['tmux', 'list-windows', '-a', '-F', '#{session_name}|#{window_index}|#{window_name}|#{@cc_state}|#{@cc_attention}|#{@title}|#{@cc_since}|#{@cc_session}|#{window_id}'], { timeoutMs: 3000 })
     windows = parseTmuxWindows(r.stdout, sid)
-  } catch {}
+  } catch {
+    // no tmux: no windows
+  }
   const d = new Date()
   const day = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
   const todos = parseBrief(await readText($, home + '/.claude/daily-checkin/dayx-' + day + '.md'))
@@ -3776,7 +3825,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     try {
       const open = (await $.ui.panes()) as { id: string }[]
       for (const p of open) if (paneOf(p.id)) await $.ui.close({ id: p.id })
-    } catch {}
+    } catch {
+      // a pane already gone: nothing to close
+    }
     try {
       const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { cwd, timeoutMs: 3000 })
       repo = r.exitCode === 0 ? repoFromRemote(r.stdout) : undefined
@@ -3905,7 +3956,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
             if (panes.some((p) => p.id === COCKPIT)) return
             await update($, uiA, (u) => ({ ...u, view: u.view ?? 'home', open: true }))
             await openCockpitPane($, {})
-          } catch {}
+          } catch {
+            // the cockpit could not open: the next event tries again
+          }
         })()
       }
     }
@@ -4347,11 +4400,21 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     // account is gh's active one is not known here.
     const gh = ghAsAccount(command, repo)
     if (gh) return { deny: ghAsAccountDeny(gh) }
+    const merge = parseMerge(command, repo)
+    // A merge this session's policy blocks is left to the policy guard: its
+    // deny is the one a later /policy grant resumes (resumeUnblocked), and
+    // reading the PR for a merge that cannot run is wasted.
+    if (merge && (await mergePolicyOpen($, merge.repo))) {
+      const why = await mergeCheck($, merge)
+      if (why) return { deny: why }
+    }
     const result = await approveGuard($, e, await next(e), () => next(e))
     let resultText = ''
     try {
       resultText = JSON.stringify(result) ?? ''
-    } catch {}
+    } catch {
+      // a result JSON cannot hold (a cycle): no text, so the checks below match nothing
+    }
     // Coder state is learned from real work, not periodic network probes. A
     // timeout stays unknown; only an explicit authentication error needs login.
     if (cred?.startsWith('coder:') && /(?:401|unauthenticated|authentication required|not logged in|session token[^\n"]*(?:invalid|expired))/i.test(resultText)) {
@@ -4915,7 +4978,9 @@ export function register(on: any, options: Record<string, unknown> = {}) {
     let ctxTokens: number | undefined
     try {
       ctxTokens = (await $.session.usage()).context?.tokens
-    } catch {}
+    } catch {
+      // no usage on this surface: unknown
+    }
     const d = cacheGate({ ...picked, model }, { stepEffort: e.effort, stepModel: String(e.model ?? ''), last: routeLast, ctxTokens, now })
     if (e.index === 0) await update($, routeA, (r) => ({ ...r, last: { ...d, prompt: clip(lastPrompt, 120), at: Date.now() } }))
     const rewrite = { ...(d.effort ? { effort: d.effort } : {}), ...(d.model && d.model !== e.model ? { model: d.model } : {}) }

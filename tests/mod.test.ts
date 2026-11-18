@@ -810,6 +810,44 @@ test('a call the policy refused runs again by itself once a /policy grant covers
   expect(submitted.filter((t) => t.includes('세션 정책이 바뀌어')).length).toBe(1)
 })
 
+test('a merge the policy allows is read first and refused with the rule clause that fails (lib/mergegate.ts)', async ($, on) => {
+  const head = 'abc1234def5678900000000000000000000000ff'
+  const pr = (over: Record<string, unknown> = {}) => JSON.stringify({ data: { repository: { pullRequest: {
+    state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', headRefOid: head, baseRefName: 'main',
+    reviewThreads: { nodes: [] },
+    commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS', contexts: { nodes: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] } } } }] },
+    ...over,
+  } } } })
+  const box = { pr: pr(), behind: '0' }
+  const runs: string[][] = []
+  baseStubs(on, {
+    policyJson: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' }, gh_merge_repos: ['keyolk/tweb'] }),
+    runs,
+    run: (argv) => (argv[0] === 'gh' && argv[1] === 'api' && argv[2] === 'graphql' ? { code: 0, out: box.pr } : argv[0] === 'gh' && String(argv[2] ?? '').includes('/compare/') ? { code: 0, out: box.behind } : undefined),
+  })
+  let ran = 0
+  on('tool.call', () => ((ran += 1), { result: 'merged' }))
+  await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
+  const merge = (extra: string) => $.tool.call({ tool: 'Bash', command: 'GH_TOKEN="$(gh auth token --user keyolk)" gh pr ' + 'merge 169 --repo keyolk/tweb --squash' + extra, description: 'x' } as any)
+  // No READY sha named: refused before anything runs.
+  expect(String(((await merge('')) as any).deny)).toContain('no --match-head-commit')
+  // A head that moved after READY.
+  expect(String(((await merge(' --match-head-commit fff9999')) as any).deny)).toContain('is not the head')
+  // CI still running, and a head behind main.
+  box.pr = pr({ commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING', contexts: { nodes: [{ name: 'test', status: 'IN_PROGRESS', conclusion: null }] } } } }] } })
+  box.behind = '2'
+  const d = String(((await merge(' --match-head-commit abc1234')) as any).deny)
+  expect(d).toContain('is still running on the head')
+  expect(d).toContain('lacks 2 commits of main')
+  expect(ran).toBe(0)
+  // All clauses hold: the merge runs.
+  box.pr = pr()
+  box.behind = '0'
+  expect(((await merge(' --match-head-commit abc1234')) as any).deny).toBeUndefined()
+  expect(ran).toBe(1)
+  expect(runs.some((a) => a[0] === 'gh' && String(a[2]).startsWith('repos/keyolk/tweb/compare/main...' + head))).toBe(true)
+})
+
 test('an out-of-band policy grant is in the very next composed prompt', async ($, on) => {
   const box = { json: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' } }) }
   baseStubs(on, { policyBox: box })

@@ -41,7 +41,9 @@ export function mcpText(result: unknown): string {
     const j = JSON.parse(raw)
     if (typeof j?.messages === 'string') return j.messages
     if (typeof j?.results === 'string') return j.results
-  } catch {}
+  } catch {
+    // not JSON: the raw text is used below
+  }
   return raw
 }
 

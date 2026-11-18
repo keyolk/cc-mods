@@ -204,7 +204,9 @@ export function personLines(out: string): string {
       const r = JSON.parse(line)
       const t = Array.isArray(r) && typeof r[1] === 'string' ? fromPerson(r[1]) : undefined
       if (t) keep.push(JSON.stringify([r[0], t, ...r.slice(2)]))
-    } catch {}
+    } catch {
+      // a broken row is dropped
+    }
   }
   return keep.join('\n')
 }
@@ -235,7 +237,9 @@ export function parseLast(out: string): Map<string, string> {
     try {
       const row = JSON.parse(line)
       if (Array.isArray(row) && typeof row[0] === 'string' && typeof row[2] === 'string') m.set(row[0], row[2])
-    } catch {}
+    } catch {
+      // a broken row is dropped
+    }
   }
   return m
 }
