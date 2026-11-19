@@ -458,9 +458,11 @@ function cmdRenderSay() {
 // ↗ 밖으로 opens this brief alone in the browser (the server's `open`); the
 // office page is the person's screen and never moves.
 function cmdBriefBar(bar, s) {
-  bar.innerHTML = (s.fromLib ? '<button class="act back" title="📚 전체 브리프로">← 📚</button>' : '') + '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>' + (cmdHib() ? hibBriefButton(s.file) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
+  bar.innerHTML = (s.fromLib ? '<button class="act back" title="📚 전체 브리프로">← 📚</button>' : '') + '<b>📄 ' + cmdEsc(s.title || s.file) + '</b><span class="m">' + cmdEsc(s.path) + '</span><button class="act out">↗ 밖으로</button>' + (/^\d{4}-\d{2}-\d{2}-.+\.html$/.test(s.file || '') ? '<button class="act art" title="coordinator에게 /brief-artifact 를 보냅니다">⇅ Artifact</button>' : '') + (cmdHib() ? hibBriefButton(s.file) : '') + '<button class="act shut" title="닫기 (Esc)">✕</button>'
   if (cmdHib()) hibBriefWire(bar)
   bar.querySelector('.out').onclick = async () => { const j = await cmdPost({ kind: 'brief_open', file: s.file, via: lastPlace(s.path) }); if (j) toast('↗ ' + (j.sent || '열었습니다')) }
+  const art = bar.querySelector('.art')
+  if (art) art.onclick = () => blibArtifact(s.file)
   bar.querySelector('.shut').onclick = cmdShut
   const back = bar.querySelector('.back')
   if (back) back.onclick = () => { cmd.sel = { library: true }; cmdRender() }

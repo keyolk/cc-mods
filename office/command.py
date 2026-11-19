@@ -51,7 +51,7 @@ import handled  # noqa: E402 - office/handled.py, what the person already handle
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
-KINDS = ("brief_answer", "brief_open", "coord_say", *review.KINDS, *slx.KINDS)
+KINDS = ("brief_answer", "brief_open", "brief_artifact", "coord_say", *review.KINDS, *slx.KINDS)
 RECENT = 8  # briefs listed in the command panel
 DONE_FOLD_H = 24  # a brief done longer ago than this is folded in the ✅ group
 # file -> (sidecar mtime, sidecar), (html mtime, title): 180 briefs are read
@@ -1047,12 +1047,29 @@ def say(coord_sid: str, slug: str, text: str, inbox_put, about: dict | None = No
     return 200, {"ok": True, "sent": f"{slug} 지시 → {name}"}
 
 
+def send_artifact(name: str, coord_sid: str, inbox_put) -> tuple[int, dict]:
+    """📚's ⇅ Artifact: ask the coordinator to run /brief-artifact on a brief.
+    Only a Claude session can call the Artifact tool, so the office cannot
+    publish itself; the briefs repo's brief-artifact skill does the round (create
+    the first time, then push, pull or report a conflict by last-modified time).
+    The text is fixed here: the page sends only the file and the coordinator."""
+    if not NAME.match(name or "") or not brief_by_name(name):
+        return 404, {"error": "not a brief"}
+    led = next((d for d in coord.ledgers() if d["sid"] == coord_sid), None)
+    if not led or not SID.match(coord_sid):
+        return 404, {"error": "no such coordinator"}
+    inbox_put(coord_sid, f"[office→coord] (re: {name}) /brief-artifact {name}")
+    return 200, {"ok": True, "sent": f"Artifact 동기화 → {led.get('name') or coord_sid[:8]}", "at": int(time.time() * 1000)}
+
+
 def act(body: dict, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
         return answer(str(body.get("file") or ""), str(body.get("qid") or ""), str(body.get("label") or ""), str(body.get("note") or ""), inbox_put, str(body.get("text") or ""), str(body.get("seen") or ""), alive)
     if kind == "brief_open":
         return open_outside(str(body.get("file") or ""), str(body.get("via") or ""))
+    if kind == "brief_artifact":
+        return send_artifact(str(body.get("file") or ""), str(body.get("coord") or ""), inbox_put)
     if kind in review.KINDS:
         return review.act(body, inbox_put)
     if kind in slx.KINDS:
