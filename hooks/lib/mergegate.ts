@@ -159,3 +159,49 @@ export function mergeDeny(call: MergeCall, problems: readonly string[], advisory
 export function compareArgv(repo: string, base: string, head: string): string[] {
   return ['api', 'repos/' + repo + '/compare/' + encodeURIComponent(base) + '...' + head, '--jq', '.behind_by']
 }
+
+// A repo the query can name. `-R $R` leaves the shell variable unexpanded in
+// the command text the hook sees, so the query got owner "$R" and no name
+// ("Argument 'name' ... invalid value (undefined)"): refuse that call with a
+// message that says to write owner/repo out, instead of a GraphQL error.
+export const validRepo = (repo: string): boolean => /^[\w.-]+\/[\w.-]+$/.test(repo)
+
+export const REPO_LITERAL_HINT = 'name the repo literally as -R owner/repo (the hook reads the command text; it does not expand a shell variable such as $R)'
+
+// The gh logins `gh auth status` lists, in its order.
+export function ghLogins(statusText: string): string[] {
+  const out: string[] = []
+  const re = /Logged in to github\.com account (\S+)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(statusText))) if (!out.includes(m[1]!)) out.push(m[1]!)
+  return out
+}
+
+// The order to try logins in for one repo: the one org.json maps its owner to
+// (or the one that read it last), then every other login gh knows. The mapped
+// login may be missing (org.json absent, a stale copy loaded at session
+// start) or wrong, and the active login may not see the repo ("Could not
+// resolve to a Repository"), so the read tries the rest instead of failing.
+export function readOrder(preferred: readonly (string | undefined)[], logins: readonly string[]): string[] {
+  return [...new Set([...preferred, ...logins].filter((a): a is string => !!a))]
+}
+
+type Run = (account: string | undefined, argv: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+
+// Read the PR as each login in turn until one can. `account` is the login
+// that read it; `errors` holds why each login before it could not. An empty
+// order reads once as gh's active login (account undefined).
+export async function readMergeFacts(
+  run: Run,
+  call: PrRef,
+  order: readonly string[],
+): Promise<{ facts?: MergeFacts; account?: string; errors: string[] }> {
+  const errors: string[] = []
+  for (const account of order.length ? order : [undefined]) {
+    const q = await run(account, ['api', 'graphql', '-f', 'query=' + mergeQuery(call)])
+    const facts = q.exitCode === 0 ? parseMergeFacts(q.stdout) : undefined
+    if (facts) return { facts, account, errors }
+    errors.push((account ? account + ': ' : 'active login: ') + 'gh api graphql exit ' + q.exitCode + ': ' + String(q.stderr ?? '').trim().slice(0, 160))
+  }
+  return { errors }
+}
