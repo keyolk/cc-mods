@@ -1,7 +1,7 @@
 // lib/mergegate.ts: the coordinator merge rule as a pre-merge check.
 import { expect, test } from 'claude-code/testing'
 
-import { compareArgv, mergeDeny, mergeProblems, mergeQuery, parseMerge, parseMergeFacts, type MergeFacts } from '../hooks/lib/mergegate'
+import { compareArgv, ghLogins, mergeDeny, mergeProblems, mergeQuery, parseMerge, parseMergeFacts, readMergeFacts, readOrder, validRepo, type MergeFacts } from '../hooks/lib/mergegate'
 
 const M = 'gh pr ' + 'merge'
 const HEAD = 'abc1234def5678900000000000000000000000ff'
@@ -105,4 +105,50 @@ test('the query, compare argv and deny text name the PR', () => {
   const d = mergeDeny({ repo: 'o/n', number: 5, admin: false }, ['CI is still running on the head'])
   expect(d).toContain('o/n#5')
   expect(d).toContain('  - CI is still running on the head')
+})
+
+test('validRepo refuses an unexpanded shell variable', () => {
+  expect(validRepo('sendbird/soda-k8s')).toBe(true)
+  expect(validRepo('$R')).toBe(false)
+  expect(validRepo('$OWNER/$NAME')).toBe(false)
+  expect(validRepo('')).toBe(false)
+})
+
+test('ghLogins lists every login gh status shows, once', () => {
+  const st = 'github.com\n  ✓ Logged in to github.com account keyolk (keyring)\n  - Active account: true\n\n  ✓ Logged in to github.com account gavin-jeong (keyring)\n  - Active account: false\n'
+  expect(ghLogins(st)).toEqual(['keyolk', 'gavin-jeong'])
+  expect(ghLogins('You are not logged in')).toEqual([])
+})
+
+test('readOrder puts the mapped login first and drops repeats and blanks', () => {
+  expect(readOrder([undefined, 'gavin-jeong'], ['keyolk', 'gavin-jeong'])).toEqual(['gavin-jeong', 'keyolk'])
+  expect(readOrder([undefined, undefined], [])).toEqual([])
+})
+
+test('readMergeFacts falls through to the login that can read the repo', async () => {
+  // The active login (keyolk) cannot see sendbird/soda-k8s: GitHub answers
+  // "Could not resolve to a Repository", as live. The other login reads it.
+  const seen: (string | undefined)[] = []
+  const fake = async (account: string | undefined) => {
+    seen.push(account)
+    return account === 'gavin-jeong'
+      ? { exitCode: 0, stdout: read([run('test', 'SUCCESS', true)], 'SUCCESS'), stderr: '' }
+      : { exitCode: 1, stdout: '', stderr: "gh: Could not resolve to a Repository with the name 'sendbird/soda-k8s'." }
+  }
+  const r = await readMergeFacts(fake, { repo: 'sendbird/soda-k8s', number: 12999 }, ['keyolk', 'gavin-jeong'])
+  expect(r.account).toBe('gavin-jeong')
+  expect(r.facts?.head).toBe(HEAD)
+  expect(seen).toEqual(['keyolk', 'gavin-jeong'])
+  expect(r.errors).toHaveLength(1)
+  expect(r.errors[0]).toContain('Could not resolve')
+})
+
+test('readMergeFacts names every login that failed, and reads once as the active login when none is known', async () => {
+  const fail = async () => ({ exitCode: 1, stdout: '', stderr: 'nope' })
+  const r = await readMergeFacts(fail, { repo: 'o/n', number: 1 }, ['a', 'b'])
+  expect(r.facts).toBeUndefined()
+  expect(r.errors.map((e) => e.split(':')[0])).toEqual(['a', 'b'])
+  const calls: (string | undefined)[] = []
+  await readMergeFacts(async (a) => (calls.push(a), { exitCode: 1, stdout: '', stderr: '' }), { repo: 'o/n', number: 1 }, [])
+  expect(calls).toEqual([undefined])
 })

@@ -51,7 +51,7 @@ import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
 import { BYPASS_DENY, SLACK_SENDS, heldDeny, noGrantText, officeBypass, officeTokenPath, parseRedeem, redeemRequest } from './lib/grant'
 import { CAPS, GOD_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, ghAsAccount, ghAsAccountDeny, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
-import { compareArgv, mergeDeny, mergeProblems, mergeQuery, parseMerge, parseMergeFacts, type MergeCall } from './lib/mergegate'
+import { compareArgv, ghLogins, mergeDeny, mergeProblems, parseMerge, readMergeFacts, readOrder, REPO_LITERAL_HINT, validRepo, type MergeCall } from './lib/mergegate'
 import { parseWindows } from './lib/iac'
 import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs, ticketOutputs, mergeOutputs, workflowMeta, setSlackName, slackName, slackOutputs, textOutputs, toolOutputs, type AgentNode, type FlowEntry, type Output, type TurnRecord } from './lib/record'
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
@@ -1408,12 +1408,34 @@ async function mergePolicyOpen($: any, mergeRepo: string): Promise<boolean> {
 // a merge is outward and cannot be undone, and the reason names the failure.
 async function mergeCheck($: any, call: MergeCall): Promise<string | undefined> {
   if (!call.number || !call.repo) return mergeDeny(call, ['name the PR by number or URL, with -R owner/repo and --match-head-commit <READY sha>'])
+  if (!validRepo(call.repo)) return mergeDeny(call, [REPO_LITERAL_HINT])
   try {
-    const acct = ghAccountFor(call.repo)
+    // org.json is read once at session start, so a session that began before
+    // the owner was mapped there has no login for it: read the file again.
+    if (!ghAccountFor(call.repo)) setOrg(parseOrg(await readText($, home + ORG_PATH)))
+    // Each login's own token goes in GH_TOKEN, so a token already in this
+    // process's env cannot stand in for it. When the mapped login cannot read
+    // the repo (or none is mapped), the other logins gh knows are tried.
+    const kept = ghRepoAccount.get(call.repo)
+    const mapped = ghAccountFor(call.repo)
+    const run = async (account: string | undefined, argv: string[]) => {
+      const env = account ? await ghEnv($, account) : {}
+      // No token for a named login: say so, not read as gh's active login.
+      if (account && !env.GH_TOKEN) return { exitCode: 1, stdout: '', stderr: 'no token for this login (gh auth token --user failed)' }
+      return $.process.run(['gh', ...argv], { env, timeoutMs: 20000 })
+    }
+    let r = await readMergeFacts(run, call, readOrder([kept, mapped], []))
+    if (!r.facts) {
+      const st = await $.process.run(['gh', 'auth', 'status'], { timeoutMs: 8000 }).catch(() => undefined)
+      const logins = ghLogins(String(st?.stdout ?? '') + '\n' + String(st?.stderr ?? ''))
+      const more = await readMergeFacts(run, call, readOrder([kept, mapped], logins))
+      r = { ...more, errors: [...r.errors, ...more.errors] }
+    }
+    const facts = r.facts
+    if (!facts) return mergeDeny(call, ['could not read the PR as any gh login (' + clip(r.errors.join(' | '), 400) + ')'])
+    if (r.account) ghRepoAccount.set(call.repo, r.account)
+    const acct = r.account
     const env = acct ? await ghEnv($, acct) : {}
-    const q = await $.process.run(['gh', 'api', 'graphql', '-f', 'query=' + mergeQuery(call)], { env, timeoutMs: 20000 })
-    const facts = q.exitCode === 0 ? parseMergeFacts(q.stdout) : undefined
-    if (!facts) return mergeDeny(call, ['could not read the PR (gh api graphql exit ' + q.exitCode + '): ' + clip(String(q.stderr ?? '').trim(), 200)])
     let behind: number | undefined
     if (!call.admin && facts.base) {
       const c = await $.process.run(['gh', ...compareArgv(call.repo, facts.base, facts.head)], { env, timeoutMs: 20000 })
@@ -1429,6 +1451,9 @@ async function mergeCheck($: any, call: MergeCall): Promise<string | undefined> 
     return mergeDeny(call, ['could not read the PR: ' + clip(String(err), 200)])
   }
 }
+
+// The login that last read a repo's PR for the merge check.
+const ghRepoAccount = new Map<string, string>()
 
 async function ghEnv($: any, account: string): Promise<Record<string, string>> {
   const kept = ghTokens.get(account)
