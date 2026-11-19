@@ -56,6 +56,8 @@ import threading
 import time
 from datetime import datetime
 
+import inboxfile  # office/inboxfile.py, beside this file: the inbox's provenance line
+
 SCAN_H = 36  # slx shows triggers up to 24 h old; a status is trusted for 8 h
 STEP = 16_000_000
 BUDGET = 96_000_000
@@ -127,7 +129,9 @@ def by_person(d: dict, text: str) -> bool:
     o = d.get("origin") or {}
     if d.get("isMeta") or not (o.get("kind") == "human" or (o.get("kind") == "plugin" and o.get("asUser"))):
         return False
-    t = PASTED.sub("", text).lstrip()
+    # An inbox prompt is judged by what follows its provenance line: an
+    # office reply is still the person's, a [worker …] report still is not.
+    t = PASTED.sub("", inboxfile.strip_provenance(text)).lstrip()
     if not t or SPAWNED.search(t):
         return False
     return not PROGRAM.match(t) or bool(NOTE.search(t))

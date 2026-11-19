@@ -47,6 +47,7 @@ import slx  # noqa: E402 - office/slx.py, the slx inbox (Slack mentions, Meerkat
 import defer  # noqa: E402 - office/defer.py, sessions set aside and memos left on them
 import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes
 import handled  # noqa: E402 - office/handled.py, what the person already handled (transcripts)
+import inboxfile  # noqa: E402 - office/inboxfile.py, the inbox's provenance line
 
 BRIEFS = os.path.expanduser(os.environ.get("BRIEFS_DIR") or "~/briefs")
 NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-[\w.-]+\.html$")
@@ -619,7 +620,7 @@ RELAY_HEAD = re.compile(r'^\s*(?:\[(?:coordinator|coord|office→coord)\]\s*)?(?
 
 
 def unrelay(text: str) -> str:
-    t = text or ""
+    t = inboxfile.strip_provenance(text or "")
     out = RELAY_HEAD.sub("", t, count=1).strip()
     # The quote the head opened closes at the first `"`; what follows is the coordinator's.
     return out.split('"', 1)[0].strip() if out != t.strip() and '"' in out else out

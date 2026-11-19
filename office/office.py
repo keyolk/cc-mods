@@ -45,13 +45,16 @@ import grants  # noqa: E402 - office/grants.py, one-shot grants a press makes an
 import hibernate  # noqa: E402 - office/hibernate.py, long-idle sessions put to sleep and woken
 import agenda  # noqa: E402 - office/agenda.py, the person's meetings (gcl) and who is in them
 import relay  # noqa: E402 - office/relay.py, a worker's login wait answered from the office
+import inboxfile  # noqa: E402 - office/inboxfile.py, the inbox files, their lock and their sweep
+import registry as registry_files  # noqa: E402 - office/registry.py, Claude Code's session registry
+import sweep  # noqa: E402 - office/sweep.py, expired inbox files and ended sessions' status records
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The server code it was started from, by file and whole-second mtime. /office
 # compares this with the files on disk and restarts a server left over from
 # older code: the page is read fresh on every request, so a new page against
 # an old server asks for routes the server does not have.
-SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py", "hibernate.py", "hibproc.py", "hibstate.py", "hibwake.py", "relay.py")
+SERVER_FILES = ("office.py", "resources.py", "coord.py", "command.py", "review.py", "slx.py", "turn.py", "defer.py", "grants.py", "hibernate.py", "hibproc.py", "hibstate.py", "hibwake.py", "relay.py", "inboxfile.py", "registry.py", "sweep.py")
 
 
 def code_stamp() -> str:
@@ -311,13 +314,10 @@ def _read_registry() -> None:
         return
     by: dict[str, dict] = {}
     alive: set[str] = set()
-    files = glob.glob(os.path.expanduser("~/.claude/sessions/*.json"))
-    for f in files:
-        try:
-            with open(f) as fh:
-                d = json.load(fh)
-        except (OSError, ValueError):
-            continue
+    # Each file on its own, a torn one read up to its first complete object
+    # (office/registry.py): one bad file must not hide the others.
+    found, any_file = registry_files.entries()
+    for f, d in found:
         sid = d.get("sessionId")
         if not sid:
             continue
@@ -326,7 +326,7 @@ def _read_registry() -> None:
         for key in (d.get("name"), d.get("messagingSocketPath"), "uds:" + str(d.get("messagingSocketPath") or ""), sid):
             if key:
                 by[str(key)] = {"sid": sid, "name": d.get("name") or sid[:8]}
-    _registry.update(at=time.time(), by=by, alive=alive, read=bool(files))
+    _registry.update(at=time.time(), by=by, alive=alive, read=any_file)
 
 
 def note_talk(sid: str, block: dict, ts) -> None:
@@ -1548,20 +1548,16 @@ def side_thread(sid: str) -> dict:
 def inbox_put(sid: str, text: str, keep: bool = False) -> None:
     """keep: the session takes it however late (a decision or an instruction
     for a coordinator); otherwise one older than two minutes is dropped, as a
-    quick reply that late no longer fits what the session is doing."""
-    os.makedirs(INBOX, exist_ok=True)
-    path = os.path.join(INBOX, sid + ".json")
-    try:
-        with open(path) as f:
-            prev = json.load(f) or {}
-        old = str(prev.get("text") or "")
-        keep = keep or prev.get("keep") is True
-    except (OSError, ValueError, AttributeError):
-        old = ""
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time(), **({"keep": True} if keep else {})}, f)
-    os.replace(tmp, path)
+    quick reply that late no longer fits what the session is doing. Appended
+    under the inbox lock (office/inboxfile.py) that bin/coord-report, the
+    mod's writers and the taker share."""
+    inboxfile.put(os.path.join(INBOX, sid + ".json"), text, keep=keep, by=OFFICE_SENDER)
+
+
+# How the provenance line a session reads over the text names the office
+# (lib/inbox.ts provenance): every inbox_put follows a press or a text the
+# person gave on the office page.
+OFFICE_SENDER = "the office page (the person's action there)"
 
 
 # Meetings: sessions the person put together around one topic. Each is told
@@ -2281,6 +2277,7 @@ def main():
     # Channels a previous office opened for a redeemed send and never closed.
     grants.close_leftovers()
     threading.Thread(target=_mem_watch, name="mem-watch", daemon=True).start()
+    sweep.start(alive_sessions)
     hibernate.start(snapshot, brief=lambda s: command.latest_by_session().get(s))  # memory-pressure sleep (office.json hibernate.auto)
     PORT["n"] = port
     srv = OfficeServer(("127.0.0.1", port), Handler)

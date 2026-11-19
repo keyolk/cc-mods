@@ -6,6 +6,7 @@
 
 import { EFFORTS, active, isEffort, typedLately, modelAlias, type Ledger, type Limits, type PaneSeen } from './coord'
 import type { Place } from './coordplace'
+import { stripProvenance } from './inbox'
 
 export type Candidate = {
   name: string // SendMessage name
@@ -71,7 +72,8 @@ export function parsePrompts(out: string): Map<string, string[]> {
       continue
     }
     if (!Array.isArray(row) || typeof row[0] !== 'string' || typeof row[1] !== 'string') continue
-    const text = row[1].replace(/\s+/g, ' ').trim()
+    // What an inbox prompt says, without the provenance line over it.
+    const text = stripProvenance(row[1]).replace(/\s+/g, ' ').trim()
     if (!text || text.startsWith('<')) continue
     m.set(row[0], [...(m.get(row[0]) ?? []), text.length > PROMPT_CLIP ? text.slice(0, PROMPT_CLIP) + '…' : text])
   }

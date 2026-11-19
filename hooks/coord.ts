@@ -23,7 +23,8 @@ import { STATUS_DIR, parseStatusFile, type Status } from './lib/status'
 import { briefState, decisionLines, stampRelayed, withLogged } from './lib/coorddecide'
 import { ASKS_DIR, parseAskFile, type AskSeen } from './lib/headsup'
 import { DEFER_DIR, DEFER_LIST, parseDeferred } from './lib/defer'
-import { INLINE_MAX, parseInbox, spillDir, spilled } from './lib/inbox'
+import { INLINE_MAX, appended, parseInbox, spillDir, spilled, stripProvenance } from './lib/inbox'
+import { parseRegistry, type RegSession } from './lib/registry'
 import { SUM_MODEL, applied, parseFirst, parseLast, parseSummaries, parseSums, personLines, plan, sumRequest, type SumIn, type Summaries } from './lib/coordsum'
 
 // What register.ts lends: the session, and its policy. God mode keeps "the
@@ -171,24 +172,55 @@ async function readText($: any, path: string): Promise<string | undefined> {
   }
 }
 
+// The office inbox's lock (office/inboxfile.py, through bin/inbox-lock),
+// held around fn: a writer's read and replace of an inbox file, or the
+// taker's rename of it. A lock that could not be taken (python3 missing, a
+// holder that kept it past the wait) does not stop fn: the write goes as it
+// did before the lock, which can lose a racing message, rather than leave
+// the instruction or the report unsent.
+export async function inboxLocked<T>($: any, path: string, fn: () => Promise<T>): Promise<T> {
+  const lock = $.plugin.root + '/bin/inbox-lock'
+  const r = await $.process.run(['python3', lock, 'acquire', path], { timeoutMs: 20_000 }).catch((e: unknown) => ({ exitCode: -1, stdout: '', stderr: String(e) }))
+  const token = r.exitCode === 0 ? String(r.stdout ?? '').trim() : undefined
+  if (token === undefined) $.ui.log('inbox: lock not taken for ' + path + ': ' + clip(String(r.stderr ?? ''), 120), { to: 'debug' })
+  try {
+    return await fn()
+  } finally {
+    if (token) await $.process.run(['python3', lock, 'release', path, token], { timeoutMs: 5_000 }).catch(() => undefined)
+  }
+}
+
 async function save($: any, l: Ledger) {
   ledger = l
   await sh($, ['mkdir', '-p', dir()])
   await $.fs.write(file(), JSON.stringify(l, null, 1)).catch(() => undefined)
 }
 
+// Claude Code's session registry, each file read and parsed on its own
+// (lib/registry.ts: a torn file hides only itself). Kept REG_MS: the roster,
+// the tick and every coord tool ask for names, and one read is ~25 files.
+const REG_MS = 5_000
+let reg: { at: number; m: Map<string, RegSession> } | undefined
+async function registry($: any): Promise<Map<string, RegSession>> {
+  if (reg && Date.now() - reg.at < REG_MS) return reg.m
+  const dir = ctx!.home() + '/.claude/sessions'
+  let listed: string[] = []
+  try {
+    const list = (await $.fs.list(dir)) as { name: string; kind?: string }[]
+    listed = list.filter((e) => e.name.endsWith('.json') && e.kind === 'file').map((e) => e.name)
+  } catch {
+    // no registry folder (or no fs.list): no names, and every pid unknown
+  }
+  const files = await Promise.all(listed.map(async (name) => ({ name, text: await $.fs.read(dir + '/' + name).then((r: any) => (typeof r === 'string' ? r : r?.text)).catch(() => undefined) })))
+  const m = parseRegistry(files)
+  reg = { at: Date.now(), m }
+  return m
+}
+
 // Session id → SendMessage name, from Claude Code's session registry.
 async function names($: any): Promise<Map<string, string>> {
-  const r = await sh($, ['sh', '-c', 'jq -c "{s: .sessionId, n: .name}" "$0"/.claude/sessions/*.json 2>/dev/null', ctx!.home()])
   const m = new Map<string, string>()
-  for (const line of r.out.split('\n')) {
-    try {
-      const d = JSON.parse(line)
-      if (d.s) m.set(d.s, d.n || String(d.s).slice(0, 8))
-    } catch {
-      // a torn or foreign line: skipped
-    }
-  }
+  for (const [sid, r] of await registry($)) m.set(sid, r.name || sid.slice(0, 8))
   return m
 }
 
@@ -213,8 +245,10 @@ async function panesRead($: any): Promise<PaneSeen[] | undefined> {
 // ccproxy), or a transcript written in the last 3 minutes. The last line
 // says the loop ran to its end.
 export const ALIVE_DONE = '--alive-done--'
+// Each argument is `<sid>=<pids>`, the pids comma-separated from the
+// registry (read in TS: a jq over every file stopped at the first torn one).
 const ALIVE_SH =
-  'h=$0; for s in "$@"; do p=$(jq -r --arg s "$s" \'select(.sessionId == $s) | .pid\' "$h"/.claude/sessions/*.json 2>/dev/null | head -1); ' +
+  'h=$0; for a in "$@"; do s=${a%%=*}; p=${a#*=}; ' +
   'if [ -n "$p" ] && ps -o comm= -p "$p" 2>/dev/null | grep -q claude; then echo "$s"; continue; fi; ' +
   'f=$(ls "$h"/.claude/projects/*/"$s".jsonl 2>/dev/null | head -1); [ -n "$f" ] && [ -n "$(find "$f" -mmin -3 2>/dev/null)" ] && echo "$s"; done; echo ' +
   ALIVE_DONE
@@ -223,7 +257,8 @@ const ALIVE_SH =
 // dead: every session asked about counts alive.
 async function alive($: any, sids: string[]): Promise<Set<string>> {
   if (!sids.length) return new Set()
-  const r = await sh($, ['sh', '-c', ALIVE_SH, ctx!.home(), ...sids], { timeoutMs: 5000 })
+  const r0 = await registry($)
+  const r = await sh($, ['sh', '-c', ALIVE_SH, ctx!.home(), ...sids.map((s) => s + '=' + (r0.get(s)?.pids ?? []).join(','))], { timeoutMs: 5000 })
   const lines = r.out.split('\n')
   if (!lines.includes(ALIVE_DONE)) return new Set(sids)
   return new Set(lines.filter((x) => sids.includes(x)))
@@ -569,7 +604,12 @@ async function flush($: any) {
 // register.ts, at a plugin prompt's prompt.submit: the [coord] text with the
 // lines no longer true taken out, undefined when none is left (dropped).
 export function coordRecheck(text: string): string | undefined {
-  return ledger && text.startsWith(WAKE_PREFIX) ? recheck(text, ledger, Date.now(), sent) : text
+  // A wake that came through the inbox (a worker's cc-mods telling of an
+  // instruction that never went in) has the inbox's provenance line over it.
+  const body = stripProvenance(text)
+  if (!ledger || !body.startsWith(WAKE_PREFIX)) return text
+  const kept = recheck(body, ledger, Date.now(), sent)
+  return kept === undefined ? undefined : text.slice(0, text.length - body.length) + kept
 }
 
 // register.ts, when the person ended the coordinator's default god (/god
@@ -1058,11 +1098,11 @@ async function send($: any, i: any): Promise<{ result: string } | { deny: string
     // coordinator when it never went in.
     const inbox = home + '/.claude/state/office/inbox/' + w.sid + '.json'
     await sh($, ['mkdir', '-p', home + '/.claude/state/office/inbox'])
-    const old = parseInbox(await readText($, inbox))
     // keep: an instruction reaches a worker in the middle of a long turn, which
     // may outlast the 2-minute stale limit of an unmarked inbox file.
+    const add = { text: msg, at: now / 1000, keep: true, from: ctx!.sid(), slug: w.slug, ...(sums.get(w.sid) ? { summary: sums.get(w.sid) } : {}), by: ['coordinator ' + ledger!.name] }
     try {
-      await $.fs.write(inbox, JSON.stringify({ text: old ? old.text + '\n\n' + msg : msg, at: old?.at ?? now / 1000, keep: true, from: ctx!.sid(), slug: w.slug, ...(sums.get(w.sid) ? { summary: sums.get(w.sid) } : {}) }))
+      await inboxLocked($, inbox, async () => $.fs.write(inbox, JSON.stringify(appended(parseInbox(await readText($, inbox)), add))))
     } catch (e) {
       return { deny: 'coord_send: not delivered to ' + w.slug + ': no peer message (' + (peer?.reason ?? 'refused') + ') and the office inbox could not be written (' + String(e) + ')' }
     }

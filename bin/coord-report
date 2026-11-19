@@ -8,34 +8,30 @@ holds a peer message across those modes for an approval nobody gives
 (hooks/lib/coord.ts reportRule). The inbox also reaches a coordinator whose
 socket in /tmp/cc-socks is gone. Its cc-mods reads
 ~/.claude/state/office/inbox/<sid>.json every 2 s and submits the text there
-as a prompt, so the report arrives all the same. Appends the way office.py's
-inbox_put does, so a message not yet taken is kept.
+as a prompt, so the report arrives all the same. Appended under the inbox
+lock (office/inboxfile.py) that office.py's inbox_put, the mod's writers and
+the taker share: two reports at once both arrive, and one written while the
+coordinator takes its inbox is neither lost nor delivered twice.
 """
-import json
 import os
 import re
 import sys
-import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "office"))
+import inboxfile  # noqa: E402 - office/inboxfile.py
+
+# How the coordinator's provenance line names the sender (lib/inbox.ts
+# provenance); the `[worker <slug>]` head in the text says which one.
+SENDER = "a worker session (bin/coord-report)"
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or not re.fullmatch(r"[0-9a-fA-F-]{8,64}", argv[1]) or not argv[2].strip():
         print("usage: coord-report <coordinator session id> <text>", file=sys.stderr)
         return 2
-    inbox = os.path.expanduser("~/.claude/state/office/inbox")
-    os.makedirs(inbox, exist_ok=True)
-    path = os.path.join(inbox, argv[1] + ".json")
-    try:
-        with open(path) as f:
-            old = str((json.load(f) or {}).get("text") or "")
-    except (OSError, ValueError, AttributeError):
-        old = ""
-    text = argv[2].strip()
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        # keep: a report is taken however late the coordinator reads it.
-        json.dump({"text": (old + "\n\n" + text) if old else text, "at": time.time(), "keep": True}, f)
-    os.replace(tmp, path)
+    path = os.path.join(inboxfile.folder(), argv[1] + ".json")
+    # keep: a report is taken however late the coordinator reads it.
+    inboxfile.put(path, argv[2].strip(), keep=True, by=SENDER)
     print("queued for " + argv[1])
     return 0
 

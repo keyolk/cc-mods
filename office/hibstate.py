@@ -10,6 +10,8 @@ import threading
 import time
 from datetime import datetime
 
+import registry as registry_files  # office/registry.py, beside this file
+
 SID = re.compile(r"^[0-9a-f-]{8,64}$")
 CONFIG = os.path.expanduser("~/.config/cc-mods/office.json")
 DEFAULTS = {"idleHours": 12.0, "typedMinutes": 30.0, "auto": "pressure", "pane": "close", "swapFreeMB": 512.0, "pressureLevel": 2, "maxSessions": 8, "capIdleHours": 2.0}
@@ -57,13 +59,10 @@ def transcript(sid: str) -> str | None:
 
 def registry() -> dict[str, dict]:
     out = {}
-    for f in glob.glob(os.path.expanduser("~/.claude/sessions/*.json")):
-        try:
-            with open(f) as fh:
-                d = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        if isinstance(d, dict) and d.get("sessionId") and d.get("pid"):
+    # registry.entries: a torn file (an extra `}` after its object) is still
+    # read, so a live session is not taken for gone.
+    for _, d in registry_files.entries()[0]:
+        if d.get("sessionId") and d.get("pid"):
             alive = True
             try:
                 os.kill(int(d["pid"]), 0)

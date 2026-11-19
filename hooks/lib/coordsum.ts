@@ -9,6 +9,8 @@
 // coord.ts reads the transcripts, calls the model and writes the cache
 // (~/.claude/state/office/summary.json), which the office reads.
 
+import { stripProvenance } from './inbox'
+
 export type Summary = { text: string; src: 'name' | 'prompt' | 'model' | 'first'; key: string; at: number }
 export type Summaries = Record<string, Summary>
 
@@ -54,11 +56,13 @@ export function given(name: string | undefined, slug?: string, first?: string): 
 // The head a coordinator puts on what it hands on: the person's words
 // quoted, a worker's report quoted, its own instruction. A label made of it
 // names the hand-off, not the work.
-const RELAY = /^(?:사람의 말\s*\(|worker 보고\s*\(|\[coordinator\]|\[coord\]|\[office→coord\])/
+// The inbox's provenance line (lib/inbox.ts) heads a prompt that came
+// through the office inbox: a label cut from it names the delivery too.
+const RELAY = /^(?:사람의 말\s*\(|worker 보고\s*\(|\[coordinator\]|\[coord\]|\[office→coord\]|\[cc-mods inbox\])/
 
 // A prompt with the relay head taken off: `사람의 말(원문): "slx를 …"` → `slx를 …`.
 export function unrelay(text: string): string {
-  const t = text.replace(/^\s*\[(?:coordinator|coord|office→coord)\]\s*/, '')
+  const t = stripProvenance(text).replace(/^\s*\[(?:coordinator|coord|office→coord)\]\s*/, '')
   const q = /^\s*(?:사람의 말|worker 보고)\s*\([^)]*\)\s*:\s*"?/.exec(t)
   if (!q) return t.trim()
   // The quote the head opened closes at the first `"`; what follows is the coordinator's.
@@ -187,8 +191,10 @@ export function parseSummaries(raw: string | undefined): Summaries {
 // the label says what they asked of it and changes when they speak again.
 // What the office's task box sends (office/command.py say) is the person's,
 // with its tag taken off.
+// The inbox's provenance line is taken off first: what follows is judged
+// as it was before the line existed.
 export function fromPerson(text: string): string | undefined {
-  const t = text.trim()
+  const t = stripProvenance(text).trim()
   const office = /^\[office→coord\]\s*(?:\(re: [^)]*\)\s*)?([\s\S]+)/.exec(t)
   if (office) return office[1]!.trim()
   if (!t || /^(?:\[|<|The cc-mods plugin sent|Another Claude session|(?:READY|DONE|NOTE|QUESTION|BLOCKED)\b)/.test(t)) return undefined
