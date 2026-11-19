@@ -64,6 +64,8 @@ const BRIEF_CSS = `
 #command .blib .card .pub { font-size: 11px; color: #9a4a22; border: 1px solid #c9733f66; border-radius: 6px; padding: 0 6px; cursor: pointer; }
 #command .blib .card .pub:hover { background: #c9733f22; }
 #command .blib .card .pub.push, #command .blib .card .pub.pull, #command .blib .card .pub.conflict { color: #b03a2e; border-color: #b03a2e88; }
+#command .blib .card .art { font-size: 11px; color: #2a6fdb; border: 1px dashed #2a6fdb66; border-radius: 6px; padding: 0 6px; cursor: pointer; }
+#command .blib .card .art:hover { background: #2a6fdb22; }
 #command .blib .card .donebadge { font-size: 11px; font-weight: 600; color: #1f7a50; background: #2f9e6c22; border-radius: 6px; padding: 0 6px; }
 #command .blib .card .answered { font-size: 11px; color: #9b9ba3; border: 1px dashed #e6e5e1; border-radius: 6px; padding: 0 5px; }
 #command .blib .card .tt { font-weight: 600; font-size: 13.5px; }
@@ -302,6 +304,23 @@ if (typeof document !== 'undefined' && document.addEventListener) {
   document.addEventListener('pointercancel', () => { blib.drag = null })
 }
 blibReadHash()
+// ⇅ Artifact on a card (and on an open brief's bar, command.js): the office cannot call the
+// Artifact tool, so the press asks the coordinator to run /brief-artifact <file> (the briefs
+// repo's skill: create the first time, then push, pull or report a conflict by last-modified
+// time). Only a dated brief has it; the label says whether one exists yet.
+function blibArtLabel(b) {
+  return (b.published || []).some((x) => x.target === 'artifact') ? '⇅ Artifact 동기화' : '⇪ Artifact로 보내기'
+}
+function blibArtChip(b) {
+  return /^\d{4}-\d{2}-\d{2}-.+\.html$/.test(b.file || '') ? '<span class="art" data-lart="' + cmdEsc(b.file) + '" title="coordinator에게 /brief-artifact ' + cmdEsc(b.file) + ' 를 보냅니다">' + blibArtLabel(b) + '</span>' : ''
+}
+async function blibArtifact(file) {
+  const c = cmdCoord()
+  if (!c) { toast('coordinator 세션이 없어 보낼 곳이 없습니다'); return null }
+  const j = await cmdPost({ kind: 'brief_artifact', file, coord: c.sid })
+  if (j) toast('📨 ' + (j.sent || '보냈습니다'))
+  return j
+}
 function blibCard(b, sel) {
   const badge = b.state === 'pending' ? '<span class="pend">결정 대기</span>' : b.state === 'done' ? '<span class="donebadge">✅ 완료</span>' : b.state === 'answered' ? '<span class="answered">답함</span>' : ''
   const sub = b.state === 'pending' && b.ask ? '<p class="ask">❓ ' + cmdEsc(b.ask) + '</p>' : b.state === 'done' && b.result ? '<p class="res">✅ ' + cmdEsc(b.result) + '</p>' : b.desc ? '<p class="ds">' + cmdEsc(b.desc) + '</p>' : ''
@@ -313,7 +332,7 @@ function blibCard(b, sel) {
     return '<span class="pub ' + cmdEsc(x.state || '') + '"' + href + ' title="' + cmdEsc(x.id || '') + '">' + cmdEsc(x.target) + cmdEsc(PUB_NOTE[x.state] || '') + (href ? ' ↗' : '') + '</span>'
   }).join('')
   return '<button class="card ' + cmdEsc(b.state) + (sel === b.path ? ' sel' : '') + '" data-lbrief="' + cmdEsc(b.path) + '" data-title="' + cmdEsc(b.title) + '" title="' + cmdEsc(b.file) + '">'
-    + '<span class="meta"><span class="topic">' + cmdEsc(b.topic || '기타') + '</span>' + badge + pubs + '</span>'
+    + '<span class="meta"><span class="topic">' + cmdEsc(b.topic || '기타') + '</span>' + badge + pubs + blibArtChip(b) + '</span>'
     + '<span class="tt">' + cmdEsc(b.title) + '</span>' + sub + '</button>'
 }
 function blibHtml(d = blib.data) {
@@ -407,6 +426,8 @@ function blibClick(ev) {
   }
   const pub = t.closest('[data-lpub]')
   if (pub) { globalThis.open(pub.dataset.lpub, '_blank', 'noopener'); return }
+  const art = t.closest('[data-lart]')
+  if (art) { blibArtifact(art.dataset.lart); return }
   const b = t.closest('[data-lbrief]')
   if (!b) return
   cmd.libFrom = b.dataset.lbrief

@@ -701,6 +701,60 @@ class SayAndViewTest(BriefsCase):
             self.assertEqual(office.act({"kind": "coord_say", "coord": COORD, "value": "go", "re": {"review": "tweb-240"}})[0], 200)
         self.assertEqual(self.sent[-1], (COORD, "[office→coord] (re: review tweb-240) go"))
 
+    def test_the_artifact_button_asks_the_coordinator_to_run_brief_artifact(self):
+        # Only a Claude session can call the Artifact tool: the press is a fixed
+        # /brief-artifact prompt for the coordinator, about that brief.
+        self.ledger([])
+        f = self.brief("2026-11-19-x")
+        code, j = command.send_artifact(f, COORD, self.put)
+        self.assertEqual(code, 200, j)
+        self.assertEqual(self.sent, [(COORD, f"[office→coord] (re: {f}) /brief-artifact {f}")])
+        self.assertIn("cc-mods-d9", j["sent"])
+        with mock.patch.object(office, "inbox_put", side_effect=self.put):
+            self.assertEqual(office.act({"kind": "brief_artifact", "file": f, "coord": COORD})[0], 200)
+        self.assertEqual(self.sent[-1], (COORD, f"[office→coord] (re: {f}) /brief-artifact {f}"))
+
+    def test_the_artifact_button_refuses_what_is_not_a_brief_or_not_a_coordinator(self):
+        self.ledger([])
+        f = self.brief("2026-11-19-x")
+        for name in ("index.html", "../2026-11-19-x.html", "2026-11-19-missing.html", "2026-11-19-x.html; rm -rf ~", ""):
+            self.assertEqual(command.send_artifact(name, COORD, self.put)[0], 404, name)
+        self.assertEqual(command.send_artifact(f, WORKER, self.put)[0], 404)
+        self.assertEqual(command.send_artifact(f, "", self.put)[0], 404)
+        self.assertEqual(self.sent, [])
+
+    def test_the_library_card_carries_the_artifact_button_and_its_press_posts_the_file(self):
+        js = pathlib.Path(__file__).parents[1] / "office" / "briefline.js"
+        prog = textwrap.dedent(r"""
+            const vm = require('vm'), fs = require('fs')
+            const el = () => ({ appendChild() {}, querySelector: () => null })
+            const posts = [], toasts = []
+            const ctx = { console, JSON, Date, Promise, location: { hash: '' }, history: { replaceState() {} },
+              document: { createElement: el, head: el(), addEventListener() {} },
+              cmdEsc: (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]),
+              cmd: { data: { coordinators: [{ sid: 'c1', live: true }] } }, cmdCoord: () => ({ sid: 'c1' }),
+              cmdPost: async (b) => { posts.push(b); return { ok: true, sent: 'Artifact 동기화 → c' } }, toast: (t) => toasts.push(t),
+              cmdPick() { throw new Error('the press must not open the brief') }, cmdRender() {}, cmdRenderDoc() {} }
+            vm.createContext(ctx)
+            vm.runInContext(fs.readFileSync(process.argv[1], 'utf8') + `
+              var fresh = blibCard({ file: '2026-11-19-x.html', path: '/b/2026-11-19-x.html', title: 'X', state: 'read', published: [] }, '')
+              var pub = blibCard({ file: '2026-11-19-y.html', path: '/b/2026-11-19-y.html', title: 'Y', state: 'read', published: [{ target: 'artifact', id: 'https://claude.ai/artifact/a', state: 'push' }] }, '')
+              var idx = blibArtChip({ file: 'index.html' })
+              var span = { dataset: { lart: '2026-11-19-x.html' } }
+              blibClick({ target: { closest: (q) => q === '[data-lart]' ? span : null } })
+            `, ctx)
+            setTimeout(() => console.log(JSON.stringify({ fresh: ctx.fresh, pub: ctx.pub, idx: ctx.idx, posts, toasts })), 0)
+        """)
+        r = subprocess.run(["node", "-e", prog, str(js)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        j = json.loads(r.stdout)
+        self.assertIn('data-lart="2026-11-19-x.html"', j["fresh"])
+        self.assertIn("⇪ Artifact로 보내기", j["fresh"])
+        self.assertIn("⇅ Artifact 동기화", j["pub"])
+        self.assertEqual(j["idx"], "")
+        self.assertEqual(j["posts"], [{"kind": "brief_artifact", "file": "2026-11-19-x.html", "coord": "c1"}])
+        self.assertEqual(j["toasts"], ["📨 Artifact 동기화 → c"])
+
     def test_each_session_carries_what_it_was_doing_and_whether_a_coordinator_ever_instructed_it(self):
         self.ledger([{"slug": "w", "sid": WORKER, "instructed": 1794296997069}, {"slug": "gavin-jeong-63", "sid": MAKER, "relation": "adopted", "auto": True}])
         self.sums.write_text(json.dumps({WORKER: {"text": "office 지휘 view 정리", "src": "model", "key": "k", "at": 1}, MAKER: {"text": 3}}))
