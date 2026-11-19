@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """coord-report <coordinator sid> <text>: a worker's report to its coordinator
-through the office inbox, for when SendMessage cannot reach it.
+through the office inbox: the worker's report path.
 
-SendMessage finds a session by its socket in /tmp/cc-socks; when that file is
-gone the coordinator still runs but no one can message it. Its cc-mods reads
+A worker's SendMessage does not reach its coordinator: the coordinator runs
+with permission prompts bypassed and the worker in auto mode, and Claude Code
+holds a peer message across those modes for an approval nobody gives
+(hooks/lib/coord.ts reportRule). The inbox also reaches a coordinator whose
+socket in /tmp/cc-socks is gone. Its cc-mods reads
 ~/.claude/state/office/inbox/<sid>.json every 2 s and submits the text there
 as a prompt, so the report arrives all the same. Appends the way office.py's
 inbox_put does, so a message not yet taken is kept.

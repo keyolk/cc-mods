@@ -360,22 +360,34 @@ async function tick($: any) {
     // state/office/status/<sid>.json), read before observe so a turn's wake
     // carries the one declared in that turn.
     const statuses = await statusFiles($, ledger)
-    const o = observe(ledger, seen, Date.now(), live, sums, statuses, await dialogScreens($, ledger, seen))
+    const drawn = await dialogScreens($, ledger, seen)
     // MCP servers the coordinator's and its workers' cc-mods could not get
     // back (register.ts mcpExport writes state/office/mcp/<sid>.json).
-    const files = await mcpFiles($, o.ledger)
-    const m = files ? mcpWakes(o.ledger, files, sums) : { ledger: o.ledger, changes: [] }
+    const files = await mcpFiles($, ledger)
     // The Heads up bands on the workers' screens (lib/headsup.ts), each pane
     // read at most every HEADSUP_EVERY_MS; and the questions their turns
     // ended on in words only (register.ts askExport).
-    const h = headsUpWakes(m.ledger, await screens($, m.ledger, seen), Date.now(), sums)
-    const a = personAskWakes(h.ledger, await askFiles($, h.ledger), sums)
-    const l = a.ledger
+    const caps = await screens($, ledger, seen)
+    const asks = await askFiles($, ledger)
     // A worker the person set aside (office ⏰ 나중에, lib/defer.ts) is
     // recorded, not woken for, as a quiet worker is: its turns, asks and
     // MCP drops wait for its time, or for the office to bring it back on a
     // new question (the file then stops naming it).
     const asleep = await deferredSids($)
+    // Every read is done: the ledger is taken now, and nothing below awaits
+    // until the save. A coord tool (spawn, send, close) may have saved it
+    // during the reads, and a copy from before that written back undoes it.
+    // Live 2026-11-19: coord_spawn's owned harness-compare-4way was written
+    // over by a tick that had read the ledger before it; the next tick
+    // adopted the session as the person's own (auto), so its cc-mods never
+    // registered the status tool. A worker the reads did not cover is no
+    // news to the steps below (each keeps what a worker had), and one just
+    // spawned is within observe's SPAWN_GRACE_MS.
+    const o = observe(ledger, seen, Date.now(), live, sums, statuses, drawn)
+    const m = files ? mcpWakes(o.ledger, files, sums) : { ledger: o.ledger, changes: [] }
+    const h = headsUpWakes(m.ledger, caps, Date.now(), sums)
+    const a = personAskWakes(h.ledger, asks, sums)
+    const l = a.ledger
     const changes = [...o.changes, ...m.changes, ...h.changes, ...a.changes].map((c) => (c.wake && asleep.has(c.sid) ? { ...c, wake: false } : c))
     let out = l
     // A quiet worker's asks are the person's own work: kept in its
@@ -989,7 +1001,7 @@ async function spawn($: any, i: any): Promise<{ result: string } | { deny: strin
     ? 'in pane ' + pane + ', split ' + (sp.split.dir === '-h' ? 'beside' : 'below') + (sp.kind === 'coordinator' ? ' yours' : ' ' + sp.target + ', next to ' + sp.workers.join(', ')) + ' (' + sp.split.size + (sp.split.dir === '-h' ? ' columns' : ' rows') + ') in window ' + window
     : 'in a new window ' + window + ' (pane ' + pane + ')' + (String(i.window ?? '') === 'new' ? ', as routed' : room.skipped.length ? ': ' + room.skipped.join('; ') : '')
   const note = placed.note ? ' (' + placed.note + ')' : ''
-  return { result: 'Started worker ' + req.slug + ' ' + where + note + ', session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you with SendMessage.' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') + gateNote(briefGates(req.brief)) }
+  return { result: 'Started worker ' + req.slug + ' ' + where + note + ', session ' + uuid + ', ' + req.model + '/' + req.effort + ', cwd ' + at.cwd + (at.addDirs.length ? ', add-dirs ' + at.addDirs.join(', ') : '') + '. Brief: ' + promptFile + '. It reports to you through your office inbox (bin/coord-report): each report comes in as a prompt when your turn ends, not as a peer message (one from a session in another permission mode is held for an approval nobody gives).' + untrusted + (near.length ? ' Other live sessions in this repository: ' + who(near) + '.' : '') + gateNote(briefGates(req.brief)) }
 }
 
 // The absolute common git dir of a checkout or worktree, undefined outside git.

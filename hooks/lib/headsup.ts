@@ -115,7 +115,9 @@ export function askedProperly(tools: readonly { name: string; input: unknown }[]
   return tools.some((t) => {
     const i: any = t.input ?? {}
     if (/(^|__)status$/.test(t.name)) return i.state === 'blocked' && i.kind === 'question'
-    if (t.name === 'Bash') return /(^|[\s;&|(])brief\s+ask\b/.test(String(i.command ?? ''))
+    // A worker's report through the office inbox (bin/coord-report, its
+    // report path: lib/coord.ts reportRule) counts as a SendMessage one does.
+    if (t.name === 'Bash') return /(^|[\s;&|(])brief\s+ask\b/.test(String(i.command ?? '')) || /coord-report\s+\S+\s+(['"])?(\[[^\]]*\]\s*)?(QUESTION|BLOCKED)\b/.test(String(i.command ?? ''))
     if (t.name === 'SendMessage') return /^\s*(\[[^\]]*\]\s*)?(QUESTION|BLOCKED)\b/.test(String(i.message ?? ''))
     return false
   })

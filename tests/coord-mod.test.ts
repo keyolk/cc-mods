@@ -13,7 +13,7 @@ const PANE = '%365\t@134\tw4\twaiting\taction\t/r/bd\t\tRead ~/r/prompt.txt'
 // coord_send then falls back to the office inbox.
 const NO_PEER = { isDelivered: false, reason: 'no live session on this machine has id w' }
 
-function stubs(on: any, o: { files: Record<string, string>; submitted: string[]; panes: () => string; run?: (argv: string[]) => string | undefined; runs?: string[][]; peer?: (e: any) => unknown }) {
+function stubs(on: any, o: { files: Record<string, string>; submitted: string[]; panes: () => string; run?: (argv: string[]) => string | undefined | Promise<string | undefined>; runs?: string[][]; peer?: (e: any) => unknown }) {
   on('session.start', () => ({ cwd: '/work' }))
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/u' : e.name === 'TMUX_PANE' ? '%1' : undefined }))
   on('session.id', () => ({ value: 'sid-1' }))
@@ -29,10 +29,10 @@ function stubs(on: any, o: { files: Record<string, string>; submitted: string[];
     return { value: undefined }
   })
   const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-  on('process.run', (_$: any, e: any) => {
+  on('process.run', async (_$: any, e: any) => {
     o.runs?.push(e.argv)
     if (e.argv[0] === 'tmux' && e.argv[1] === 'list-panes') return ok(o.panes())
-    const out = o.run?.(e.argv)
+    const out = await o.run?.(e.argv)
     return out === undefined ? ok('') : out === '!' ? { value: { exitCode: 1, stdout: '', stderr: 'no', isStdoutTruncated: false, isStderrTruncated: false } } : ok(out)
   })
   on('ui.toast', () => ({ value: undefined }))
@@ -352,6 +352,52 @@ test('coord: a tick whose tmux or alive read fails calls no worker gone; the own
   await clock.advance(10_000)
   const ws = JSON.parse(files[LEDGER]!).workers.filter((w: any) => w.sid === 'w96')
   expect(ws.map((w: any) => [w.relation, w.auto, w.endedAt, w.made?.pane])).toEqual([['owned', undefined, undefined, '%386']])
+})
+
+test('coord: a tick whose reads outlast a coord_spawn keeps the spawned worker owned; it is never adopted as the person\'s', async ($, on) => {
+  // Live 2026-11-19: coord_spawn recorded harness-compare-4way owned, and a
+  // tick that had taken the ledger before it saved its own copy after its
+  // reads. The spawn was gone; the next tick adopted the session (auto), so
+  // its cc-mods never registered the status tool.
+  const files: Record<string, string> = {
+    [LEDGER]: JSON.stringify({ on: true, sid: 'sid-1', name: 'cc-mods-d9', limits: { models: ['sonnet'], maxEffort: 'high', maxWorkers: 4, autoAdopt: true }, workers: [{ slug: 'brief-decision-4', sid: 'w4', relation: 'owned', pane: '%365', window: '@134', cwd: '/r/bd', at: OLD, state: 'working', attention: 'none' }], log: [], at: OLD }),
+    [TRUST]: JSON.stringify({ projects: { '/home/u': { hasTrustDialogAccepted: true } } }),
+  }
+  let panes = '%1\t@1\tsid-1\tworking\tnone\t/work\t\t\n%365\t@134\tw4\tworking\tnone\t/r/bd\t\t'
+  let release: () => void = () => {}
+  let entered: () => void = () => {}
+  const inRead = new Promise<void>((r) => (entered = r))
+  let held = false
+  stubs(on, {
+    files,
+    submitted: [],
+    panes: () => panes,
+    run: (a) => {
+      // The tick's read of the MCP state files: held open once, while the
+      // coordinator's coord_spawn runs and saves.
+      if (a[0] === 'sh' && String(a[3]).endsWith('/.claude/state/office/mcp') && !held) {
+        held = true
+        entered()
+        return new Promise<string>((r) => (release = () => r('')))
+      }
+      return spawnRun(a)
+    },
+  })
+  const clock = mock.clock(on)
+  await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
+  const ticked = clock.advance(10_000)
+  await inRead
+  const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_spawn', slug: 'ar-x', model: 'sonnet', effort: 'low', brief: 'fix it', repo_dir: '/src/autoreview' } as any)
+  expect(r.result).toContain('Started worker ar-x')
+  panes += '\n%90\t@9\tu-1\tworking\tnone\t/home/u/research/ar-x\t\t'
+  release()
+  await ticked
+  const of = () => JSON.parse(files[LEDGER]!).workers.filter((w: any) => w.sid === 'u-1').map((w: any) => [w.slug, w.relation, w.auto])
+  expect(of()).toEqual([['ar-x', 'owned', undefined]])
+  // The next tick sees its pane: still the one owned record, nothing adopted.
+  await clock.advance(10_000)
+  expect(of()).toEqual([['ar-x', 'owned', undefined]])
+  expect(JSON.parse(files[LEDGER]!).log.map((e: any) => e.kind)).toContain('spawn')
 })
 
 test('coord: a worker taken for gone whose pane names it again is taken back owned, and coord_close then closes its pane', async ($, on) => {

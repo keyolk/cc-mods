@@ -823,7 +823,8 @@ test('a merge the policy allows is read first and refused with the rule clause t
   baseStubs(on, {
     policyJson: JSON.stringify({ mode: 'custom', capabilities: { gh_merge: 'block' }, gh_merge_repos: ['keyolk/tweb'] }),
     runs,
-    run: (argv) => (argv[0] === 'gh' && argv[1] === 'api' && argv[2] === 'graphql' ? { code: 0, out: box.pr } : argv[0] === 'gh' && String(argv[2] ?? '').includes('/compare/') ? { code: 0, out: box.behind } : undefined),
+    // The check reads the PR as the repo owner's gh login (#152): its token.
+    run: (argv) => (argv[0] === 'gh' && argv[1] === 'auth' && argv[2] === 'token' ? { code: 0, out: 'tok' } : argv[0] === 'gh' && argv[1] === 'api' && argv[2] === 'graphql' ? { code: 0, out: box.pr } : argv[0] === 'gh' && String(argv[2] ?? '').includes('/compare/') ? { code: 0, out: box.behind } : undefined),
   })
   let ran = 0
   on('tool.call', () => ((ran += 1), { result: 'merged' }))
