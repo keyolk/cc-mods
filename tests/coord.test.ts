@@ -46,6 +46,12 @@ test('coord: the worker runs claude with its model, effort and session id, the b
   // reaches it anyway.
   const fb = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', 'python3 /p/bin/coord-report coord-sid')
   expect(fb).toContain("python3 /p/bin/coord-report coord-sid '[worker tmc-layout] <report>'")
+  // Live 2026-11-19: the coordinator (god, bypassPermissions) held a worker's
+  // (auto) SendMessage for an approval nobody gave, and it expired unread.
+  // coord_spawn always passes the command: the inbox is the one report path.
+  expect(fb).toContain('Report to it with Bash: `python3 /p/bin/coord-report coord-sid')
+  expect(fb).toContain('Do not report with SendMessage')
+  expect(fb).not.toContain('Report to it with SendMessage')
   // A choice for the person goes on a decision brief the office can answer,
   // tagged with the coordinator's session id so the answer comes back to it.
   const ask = workerPrompt('fix it', 'cc-mods-d9', 'tmc-layout', undefined, undefined, 'coord-sid')

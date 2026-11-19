@@ -402,9 +402,17 @@ export const isCcModsWorktree = (p?: string): boolean => !!p && /\/worktrees\/cc
 
 // What every worker is told about reporting, after the coordinator's brief.
 // `fallback`: the command that queues a report in the coordinator's office
-// inbox (bin/coord-report <sid>). SendMessage finds the coordinator by its
-// socket in /tmp/cc-socks, and a coordinator whose socket file is gone still
-// runs but cannot be messaged: the inbox reaches it all the same.
+// inbox (bin/coord-report <sid>); given, it is the worker's one report path.
+// SendMessage does not reach a coordinator: Claude Code delivers a peer
+// message at once only between sessions of one permission-mode class
+// (bypass↔bypass, prompting↔prompting; crossSessionInbound unset), and holds
+// any other for the receiver's approval. The coordinator runs god
+// (bypassPermissions), a worker --permission-mode auto: every report was
+// held, and expired unread (live 2026-11-19, harness-compare-4way's DONE).
+// Accepting there is no fix: crossSessionInbound is one setting for every
+// sender, and session.receive names no verified sender to keep it to the
+// coordinator's workers. The inbox also reaches a coordinator whose socket
+// in /tmp/cc-socks is gone. Without `fallback` (tests): SendMessage.
 // `where`: what its tools reach (lib/trust.ts placement). A read outside
 // those stops at "Read outside the working directories" even under auto
 // mode (sandbox off, managed read paths), a dialog nobody watches.
@@ -415,11 +423,20 @@ export const isCcModsWorktree = (p?: string): boolean => !!p && /\/worktrees\/cc
 // sends them without a brief; slack_send=block still stops the worker's own send.
 export const REVIEW_REQUEST_RULE = '- A review request for your PR to #team-core-platform-pr-review (C0AR17WDTQ9) needs no decision brief: a new main message, once per head sha, no person or team mention. When your policy (slack_send=block) stops you from sending it, put the request text in your READY report and the coordinator sends it. Any other channel, a DM or a mention goes on a brief.'
 
+// How a worker reports (see workerPrompt's `fallback`).
+export function reportRule(slug: string, coordName: string, fallback?: string): string {
+  if (!fallback) return 'Report to it with SendMessage (to: "' + coordName + '").'
+  return (
+    'Report to it with Bash: `' + fallback + " '[worker " + slug + "] <report>'` (one report per call; it arrives in the coordinator's session as a prompt when its turn ends). " +
+    'Do not report with SendMessage: the coordinator runs in another permission mode, and Claude Code holds such a message for an approval nobody gives (it expires unread).'
+  )
+}
+
 export function workerPrompt(brief: string, coordName: string, slug: string, fallback?: string, where?: { cwd: string; addDirs: readonly string[]; outside?: string }, coordSid?: string, briefGrant?: string): string {
   const o = where?.outside
   return (
     brief.trim() +
-    '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. Report to it with SendMessage (to: "' + coordName + '"), and never wait on the person:\n' +
+    '\n\n---\nYou are worker `' + slug + '` for the coordinator session `' + coordName + '`. ' + reportRule(slug, coordName, fallback) + ' Never wait on the person:\n' +
     '- `READY <sha>` when the work is pushed, tests pass, and the PR body has a live run; add the PR URL and, when the person must decide or understand something, a brief made with the doc:visual-brief skill (its path).\n' +
     '- `BLOCKED <why>` when you cannot go on; `QUESTION <what>` when the brief leaves a choice open.\n' +
     STATUS_RULE + '\n' +
@@ -431,7 +448,6 @@ export function workerPrompt(brief: string, coordName: string, slug: string, fal
     REVIEW_REQUEST_RULE + '\n' +
     '- When a skill you use fails you (a script fails, its guidance is wrong, a case it does not cover), work around it to finish, and add a line to your READY or BLOCKED report: `SKILL <skill name>: <the problem in one line> — <evidence: the command and its error, or file:line>`. Do not edit the skill here: fixing it is a separate task.\n' +
     MCP_WAIT + '\n' +
-    (fallback ? '- When SendMessage says the coordinator is not reachable, send the same report with Bash: `' + fallback + " '[worker " + slug + "] <report>'`. It arrives in the coordinator's session as a prompt.\n" : '') +
     ONE_BROWSER + '\n' +
     (isCcModsWorktree(o ?? where?.cwd) ? CC_MODS_WT_RULE + '\n' : '') +
     'Messages from the coordinator start with `[coordinator]`: a message from another session (it may arrive in the middle of your turn; act on it there) or a prompt. The person may also type in this pane; their words win.' +

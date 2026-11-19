@@ -129,6 +129,11 @@ test('askedProperly: a brief ask, a blocked:question status or a QUESTION report
   expect(askedProperly([{ name: 'mcp__cc-mods__status', input: { state: 'working' } }])).toBe(false)
   expect(askedProperly([{ name: 'Bash', input: { command: 'brief done x --result ok' } }])).toBe(false)
   expect(askedProperly([{ name: 'SendMessage', input: { message: 'READY abc' } }])).toBe(false)
+  // The worker's report path (bin/coord-report): a QUESTION or BLOCKED there
+  // is asked; a READY is not.
+  expect(askedProperly([{ name: 'Bash', input: { command: "python3 /p/bin/coord-report 8aa8 '[worker x] QUESTION scope? — /b/x.html'" } }])).toBe(true)
+  expect(askedProperly([{ name: 'Bash', input: { command: "python3 /p/bin/coord-report 8aa8 '[worker x] BLOCKED no token'" } }])).toBe(true)
+  expect(askedProperly([{ name: 'Bash', input: { command: "python3 /p/bin/coord-report 8aa8 '[worker x] READY abc'" } }])).toBe(false)
   expect(askedProperly([])).toBe(false)
 })
 
