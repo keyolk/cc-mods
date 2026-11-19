@@ -57,7 +57,7 @@ export function mergeQuery(ref: PrRef): string {
     `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {` +
     ` pullRequest(number: ${ref.number}) { state isDraft mergeable headRefOid baseRefName` +
     ` reviewThreads(first: 100) { nodes { isResolved } }` +
-    ` commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 80) { nodes {` +
+    ` commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state contexts(first: 80) { nodes {` +
     ` ... on StatusContext { context state description isRequired(pullRequestNumber: ${ref.number}) }` +
     ` ... on CheckRun { name status conclusion isRequired(pullRequestNumber: ${ref.number}) } } } } } } } } } }`
   )
@@ -75,12 +75,19 @@ export type MergeFacts = {
   checks: 'pass' | 'fail' | 'pending' | 'none'
   failing: string[]
   // Checks that failed but are not required (a repo-wide failing linter, a
-  // flaky scanner): reported beside a refusal, never a reason for one.
+  // flaky scanner), and, in a repo that requires none, runs stuck QUEUED past
+  // STUCK_QUEUED_MS: reported beside a refusal, never a reason for one.
   advisory: string[]
   requiredOnly: boolean // the verdict above is over required checks only
 }
 
-export function parseMergeFacts(json: string): MergeFacts | undefined {
+// A check run that never left QUEUED this long after the head commit is a
+// stalled runner or app, not CI still working: sendbird/ops-k8s#10926 sat on
+// "Hawkman: Find and verify secrets" queued for 50 minutes (2026-11-19) while
+// every other check had finished, and the rule held the merge the whole time.
+export const STUCK_QUEUED_MS = 30 * 60 * 1000
+
+export function parseMergeFacts(json: string, now: number = Date.now()): MergeFacts | undefined {
   let pr: any
   try {
     pr = JSON.parse(json)?.data?.repository?.pullRequest
@@ -104,11 +111,19 @@ export function parseMergeFacts(json: string): MergeFacts | undefined {
     v = checkVerdict(required)
     advisory = checkVerdict(nodes.filter((n) => n?.isRequired !== true)).failing
   } else {
-    const all = checkVerdict(nodes, rollup?.state)
+    // Nothing required: a run still QUEUED long after the head was committed
+    // is set aside like an optional failure, so it cannot hold the merge
+    // forever. A run IN_PROGRESS still holds it.
+    const committed = Date.parse(pr.commits?.nodes?.[0]?.commit?.committedDate ?? '')
+    const stale = Number.isFinite(committed) && now - committed > STUCK_QUEUED_MS
+    const stuck = stale ? nodes.filter((n) => n?.status === 'QUEUED').map((n) => String(n?.name ?? '')) : []
+    const live = nodes.filter((n) => !stuck.includes(String(n?.name ?? n?.context ?? '')))
+    const all = checkVerdict(live, stuck.length ? undefined : rollup?.state)
     advisory = all.failing
-    const rest = nodes.filter((n) => !advisory.includes(String(n?.name ?? n?.context ?? '')))
+    const rest = live.filter((n) => !advisory.includes(String(n?.name ?? n?.context ?? '')))
     // No named failure (only the rollup said FAILURE): keep that verdict.
     v = advisory.length ? checkVerdict(rest) : all
+    advisory = [...advisory, ...stuck.map((n) => n + ' (queued 30m+)')]
   }
   return {
     state: pr.state ?? '',
@@ -149,7 +164,7 @@ export function mergeDeny(call: MergeCall, problems: readonly string[], advisory
   return (
     'BLOCKED by the cc-mods merge check (' + call.repo + '#' + call.number + '):\n' +
     problems.map((p) => '  - ' + p).join('\n') +
-    (advisory.length ? '\nNot required, so not a reason (failed): ' + advisory.slice(0, 5).join(', ') : '') +
+    (advisory.length ? '\nNot required, so not a reason (failed or stuck): ' + advisory.slice(0, 5).join(', ') : '') +
     '\nThe coordinator merge rule: head = READY sha (--match-head-commit), required checks passed on that sha (all checks when none is required), no unresolved threads, head contains the base. ' +
     '--admin (only on the person\'s typed order) skips all but the head match.'
   )

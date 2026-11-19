@@ -9,9 +9,9 @@ const HEAD = 'abc1234def5678900000000000000000000000ff'
 const ok: MergeFacts = { state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', head: HEAD, base: 'main', unresolved: 0, checks: 'pass', failing: [], advisory: [], requiredOnly: false }
 
 // A PR read whose rollup holds the given check runs.
-const read = (nodes: object[], rollup = 'FAILURE') => JSON.stringify({ data: { repository: { pullRequest: {
+const read = (nodes: object[], rollup = 'FAILURE', committedDate = '2026-11-19T12:00:00Z') => JSON.stringify({ data: { repository: { pullRequest: {
   state: 'OPEN', isDraft: false, mergeable: 'MERGEABLE', headRefOid: HEAD, baseRefName: 'main', reviewThreads: { nodes: [] },
-  commits: { nodes: [{ commit: { statusCheckRollup: { state: rollup, contexts: { nodes } } } }] },
+  commits: { nodes: [{ commit: { committedDate, statusCheckRollup: { state: rollup, contexts: { nodes } } } }] },
 } } } })
 const run = (name: string, conclusion: string | null, isRequired: boolean, status = 'COMPLETED') => ({ name, status, conclusion, isRequired })
 
@@ -60,7 +60,7 @@ test('only required checks refuse a merge; a failing optional check is advisory'
   // A required check that failed refuses, naming only it.
   const failed = parseMergeFacts(read([run('test', 'FAILURE', true), run('SOC2', 'FAILURE', false)]))!
   expect(mergeProblems(call, failed, 0)).toEqual(['a required check failed on the head: test'])
-  expect(mergeDeny(call, mergeProblems(call, failed, 0), failed.advisory)).toContain('Not required, so not a reason (failed): SOC2')
+  expect(mergeDeny(call, mergeProblems(call, failed, 0), failed.advisory)).toContain('Not required, so not a reason (failed or stuck): SOC2')
   // A required check still running refuses.
   const running = parseMergeFacts(read([run('test', null, true, 'IN_PROGRESS'), run('lint', 'SUCCESS', false)], 'PENDING'))!
   expect(mergeProblems(call, running, 0)).toEqual(['a required check is still running on the head'])
@@ -79,6 +79,25 @@ test('a repo that requires no check: a failure is advisory, a running check stil
   expect(parseMergeFacts(read([], 'FAILURE'))!.checks).toBe('fail')
   // keyolk/cc-mods: no checks at all.
   expect(parseMergeFacts(read([], ''))!.checks).toBe('none')
+})
+
+test('a repo that requires no check: a run stuck QUEUED past 30m is advisory, not pending', () => {
+  const call = { repo: 'o/n', number: 1, matchHead: 'abc1234', admin: false }
+  const nodes = [run('check', 'SUCCESS', false), run('mitm-proxy', 'SUCCESS', false), run('Hawkman: Find and verify secrets', null, false, 'QUEUED')]
+  const at = (min: number) => Date.parse('2026-11-19T12:00:00Z') + min * 60_000
+  // sendbird/ops-k8s#10926: Hawkman queued 50 min after the head, everything else green.
+  const stuck = parseMergeFacts(read(nodes, 'PENDING'), at(50))!
+  expect(stuck.checks).toBe('pass')
+  expect(stuck.advisory).toEqual(['Hawkman: Find and verify secrets (queued 30m+)'])
+  expect(mergeProblems(call, stuck, 0)).toEqual([])
+  // Ten minutes in, a queued run is still CI that may start.
+  expect(mergeProblems(call, parseMergeFacts(read(nodes, 'PENDING'), at(10))!, 0)).toEqual(['CI is still running on the head'])
+  // A run that started is never set aside, however old the head.
+  const started = [run('check', 'SUCCESS', false), run('slow', null, false, 'IN_PROGRESS')]
+  expect(mergeProblems(call, parseMergeFacts(read(started, 'PENDING'), at(90))!, 0)).toEqual(['CI is still running on the head'])
+  // A required check stuck QUEUED still holds the merge.
+  const req = [run('test', null, true, 'QUEUED'), run('lint', 'SUCCESS', false)]
+  expect(mergeProblems(call, parseMergeFacts(read(req, 'PENDING'), at(90))!, 0)).toEqual(['a required check is still running on the head'])
 })
 
 test('--admin skips CI, threads and up-to-date but not the head match', () => {
