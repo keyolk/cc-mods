@@ -134,3 +134,13 @@ test('coordsum: a session is named by what it declared it is doing now; a new ph
   // A status with no prompt read yet still names it.
   expect(plan([row({ sid: 'y', status: { step: 'slx Jev 판정' } })], {}, NOW).next.y).toMatchObject({ text: 'slx Jev 판정' })
 })
+
+test('coordsum: an inbox prompt is judged by what follows its provenance line', () => {
+  const head = "[cc-mods inbox] Sent by the office page (the person's action there), not typed by the user:"
+  expect(fromPerson(head + '\n[office→coord] w: 테스트 먼저')).toBe('w: 테스트 먼저')
+  expect(fromPerson(head + '\n그냥 할 일')).toBe('그냥 할 일')
+  expect(fromPerson('[cc-mods inbox] Sent by a worker session (bin/coord-report), not typed by the user:\n[worker a] READY abc')).toBeUndefined()
+  expect(unrelay('[cc-mods inbox] Sent by coordinator c, not typed by the user: [coordinator] 사람의 말(원문): "slx 고쳐" 그리고')).toBe('slx 고쳐')
+  expect(given('[cc-mods inbox] Sent by coordinator c, not…')).toBeUndefined()
+  expect(parsePrompts(JSON.stringify(['s1', head + '\n[brief answer] a.html: A']))).toEqual(new Map([['s1', ['[brief answer] a.html: A']]]))
+})

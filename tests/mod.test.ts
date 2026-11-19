@@ -90,6 +90,8 @@ function baseStubs(on: any, opts: { pane?: string; policyJson?: string; policyBo
 // rm and mv over a test's files, as the inbox takes and removes its file.
 const fsRun = (files: Record<string, string>) => (a: string[]) => {
   const rel = (p: string) => p.replace(/^.*\/\.claude\//, '.claude/')
+  // The inbox lock (bin/inbox-lock): taken and let go, its token echoed.
+  if (String(a[1] ?? '').endsWith('/bin/inbox-lock')) return { code: 0, out: a[2] === 'acquire' ? 'tok\n' : '' }
   if (a[0] === 'rm') return (delete files[rel(a.at(-1)!)], { code: 0, out: '' })
   if (a[0] === 'mv') {
     const [from, to] = a.slice(-2).map(rel)
@@ -101,6 +103,8 @@ const fsRun = (files: Record<string, string>) => (a: string[]) => {
   return undefined
 }
 const INBOX = '.claude/state/office/inbox/sid-1.json'
+// What an inbox text goes in as: under the provenance line naming its sender.
+const via = (text: string, by = 'unknown') => '[cc-mods inbox] Sent by ' + by + ', not typed by the user:\n' + text
 
 test('Claude cannot self-grant session policy through Bash', async ($, on) => {
   baseStubs(on)
@@ -467,20 +471,27 @@ test('office: a reply left for this session from the office goes in as the perso
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   files[INBOX] = JSON.stringify({ text: '1번으로 해 주세요', at: Date.now() / 1000 })
   await clock.advance(2_100)
-  expect(submitted).toContain('1번으로 해 주세요')
-  // Taken aside first, removed once it went in.
-  expect(runs.some((a) => a[0] === 'mv' && String(a.at(-1)).endsWith('/.claude/state/office/inbox/sid-1.json.sending'))).toBe(true)
+  expect(submitted).toContain(via('1번으로 해 주세요'))
+  // Taken aside first, holding the inbox lock every writer holds, removed once it went in.
+  const mv = runs.findIndex((a) => a[0] === 'mv' && String(a.at(-1)).endsWith('/.claude/state/office/inbox/sid-1.json.sending'))
+  expect(mv).toBeGreaterThan(0)
+  expect(runs[mv - 1]!.slice(2)).toEqual(['acquire', expect.stringMatching(/\/\.claude\/state\/office\/inbox\/sid-1\.json$/)])
+  expect(runs[mv + 1]!.slice(2)).toEqual(['release', expect.stringMatching(/sid-1\.json$/), 'tok'])
   expect(files[INBOX]).toBeUndefined()
   expect(files[INBOX + '.sending']).toBeUndefined()
   await clock.advance(4_100)
-  expect(submitted.filter((t) => t === '1번으로 해 주세요')).toHaveLength(1)
+  expect(submitted.filter((t) => t === via('1번으로 해 주세요'))).toHaveLength(1)
   files[INBOX] = JSON.stringify({ text: 'old', at: Date.now() / 1000 - 600 })
   await clock.advance(2_100)
   expect(submitted).not.toContain('old')
   // A brief answer or a worker's report is kept: it goes in late, saying how late.
   files[INBOX] = JSON.stringify({ text: '[brief answer] a.html: A', at: Date.now() / 1000 - 600, keep: true })
   await clock.advance(2_100)
-  expect(submitted).toContain('(10분 전 office inbox에 들어온 메시지)\n[brief answer] a.html: A')
+  expect(submitted).toContain(via('(10분 전 office inbox에 들어온 메시지)\n[brief answer] a.html: A'))
+  // The office names itself as the sender (office.py inbox_put sets `by`).
+  files[INBOX] = JSON.stringify({ text: '2번', at: Date.now() / 1000, by: ["the office page (the person's action there)"] })
+  await clock.advance(2_100)
+  expect(submitted.at(-1)).toBe(via('2번', "the office page (the person's action there)"))
   // Not past a day.
   files[INBOX] = JSON.stringify({ text: 'ancient', at: Date.now() / 1000 - 2 * 86400, keep: true })
   await clock.advance(2_100)
@@ -508,7 +519,7 @@ test('office: while a turn runs the inbox is left alone, and what piled up goes 
   expect(JSON.parse(files[INBOX]!).text).toBe('[coordinator] one\n\n[coordinator] two')
   await $.turn.complete({ turnId: 't1', answer: 'done', durationMs: 5, isAborted: false, usage: null } as any)
   await clock.advance(2_100)
-  expect(submitted).toEqual(['[coordinator] one\n\n[coordinator] two'])
+  expect(submitted).toEqual([via('[coordinator] one\n\n[coordinator] two')])
   expect(files[INBOX]).toBeUndefined()
   expect(files[INBOX + '.sending']).toBeUndefined()
 })
@@ -535,13 +546,13 @@ test('office: a submit that fails or is dropped puts the message back with its k
   expect(JSON.parse(files[INBOX]!)).toMatchObject({ text: '[coordinator] long job', at: back.at, tries: 2 })
   files[INBOX] = JSON.stringify({ ...JSON.parse(files[INBOX]!), text: '[coordinator] long job\n\n[coordinator] and this' })
   await clock.advance(2_100)
-  expect(submitted.at(-1)).toBe('(10분 전 office inbox에 들어온 메시지)\n[coordinator] long job\n\n[coordinator] and this')
+  expect(submitted.at(-1)).toBe(via('(10분 전 office inbox에 들어온 메시지)\n[coordinator] long job\n\n[coordinator] and this', 'coordinator session c1'))
   expect(files[INBOX]).toBeUndefined()
   // 150,000 characters go in whole (a live probe took them so).
   const long = '[coordinator] ' + 'z'.repeat(150_000) + ' END'
   files[INBOX] = JSON.stringify({ text: long, at: Date.now() / 1000, keep: true })
   await clock.advance(2_100)
-  expect(submitted.at(-1)).toBe(long)
+  expect(submitted.at(-1)).toBe(via(long))
 })
 
 test('office: a coordinator instruction that never goes in is kept under failed, and its coordinator gets a [coord] wake (peer, else its inbox)', async ($, on) => {
@@ -571,6 +582,7 @@ test('office: a coordinator instruction that never goes in is kept under failed,
   await clock.advance(2_100 * 8)
   const wake = JSON.parse(files['.claude/state/office/inbox/coord-sid.json']!)
   expect(wake.keep).toBe(true)
+  expect(wake.by).toEqual(['cc-mods in worker session sid-1 (w-slug)'])
   expect(wake.text).toContain('[coord] w-slug: 지시 전달 실패')
   // A reply from the office (no sender) only says so here.
   files[INBOX] = JSON.stringify({ text: 'plain reply', at: Date.now() / 1000 })
@@ -588,7 +600,7 @@ test('office: a message left aside by a reload while its submit waited goes back
   files[INBOX] = JSON.stringify({ text: '[coordinator] second', at: Date.now() / 1000, keep: true })
   await $.session.start({ surface: null, isInteractive: true, cwd: '/work' })
   await clock.advance(2_100)
-  expect(submitted).toEqual(['(전달 확인 전에 다시 보냄: 이미 받았다면 무시)\n[coordinator] first\n\n[coordinator] second'])
+  expect(submitted).toEqual([via('(전달 확인 전에 다시 보냄: 이미 받았다면 무시)\n[coordinator] first\n\n[coordinator] second')])
   expect(files[INBOX + '.sending']).toBeUndefined()
 })
 

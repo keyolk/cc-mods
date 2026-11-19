@@ -2,7 +2,15 @@
 // session by the office (a reply from its card, a brief answer), by a worker
 // for its coordinator (bin/coord-report), and by a coordinator for a worker
 // when a peer message cannot reach it (coord.ts send). register.ts takes it
-// every 2 s and submits it as the person's prompt.
+// every 2 s and submits it as a prompt, under a provenance line that names
+// who sent it (provenance): the model must not take a coordinator's or a
+// worker's text for the person's own words.
+//
+// Every writer appends (read, add, replace) and the taker renames the file
+// aside, each holding <sid>.json.lock (office/inboxfile.py; the mod takes it
+// through bin/inbox-lock): unlocked, two writers lost a message, and one
+// that read the file just before the taker renamed it wrote the taken text
+// back.
 //
 // A plugin's $.prompt.submit is a turn of its own: it waits until the session
 // is idle, and resolves only when that turn starts. Taken in the middle of a
@@ -20,6 +28,7 @@ export type InboxMsg = {
   from?: string // the coordinator session that sent it (coord.ts send)
   slug?: string // the worker's slug in that coordinator's ledger
   summary?: string // what that worker was doing, as the coordinator's wakes name it
+  by?: string[] // who wrote the texts in it, oldest first (provenance names them)
 }
 
 export const INBOX_STALE_S = 120
@@ -58,6 +67,55 @@ export function parseInbox(raw: string | undefined): InboxMsg | undefined {
     ...(typeof o.from === 'string' && o.from ? { from: o.from } : {}),
     ...(typeof o.slug === 'string' && o.slug ? { slug: o.slug } : {}),
     ...(typeof o.summary === 'string' && o.summary ? { summary: o.summary } : {}),
+    ...(senders(o.by).length ? { by: senders(o.by) } : {}),
+  }
+}
+
+// Who wrote what a message holds, each once, oldest first, from any number
+// of `by` fields (a list, or one name from an older writer).
+export function senders(...bys: unknown[]): string[] {
+  const out: string[] = []
+  for (const b of bys) for (const x of typeof b === 'string' ? [b] : Array.isArray(b) ? b : []) if (typeof x === 'string' && x && !out.includes(x)) out.push(x)
+  return out
+}
+
+// The line over a submitted inbox text. The text goes in as a plugin prompt
+// that renders as the person's (asUser), and its own head (`[worker x]`,
+// `[office→coord]`, none for an office reply) is only a convention; a peer
+// message carries Claude Code's own cross-session marker, this does not. So
+// the line says, in the way the [cc-mods context: …] notes do, that it came
+// through the inbox and from whom. The office's sender says the person acted
+// on the office page; a writer that predates `by` is named by its `from`
+// (a coordinator) or as unknown.
+export const PROVENANCE_HEAD = '[cc-mods inbox]'
+const PROVENANCE_TAIL = 'not typed by the user:'
+export function provenance(m: InboxMsg): string {
+  const by = m.by?.length ? m.by : m.from ? ['coordinator session ' + m.from.slice(0, 8)] : ['unknown']
+  return PROVENANCE_HEAD + ' Sent by ' + by.join('; ') + ', ' + PROVENANCE_TAIL
+}
+
+// A prompt without its provenance line, for readers that look at what a
+// prompt says (who asked what, the person's words): newline or folded space
+// after it. Text without one comes back as is.
+const PROVENANCE_RE = /^\s*\[cc-mods inbox\][^\n]*?not typed by the user:[ \t]*\n?/
+export function stripProvenance(text: string): string {
+  return text.replace(PROVENANCE_RE, '')
+}
+
+// A new text appended to what waits in the file: the oldest text's age, the
+// newest sender's from/slug/summary (a coordinator's instruction routes its
+// failure back to that coordinator), keep and tries carried, senders joined.
+export function appended(old: InboxMsg | undefined, add: InboxMsg): InboxMsg {
+  if (!old) return add
+  const by = senders(old.by, add.by)
+  return {
+    ...old,
+    ...add,
+    text: old.text + '\n\n' + add.text,
+    at: old.at || add.at,
+    ...(old.keep || add.keep ? { keep: true } : {}),
+    ...(old.tries ? { tries: old.tries } : {}),
+    ...(by.length ? { by } : {}),
   }
 }
 
@@ -92,6 +150,7 @@ export function putBack(m: InboxMsg, newer: InboxMsg | undefined): InboxMsg {
     ...(m.from ?? newer?.from ? { from: m.from ?? newer?.from } : {}),
     ...(m.slug ?? newer?.slug ? { slug: m.slug ?? newer?.slug } : {}),
     ...(m.summary ?? newer?.summary ? { summary: m.summary ?? newer?.summary } : {}),
+    ...(senders(m.by, newer?.by).length ? { by: senders(m.by, newer?.by) } : {}),
   }
 }
 

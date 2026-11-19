@@ -57,7 +57,7 @@ import { answerFiles, dropUnsourcedTickets, isMade, outputKeysToDrop, prOutputs,
 import { clearArgv, isPaneId, publishArgv, type Attention, type CcState } from './lib/tmux'
 import { askKey, askLabel, askState, dialogFor, toolOfNotice, type Asked } from './lib/asks'
 import { clip, hhmm } from './lib/text'
-import { INBOX_HOLD_MAX_MS, INBOX_TRIES, failWake, inboxPrompt, landed, parseInbox, putBack, resumed, type InboxMsg } from './lib/inbox'
+import { INBOX_HOLD_MAX_MS, INBOX_TRIES, appended, failWake, inboxPrompt, landed, parseInbox, provenance, putBack, resumed, type InboxMsg } from './lib/inbox'
 import { DEFER_DIR, deferredUntil } from './lib/defer'
 import { displayName, healDue, healShown, healStuck, healTargets, healWanted, isMcpTool, liveServers, looksDisconnected, MCP_WATCH_EMPTY, mcpServerKey, nextWatch, normalizeServer, radarNames, reconnectOutcome, serversNamed, type HealTry, type McpWatch } from './lib/mcpheal'
 import { clientItems, navItems, navTarget, skipHidden, type NavDir, type NavItem } from './lib/nav'
@@ -87,7 +87,7 @@ import { PROCEED_MAX, PROCEED_POLICY, PROCEED_REPLY, closingAsk } from './lib/pr
 import { noteText, sentDigests, userTexts, type NoteBlock } from './lib/notes'
 import { ASKS_DIR, askedProperly, endsAsking } from './lib/headsup'
 import { SELF_CHECK_PROMPT, STATUS_DIR, STATUS_TOOL, parseStatus, selfCheckDue, stampTurn, workerOf } from './lib/status'
-import { coordCommand, coordGodEnded, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, isCoordTool } from './coord'
+import { coordCommand, coordGodEnded, coordIdle, coordParts, coordRecheck, coordReviewRefresh, coordStart, coordTool, inboxLocked, isCoordTool } from './coord'
 
 const P = 'cc-mods'
 const HOME_HOOKS = '/.claude/hooks/'
@@ -2346,12 +2346,16 @@ async function refreshExp($: any, paths?: string[]) {
 
 // The office (office/office.py, /office): a reply the person sent this
 // session from its quick-action card waits in a file named by session id
-// (lib/inbox.ts); it goes in as their own prompt, so the model reads it as
-// typed. A plugin's prompt waits for the session to be idle, so the file is
+// (lib/inbox.ts), as do a coordinator's instructions and a worker's reports;
+// it goes in as a prompt under a provenance line naming its sender
+// (lib/inbox.ts provenance), so the model can tell it from the person's own
+// typing. A plugin's prompt waits for the session to be idle, so the file is
 // taken only then: taken mid-turn, the first message sat in the engine's
 // queue for the whole turn and held the inbox shut behind it. Taken, it is
 // moved aside (<sid>.json.sending), so what arrives meanwhile starts a new
-// file, and removed once the submit's turn started with the text in it.
+// file, and removed once the submit's turn started with the text in it. The
+// move and every write of the inbox file hold its lock (coord.ts
+// inboxLocked), as every other writer does.
 let officeBusy = false
 async function officeInbox($: any) {
   if (officeBusy || !home) return
@@ -2366,24 +2370,26 @@ async function officeInbox($: any) {
     // may have gone in, or not; it goes back in front, saying so.
     const left = parseInbox(await readText($, sending))
     if (left) {
-      await $.fs.write(file, JSON.stringify(resumed(left, parseInbox(await readText($, file)))))
+      await inboxLocked($, file, async () => $.fs.write(file, JSON.stringify(resumed(left, parseInbox(await readText($, file))))))
       await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
     }
     if (!(await $.fs.exists(file).catch(() => false))) return
     const turn = (await read($, turnA)) as { at: number } | null
     if (mainTurnRunning && (!turn || Date.now() - turn.at < INBOX_HOLD_MAX_MS)) return
-    const moved = await $.process.run(['mv', '-f', file, sending], { timeoutMs: 3000 })
+    const moved: { exitCode: number } = await inboxLocked($, file, () => $.process.run(['mv', '-f', file, sending], { timeoutMs: 3000 }))
     if (moved.exitCode !== 0) return
     const msg = parseInbox(await readText($, sending))
-    const text = msg && inboxPrompt(msg, Date.now() / 1000)
-    if (!msg || !text) {
+    const body = msg && inboxPrompt(msg, Date.now() / 1000)
+    if (!msg || !body) {
       await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
       return
     }
-    $.ui.toast('office: "' + clip(text, 60) + '"')
+    $.ui.toast('office: "' + clip(body, 60) + '"')
     let why: string
     try {
-      const r = landed(await $.prompt.submit({ text, asUser: true }), text)
+      // landed() looks for the body's head, not the provenance line: that
+      // line is the same for every message from one sender.
+      const r = landed(await $.prompt.submit({ text: provenance(msg) + '\n' + body, asUser: true }), body)
       if (r === true) {
         await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
         return
@@ -2393,9 +2399,12 @@ async function officeInbox($: any) {
       why = 'submit refused: ' + clip(String(err), 80)
     }
     // Back in front of anything that arrived meanwhile, for the next tick.
-    const back = putBack(msg, parseInbox(await readText($, file)))
-    if ((back.tries ?? 0) < INBOX_TRIES) await $.fs.write(file, JSON.stringify(back))
-    else await inboxGiveUp($, back, why)
+    const back = await inboxLocked($, file, async () => {
+      const b = putBack(msg, parseInbox(await readText($, file)))
+      if ((b.tries ?? 0) < INBOX_TRIES) await $.fs.write(file, JSON.stringify(b))
+      return b
+    })
+    if ((back.tries ?? 0) >= INBOX_TRIES) await inboxGiveUp($, back, why)
     await $.process.run(['rm', '-f', sending], { timeoutMs: 3000 })
   } finally {
     officeBusy = false
@@ -2417,8 +2426,8 @@ async function inboxGiveUp($: any, m: InboxMsg, why: string) {
   const r = await $.session.send({ to: { sessionId: m.from }, text: wake }).catch((err: unknown) => ({ isDelivered: false, reason: String(err) }))
   if (r?.isDelivered) return
   const inbox = home + '/.claude/state/office/inbox/' + m.from + '.json'
-  const old = parseInbox(await readText($, inbox))
-  await $.fs.write(inbox, JSON.stringify({ text: old ? old.text + '\n\n' + wake : wake, at: old?.at ?? Date.now() / 1000, keep: true }))
+  const add = { text: wake, at: Date.now() / 1000, keep: true, by: ['cc-mods in worker session ' + sid.slice(0, 8) + (m.slug ? ' (' + m.slug + ')' : '')] }
+  await inboxLocked($, inbox, async () => $.fs.write(inbox, JSON.stringify(appended(parseInbox(await readText($, inbox)), add))))
 }
 
 // btw from the office card: side messages for this session, asked in order

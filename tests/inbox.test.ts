@@ -3,7 +3,7 @@
 // a coordinator gets, and where a long instruction goes. No engine.
 import { expect, test } from 'claude-code/testing'
 
-import { INBOX_KEEP_S, INLINE_MAX, failWake, inboxPrompt, landed, parseInbox, putBack, resumed, spillDir, spilled } from '../hooks/lib/inbox'
+import { INBOX_KEEP_S, INLINE_MAX, appended, failWake, inboxPrompt, landed, parseInbox, provenance, putBack, resumed, senders, spillDir, spilled, stripProvenance } from '../hooks/lib/inbox'
 
 const NOW = 1_800_000_000
 
@@ -58,4 +58,33 @@ test('inbox: a long instruction keeps its head and names the file; the file goes
   expect(spillDir(['/h/briefs', '/h/research/other'], 'w', '/h')).toBe('/h/research/other')
   expect(spillDir(['/h/briefs'], 'w', '/h')).toBe('/h/briefs')
   expect(spillDir(undefined, 'w', '/h')).toBe('/h/.claude/state/office/inbox/long')
+})
+
+test('inbox: the provenance line names every sender, else the coordinator it came from, else says unknown', () => {
+  const office = "the office page (the person's action there)"
+  expect(provenance({ text: 'x', at: NOW, by: [office] })).toBe("[cc-mods inbox] Sent by the office page (the person's action there), not typed by the user:")
+  expect(provenance({ text: 'x', at: NOW, by: ['a worker session (bin/coord-report)', 'coordinator cc-mods-79'] })).toBe('[cc-mods inbox] Sent by a worker session (bin/coord-report); coordinator cc-mods-79, not typed by the user:')
+  // A writer that predates `by`: its from, else unknown.
+  expect(provenance({ text: 'x', at: NOW, from: '8aa8ea53-8bfd-4484' })).toBe('[cc-mods inbox] Sent by coordinator session 8aa8ea53, not typed by the user:')
+  expect(provenance({ text: 'x', at: NOW })).toBe('[cc-mods inbox] Sent by unknown, not typed by the user:')
+})
+
+test('inbox: the provenance line comes off for readers, on its own line or folded into one', () => {
+  const line = provenance({ text: 'x', at: NOW, by: ['coordinator c'] })
+  expect(stripProvenance(line + '\n[worker a] QUESTION which one?')).toBe('[worker a] QUESTION which one?')
+  expect(stripProvenance(line + ' [office→coord] w: 테스트 먼저')).toBe('[office→coord] w: 테스트 먼저')
+  expect(stripProvenance('plain words')).toBe('plain words')
+  expect(stripProvenance('say [cc-mods inbox] later, not typed by the user: x')).toBe('say [cc-mods inbox] later, not typed by the user: x')
+})
+
+test('inbox: senders are kept once each, oldest first, through parse, put-back and append', () => {
+  expect(senders(['a', 'b'], 'b', ['c', 'a'], undefined, 3)).toEqual(['a', 'b', 'c'])
+  expect(parseInbox(JSON.stringify({ text: 'x', at: 1, by: ['a', 7, 'b'] }))?.by).toEqual(['a', 'b'])
+  expect(parseInbox(JSON.stringify({ text: 'x', at: 1, by: 'a' }))?.by).toEqual(['a'])
+  expect(putBack({ text: 'one', at: 1, by: ['a'] }, { text: 'two', at: 2, by: ['b'] }).by).toEqual(['a', 'b'])
+  const old = { text: 'reply', at: NOW - 30, tries: 1, by: ['office'] }
+  expect(appended(old, { text: '[coordinator] go', at: NOW, keep: true, from: 'c1', slug: 'w', by: ['coordinator c'] })).toEqual({
+    text: 'reply\n\n[coordinator] go', at: NOW - 30, keep: true, tries: 1, from: 'c1', slug: 'w', by: ['office', 'coordinator c'],
+  })
+  expect(appended(undefined, { text: 'x', at: NOW, by: ['b'] })).toEqual({ text: 'x', at: NOW, by: ['b'] })
 })

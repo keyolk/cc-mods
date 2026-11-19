@@ -47,6 +47,13 @@ function stubs(on: any, o: { files: Record<string, string>; submitted: string[];
   on('session.send', (_$: any, e: any) => o.peer?.(e) ?? NO_PEER)
 }
 
+// Claude Code's session registry (~/.claude/sessions/<pid>.json), read
+// file by file through fs.list and fs.read.
+function registry(on: any, files: Record<string, string>, byPid: Record<number, string>) {
+  for (const [pid, text] of Object.entries(byPid)) files['/home/u/.claude/sessions/' + pid + '.json'] = text
+  on('fs.list', (_$: any, e: any) => ({ value: e.path === '/home/u/.claude/sessions' ? Object.keys(byPid).map((p) => ({ name: p + '.json', kind: 'file' as const, size: 1, mtimeMs: 1, isLink: false })) : [] }))
+}
+
 test('coord: a coord tool called while a reload is still starting the module is answered', async ($, on) => {
   // Live, three times: main changed, the plugin reloaded as coord_close was
   // about to run, and the call met a module whose session.start had not
@@ -299,11 +306,15 @@ test('coord: a claude -p child naming the worker\'s pane does not make the worke
     // The alive read ends with its done line; a read without it did not finish.
     run: (a) => (a[0] === 'sh' && String(a[2]).includes('ps -o comm=') ? (asked.push(a.slice(3)), live + '\n--alive-done--') : undefined),
   })
+  // The worker's registry file is torn (an extra } after its object, as
+  // Claude Code left 4 of 23 on 2026-11-20): its pid is still read.
+  files['/home/u/.claude/sessions/4242.json'] = JSON.stringify({ pid: 4242, sessionId: 'w96', name: 'coord-route-1a' }) + '}'
+  on('fs.list', (_$: any, e: any) => ({ value: e.path === '/home/u/.claude/sessions' ? [{ name: '4242.json', kind: 'file' as const, size: 1, mtimeMs: 1, isLink: false }] : [] }))
   const clock = mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   await clock.advance(10_000)
   await clock.advance(10_000)
-  expect(asked.at(-1)).toEqual(['/home/u', 'w96'])
+  expect(asked.at(-1)).toEqual(['/home/u', 'w96=4242'])
   expect(submitted.filter((t) => t.includes('gone'))).toEqual([])
   expect(JSON.parse(files[LEDGER]!).workers[0].endedAt).toBeUndefined()
   // The worker's own session ends: then it is gone, on the second tick.
@@ -446,7 +457,8 @@ test('coord: coord_send goes as a peer message, which reaches a worker mid-turn;
 
 test('coord: with no peer message, coord_send writes the inbox marked keep with its sender, and merges with an older one keeping its age', async ($, on) => {
   const files: Record<string, string> = { [LEDGER]: ledgerJson() }
-  stubs(on, { files, submitted: [], panes: () => '' })
+  const runs: string[][] = []
+  stubs(on, { files, submitted: [], panes: () => '', runs, run: (a) => (String(a[1] ?? '').endsWith('/bin/inbox-lock') ? (a[2] === 'acquire' ? 'tok' : '') : undefined) })
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   const inbox = '/home/u/.claude/state/office/inbox/w4.json'
@@ -454,7 +466,9 @@ test('coord: with no peer message, coord_send writes the inbox marked keep with 
   expect(r.result).toContain('left in its office inbox (no peer message: no live session on this machine has id w)')
   expect(r.result).toContain('a [coord] wake tells you if it never does')
   const one = JSON.parse(files[inbox]!)
-  expect(one).toMatchObject({ text: '[coordinator] first', keep: true, from: 'sid-1', slug: 'brief-decision-4' })
+  expect(one).toMatchObject({ text: '[coordinator] first', keep: true, from: 'sid-1', slug: 'brief-decision-4', by: ['coordinator cc-mods-d9'] })
+  // Written holding the inbox lock (bin/inbox-lock), as every writer does.
+  expect(runs.filter((a) => String(a[1] ?? '').endsWith('/bin/inbox-lock')).map((a) => a[2])).toEqual(['acquire', 'release'])
   await $.tool.call({ tool: 'mcp__cc-mods__coord_send', slug: 'brief-decision-4', text: 'second' } as any)
   expect(JSON.parse(files[inbox]!)).toMatchObject({ text: '[coordinator] first\n\n[coordinator] second', keep: true, at: one.at })
 })
@@ -492,12 +506,14 @@ test('coord: with the mode on every live session is adopted but another coordina
     runs,
     run: (argv) => {
       const cmd = String(argv[2] ?? '')
-      if (argv[0] === 'sh' && cmd.includes('.claude/sessions') && !cmd.includes('ps -o')) return '{"s":"ops","n":"ops-k8s"}\n{"s":"sid-1","n":"cc-mods-d9"}'
       // The other ledgers, one compact JSON each, this one left out.
       if (argv[0] === 'sh' && cmd.startsWith('for f in')) return argv[4] === LEDGER ? JSON.stringify(other) : '!'
       return undefined
     },
   })
+  // The session registry, one file a session; ops-k8s's torn as Claude Code
+  // leaves some (an extra } after the object): its name is still read.
+  registry(on, files, { 701: JSON.stringify({ pid: 701, sessionId: 'ops', name: 'ops-k8s' }) + '}', 702: JSON.stringify({ pid: 702, sessionId: 'sid-1', name: 'cc-mods-d9' }) })
   const clock = mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   const before: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_roster' } as any)
@@ -530,7 +546,8 @@ test('coord: with the mode on every live session is adopted but another coordina
 test('coord: an auto-adopted session the person just typed in still takes coord_send; the result notes it', async ($, on) => {
   const files: Record<string, string> = { [LEDGER]: ledgerJson() }
   const typed = String(Math.floor((Date.now() - 60_000) / 1000))
-  stubs(on, { files, submitted: [], panes: () => ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%7\t@7\tops\tdone\tnone\t/src/ops-k8s\t' + typed + '\t'].join('\n'), run: (argv) => (argv[0] === 'sh' && String(argv[2]).includes('.claude/sessions') && !String(argv[2]).includes('ps -o') ? '{"s":"ops","n":"ops-k8s"}' : undefined) })
+  stubs(on, { files, submitted: [], panes: () => ['%1\t@1\tsid-1\tdone\tnone\t/work\t\t', '%7\t@7\tops\tdone\tnone\t/src/ops-k8s\t' + typed + '\t'].join('\n'), })
+  registry(on, files, { 701: JSON.stringify({ pid: 701, sessionId: 'ops', name: 'ops-k8s' }) })
   mock.clock(on)
   await $.session.start({ surface: null, isInteractive: false, cwd: '/work' })
   const r: any = await $.tool.call({ tool: 'mcp__cc-mods__coord_roster' } as any)
