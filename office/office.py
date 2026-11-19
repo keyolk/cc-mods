@@ -2130,6 +2130,20 @@ class Handler(BaseHTTPRequestHandler):
             name = unquote(self.path[len("/briefs/"):-len("/open")])
             code, out = command.open_brief_session(name, self.rfile.read(size))
             return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
+        if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/artifact"):
+            # The ⇅ Artifact button on a brief's own page: from the office's frame (origin "null")
+            # or a file:// brief in a tweb pane (also "null"). Same guard as /open; the page sends
+            # nothing but its path, and the coordinator gets the fixed /brief-artifact prompt.
+            from urllib.parse import unquote
+
+            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
+            if site == "cross-site" and origin != "null":
+                return self.send(403, b"forbidden", "text/plain")
+            if int(self.headers.get("Content-Length") or 0) > 1000:
+                return self.send(413, b"too large", "text/plain")
+            name = unquote(self.path[len("/briefs/"):-len("/artifact")])
+            code, out = command.artifact_from_brief(name, lambda s, t: inbox_put(s, t, keep=True), alive_sessions())
+            return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
         if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/anno"):
             # Annotations drawn on a brief shown here (keyolk/briefs bin/anno.js). The brief is
             # served sandboxed (origin "null"), so it has no office token: accept only a same-

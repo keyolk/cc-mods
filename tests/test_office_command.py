@@ -198,6 +198,37 @@ class BriefFrameTest(BriefsCase):
         saved = json.loads((self.repo / "2026-11-08-a.anno.json").read_text())
         self.assertEqual(saved["cards"][0]["text"], "hi")
 
+    def test_the_artifact_button_on_a_brief_page_reaches_a_live_coordinator(self):
+        # A file:// brief in a tweb pane posts here with Origin "null" and an empty body; the
+        # office picks the coordinator, since the page knows none.
+        f = self.brief("2026-11-19-x")
+        self.ledger([])
+        base = self.serve()
+        hdr = {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "cross-site"}
+        with mock.patch.object(office, "inbox_put", side_effect=self.put), \
+                mock.patch.object(office, "alive_sessions", return_value={COORD}):
+            code, out = self.post(base + "/briefs/" + f + "/artifact", b"", hdr)
+        self.assertEqual(code, 200, out)
+        self.assertEqual(self.sent, [(COORD, f"[office→coord] (re: {f}) /brief-artifact {f}")])
+        self.assertEqual(self.kept, [True])
+
+    def test_the_artifact_button_on_a_brief_page_refuses_other_sites_no_coordinator_and_non_briefs(self):
+        f = self.brief("2026-11-19-x")
+        self.ledger([])
+        base = self.serve()
+        ok = {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "cross-site"}
+        evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        with mock.patch.object(office, "inbox_put", side_effect=self.put):
+            with mock.patch.object(office, "alive_sessions", return_value={COORD}):
+                self.assertEqual(self.post(base + "/briefs/" + f + "/artifact", b"", evil)[0], 403)
+                self.assertEqual(self.post(base + "/briefs/index.html/artifact", b"", ok)[0], 404)
+                self.assertEqual(self.post(base + "/briefs/../x.html/artifact", b"", ok)[0], 404)
+                self.assertEqual(self.post(base + "/briefs/" + f + "/artifact", b"x" * 2000, ok)[0], 413)
+            # The coordinator's session is gone: nobody to run /brief-artifact.
+            with mock.patch.object(office, "alive_sessions", return_value=set()):
+                self.assertEqual(self.post(base + "/briefs/" + f + "/artifact", b"", ok)[0], 409)
+        self.assertEqual(self.sent, [])
+
     def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
         f = self.brief("2026-11-08-a")
         self.fake_brief_cli()

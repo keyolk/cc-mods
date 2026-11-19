@@ -611,7 +611,12 @@ else the first name of your account's full name, else your login name.
   bar, and no answer buttons under a brief they are not about). `↗ 밖으로` on a
   brief opens it alone in a window of its own (the default browser, or the
   place picked in ⚙), never in the office page. The office page itself sends
-  `frame-ancestors 'none'`: nothing can frame it.
+  `frame-ancestors 'none'`: nothing can frame it. `⇅` on a brief's own page
+  (keyolk/briefs puts it there, also on a `file://` brief in a tweb pane)
+  posts to `/briefs/<name>/artifact`; the office hands the most recently
+  active live coordinator the same fixed `/brief-artifact <name>` prompt as
+  the 📚 card's button, or answers 409 when no coordinator runs (the page
+  then copies the command instead).
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only

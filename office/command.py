@@ -1062,6 +1062,18 @@ def send_artifact(name: str, coord_sid: str, inbox_put) -> tuple[int, dict]:
     return 200, {"ok": True, "sent": f"Artifact 동기화 → {led.get('name') or coord_sid[:8]}", "at": int(time.time() * 1000)}
 
 
+def artifact_from_brief(name: str, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
+    """POST /briefs/<name>/artifact: the ⇅ button on a brief's own page (keyolk/briefs injects it;
+    the page is in the office's frame, or a file:// page in a tweb pane that posts here). The
+    page knows no coordinator, so this picks one: a coordinator whose session is alive, the most
+    recently active first. Same fixed /brief-artifact prompt as the 📚 card (send_artifact)."""
+    leds = [d for d in coord.ledgers() if SID.match(d.get("sid") or "") and (alive is None or d["sid"] in alive)]
+    if not leds:
+        return 409, {"ok": False, "error": "no coordinator is running"}
+    led = max(leds, key=lambda d: d.get("at") or 0)
+    return send_artifact(name, led["sid"], inbox_put)
+
+
 def act(body: dict, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
     kind = body.get("kind")
     if kind == "brief_answer":
