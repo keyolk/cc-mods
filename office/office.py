@@ -2106,6 +2106,15 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host", "")
         return host in (f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}")
 
+    def other_site(self) -> bool:
+        """A POST that another web site's page made. Browsers send Origin on every cross-site POST,
+        so a remote page always names itself. A file:// page here names no site: Chrome sends
+        Origin "null", and tweb's Electron sends no Origin at all (Sec-Fetch-Site cross-site, no
+        Origin header, measured 2026-11-20), which this check refused with 403 so the briefs
+        buttons fell back to copying a command."""
+        site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin")
+        return site == "cross-site" and origin not in (None, "null")
+
     def do_POST(self):
         # Opening the next card changes nothing in a session, so the tmux key
         # needs no token; it still has to come from this machine.
@@ -2117,8 +2126,7 @@ class Handler(BaseHTTPRequestHandler):
             # other site's page), and the brief only names a session index and a mode.
             from urllib.parse import unquote
 
-            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
-            if site == "cross-site" and origin != "null":
+            if self.other_site():
                 return self.send(403, b"forbidden", "text/plain")
             size = int(self.headers.get("Content-Length") or 0)
             if size > 1000:
@@ -2129,8 +2137,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.local() and self.path == "/briefs/artifact-sync":
             # The root ⇅ Artifact button on the briefs index (keyolk/briefs): same origin guard and
             # size cap as the per-brief button below; the coordinator gets a fixed prompt.
-            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
-            if site == "cross-site" and origin != "null":
+            if self.other_site():
                 return self.send(403, b"forbidden", "text/plain")
             if int(self.headers.get("Content-Length") or 0) > 1000:
                 return self.send(413, b"too large", "text/plain")
@@ -2142,8 +2149,7 @@ class Handler(BaseHTTPRequestHandler):
             # nothing but its path, and the coordinator gets the fixed /brief-artifact prompt.
             from urllib.parse import unquote
 
-            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
-            if site == "cross-site" and origin != "null":
+            if self.other_site():
                 return self.send(403, b"forbidden", "text/plain")
             if int(self.headers.get("Content-Length") or 0) > 1000:
                 return self.send(413, b"too large", "text/plain")
@@ -2157,8 +2163,7 @@ class Handler(BaseHTTPRequestHandler):
             # (Sec-Fetch-Site cross-site with an Origin other than "null"), capped in size.
             from urllib.parse import unquote
 
-            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
-            if site == "cross-site" and origin != "null":
+            if self.other_site():
                 return self.send(403, b"forbidden", "text/plain")
             size = int(self.headers.get("Content-Length") or 0)
             if size <= 0 or size > 1_000_000:

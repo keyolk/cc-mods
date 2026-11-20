@@ -245,6 +245,23 @@ class BriefFrameTest(BriefsCase):
         self.assertEqual(self.sent, [(COORD, "[office→coord] (re: briefs index) /brief-artifact --sync")])
         self.assertEqual(self.kept, [True])
 
+    def test_a_file_page_in_tweb_electron_sends_no_origin_and_still_reaches_the_coordinator(self):
+        # tweb's Electron posts from a file:// page with Sec-Fetch-Site cross-site and no Origin
+        # header at all (measured 2026-11-20); the guard took that for another site and said 403.
+        self.ledger([])
+        base = self.serve()
+        tweb = {"Content-Type": "text/plain", "Sec-Fetch-Site": "cross-site"}
+        evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        f = self.brief("2026-11-19-x")
+        with mock.patch.object(office, "inbox_put", side_effect=self.put), \
+                mock.patch.object(office, "alive_sessions", return_value={COORD}):
+            self.assertEqual(self.post(base + "/briefs/artifact-sync", b"", evil)[0], 403)
+            code, out = self.post(base + "/briefs/artifact-sync", b"", tweb)
+            self.assertEqual(code, 200, out)
+            self.assertEqual(self.post(base + "/briefs/" + f + "/artifact", b"", tweb)[0], 200)
+        self.assertEqual([t for _, t in self.sent], ["[office→coord] (re: briefs index) /brief-artifact --sync",
+                                                    f"[office→coord] (re: {f}) /brief-artifact {f}"])
+
     def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
         f = self.brief("2026-11-08-a")
         self.fake_brief_cli()
