@@ -229,6 +229,22 @@ class BriefFrameTest(BriefsCase):
                 self.assertEqual(self.post(base + "/briefs/" + f + "/artifact", b"", ok)[0], 409)
         self.assertEqual(self.sent, [])
 
+    def test_the_root_artifact_button_on_the_index_asks_a_live_coordinator_to_sync_all(self):
+        self.ledger([])
+        base = self.serve()
+        ok = {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "cross-site"}
+        evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        with mock.patch.object(office, "inbox_put", side_effect=self.put):
+            with mock.patch.object(office, "alive_sessions", return_value={COORD}):
+                self.assertEqual(self.post(base + "/briefs/artifact-sync", b"", evil)[0], 403)
+                self.assertEqual(self.post(base + "/briefs/artifact-sync", b"x" * 2000, ok)[0], 413)
+                code, out = self.post(base + "/briefs/artifact-sync", b"", ok)
+            with mock.patch.object(office, "alive_sessions", return_value=set()):
+                self.assertEqual(self.post(base + "/briefs/artifact-sync", b"", ok)[0], 409)
+        self.assertEqual(code, 200, out)
+        self.assertEqual(self.sent, [(COORD, "[office→coord] (re: briefs index) /brief-artifact --sync")])
+        self.assertEqual(self.kept, [True])
+
     def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
         f = self.brief("2026-11-08-a")
         self.fake_brief_cli()

@@ -616,7 +616,10 @@ else the first name of your account's full name, else your login name.
   posts to `/briefs/<name>/artifact`; the office hands the most recently
   active live coordinator the same fixed `/brief-artifact <name>` prompt as
   the 📚 card's button, or answers 409 when no coordinator runs (the page
-  then copies the command instead).
+  then copies the command instead). The root `⇅ Artifact` button on the briefs
+  index posts to `/briefs/artifact-sync` the same way; that coordinator gets
+  `/brief-artifact --sync` (a round for every brief that may be out of sync,
+  then the import of Artifacts that have no brief).
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only
