@@ -30,6 +30,7 @@ JSON, one row each, for the cockpit's Coord tab.
 
 import glob
 import html
+import hmac
 import json
 import os
 import re
@@ -1072,6 +1073,38 @@ def artifact_from_brief(name: str, inbox_put, alive: set[str] | None = None) -> 
     if not led:
         return 409, {"ok": False, "error": "no coordinator is running"}
     return send_artifact(name, led["sid"], inbox_put)
+
+
+def answer_from_page(name: str, raw: bytes, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
+    """POST /briefs/<name>/answer: the answer buttons on a brief's own page (keyolk/briefs draws
+    them from the sidecar; a file:// page in a tweb pane or the brief in the office's frame posts
+    here). The page sends {qid, label | text, note?, seen?, nonce}; the answer goes through
+    `answer` above, so it is recorded and wakes whoever asked exactly as a press in the office does.
+    The page names its question: one it does not have is 404, not answer's "which question?".
+
+    nonce: every file:// page reaches this route with Origin null or absent, and ~/briefs also
+    holds pages other people wrote (Artifacts brought in with `brief import`). An answer can be an
+    approval, so it is taken only with the token `brief` put in this brief's sidecar and page
+    (answer_nonce); an imported brief has none and can never be answered from a page. A missing,
+    wrong or other brief's token is 403, checked before anything about the question is said."""
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        return 400, {"ok": False, "error": "bad json"}
+    keys = ("qid", "label", "text", "note", "seen", "nonce")
+    if not isinstance(body, dict) or not all(isinstance(body.get(k, ""), str) for k in keys):
+        return 400, {"ok": False, "error": "send {qid, label | text, note?, seen?} as strings"}
+    if not NAME.match(name or "") or not brief_path(os.path.join(root(), name)):
+        return 404, {"ok": False, "error": "no such brief"}
+    side = _read_side(name, fresh=True)
+    want = side.get("answer_nonce") if isinstance(side, dict) and not side.get("imported") else None
+    if not isinstance(want, str) or len(want) < 20 or not hmac.compare_digest(want.encode(), body.get("nonce", "").encode()):
+        return 403, {"ok": False, "error": "this page may not answer here: answer in the office or with `brief answer`"}
+    qid = body.get("qid", "")
+    if not any(q["id"] == qid for q in _decisions(side)):
+        return 404, {"ok": False, "error": f"no question {qid!r} on this brief"}
+    code, out = answer(name, qid, body.get("label", ""), body.get("note", ""), inbox_put, body.get("text", ""), body.get("seen", ""), alive)
+    return code, {"ok": code == 200, **out}
 
 
 def live_coordinator(alive: set[str] | None = None) -> dict | None:
