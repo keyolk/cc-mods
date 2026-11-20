@@ -2156,6 +2156,21 @@ class Handler(BaseHTTPRequestHandler):
             name = unquote(self.path[len("/briefs/"):-len("/artifact")])
             code, out = command.artifact_from_brief(name, lambda s, t: inbox_put(s, t, keep=True), alive_sessions())
             return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
+        if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/answer"):
+            # The answer buttons on a brief's own page (keyolk/briefs): same guard as /artifact.
+            # The body is one answer (an option label or the person's words, up to 2000 chars
+            # each with a note), so the cap is larger; command.answer_from_page does what an
+            # answer pressed in the office does, with the same inbox and live sessions.
+            from urllib.parse import unquote
+
+            if self.other_site():
+                return self.send(403, b"forbidden", "text/plain")
+            size = int(self.headers.get("Content-Length") or 0)
+            if size > 20_000:
+                return self.send(413, b"too large", "text/plain")
+            name = unquote(self.path[len("/briefs/"):-len("/answer")])
+            code, out = command.answer_from_page(name, self.rfile.read(size), lambda s, t: inbox_put(s, t, keep=True), alive_sessions())
+            return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
         if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/anno"):
             # Annotations drawn on a brief shown here (keyolk/briefs bin/anno.js). The brief is
             # served sandboxed (origin "null"), so it has no office token: accept only a same-

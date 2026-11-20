@@ -262,6 +262,68 @@ class BriefFrameTest(BriefsCase):
         self.assertEqual([t for _, t in self.sent], ["[office→coord] (re: briefs index) /brief-artifact --sync",
                                                     f"[office→coord] (re: {f}) /brief-artifact {f}"])
 
+    def answer_post(self, base: str, f: str, body, hdr: dict | None = None):
+        raw = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
+        code, out = self.post(base + "/briefs/" + f + "/answer", raw, hdr or {"Content-Type": "text/plain", "Sec-Fetch-Site": "cross-site"})
+        try:
+            return code, json.loads(out)
+        except ValueError:
+            return code, out
+
+    def test_an_answer_pressed_on_a_brief_page_is_recorded_and_wakes_the_coordinator(self):
+        # The page in tweb's Electron (file://, no Origin): the same record and prompt as an
+        # answer pressed in the office (command.answer).
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD})
+        self.ledger([])
+        base = self.serve()
+        with mock.patch.object(office, "inbox_put", side_effect=self.put), \
+                mock.patch.object(office, "alive_sessions", return_value={COORD}):
+            code, out = self.answer_post(base, f, {"qid": "q1", "label": "B", "note": "빨리"})
+        self.assertEqual(code, 200, out)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["sent"], "B → cc-mods-d9")
+        ans = self.side(f)["decision"]["answer"]
+        self.assertEqual((ans["choice"], ans["note"], ans["by"]), ("B", "빨리", "office"))
+        self.assertEqual(self.sent, [(COORD, f"[brief answer] {f}: B — 빨리")])
+        self.assertEqual(self.kept, [True])
+
+    def test_a_free_answer_from_a_brief_page_in_the_office_frame(self):
+        # The brief in the office's sandboxed frame: same origin as the office, Origin "null".
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD})
+        base = self.serve()
+        hdr = {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "same-origin"}
+        with mock.patch.object(office, "inbox_put", side_effect=self.put), \
+                mock.patch.object(office, "alive_sessions", return_value={COORD}):
+            code, out = self.answer_post(base, f, {"qid": "q1", "text": "둘 다 아님"}, hdr)
+        self.assertEqual(code, 200, out)
+        self.assertEqual(self.side(f)["decision"]["answer"]["choice"], "직접 답")
+        self.assertEqual(self.sent, [(COORD, f"[brief answer] {f}: 직접 답 — 둘 다 아님")])
+
+    def test_the_answer_route_refuses_other_sites_bad_bodies_unknown_questions_and_a_second_answer(self):
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD})
+        plain = self.brief("2026-11-20-plain")
+        base = self.serve()
+        evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
+        with mock.patch.object(office, "inbox_put", side_effect=self.put), \
+                mock.patch.object(office, "alive_sessions", return_value={COORD}):
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A"}, evil)[0], 403)
+            # Claimed, not sent: the route refuses on Content-Length before reading the body.
+            self.assertEqual(self.answer_post(base, f, b"{}", {"Content-Type": "text/plain", "Content-Length": "20001"})[0], 413)
+            self.assertEqual(self.answer_post(base, f, b"{not json")[0], 400)
+            self.assertEqual(self.answer_post(base, f, ["q1"])[0], 400)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": 2})[0], 400)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "Z"})[0], 400)  # not one of its options
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A", "text": "x"})[0], 400)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q9", "label": "A"})[0], 404)
+            self.assertEqual(self.answer_post(base, plain, {"qid": "q1", "label": "A"})[0], 404)  # asks nothing
+            self.assertEqual(self.answer_post(base, "index.html", {"qid": "q1", "label": "A"})[0], 404)
+            self.assertEqual(self.answer_post(base, "2026-11-20-missing.html", {"qid": "q1", "label": "A"})[0], 404)
+            self.assertEqual(self.sent, [])
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A"})[0], 200)
+            code, out = self.answer_post(base, f, {"qid": "q1", "label": "B"})
+        self.assertEqual((code, out["ok"], out["error"], out["answer"]["choice"]), (409, False, "already answered", "A"))
+        self.assertEqual(len(self.sent), 1)
+
     def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
         f = self.brief("2026-11-08-a")
         self.fake_brief_cli()

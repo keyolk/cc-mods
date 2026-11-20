@@ -619,7 +619,13 @@ else the first name of your account's full name, else your login name.
   then copies the command instead). The root `⇅ Artifact` button on the briefs
   index posts to `/briefs/artifact-sync` the same way; that coordinator gets
   `/brief-artifact --sync` (a round for every brief that may be out of sync,
-  then the import of Artifacts that have no brief).
+  then the import of Artifacts that have no brief). A brief that asks
+  something carries its questions as buttons on the page (keyolk/briefs); a
+  press posts `{qid, label | text, note}` to `/briefs/<name>/answer`, which
+  answers exactly as a press in the 지휘 view does (recorded through
+  `brief answer --by office`, whoever asked woken once the last question is
+  answered). Same guard as `⇅`; 404 for a brief or question it does not have,
+  400 for an option it does not have, 409 when it was already answered.
 - **Files open inside**: a file chip or path marked 👁 (HTML, SVG, PDF,
   images, Markdown, text, JSON; an exp folder's README) opens in a viewer
   beside the card; `O` or `↗ 밖으로` opens it outside, `Esc` closes it. Only

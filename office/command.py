@@ -1074,6 +1074,28 @@ def artifact_from_brief(name: str, inbox_put, alive: set[str] | None = None) -> 
     return send_artifact(name, led["sid"], inbox_put)
 
 
+def answer_from_page(name: str, raw: bytes, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
+    """POST /briefs/<name>/answer: the answer buttons on a brief's own page (keyolk/briefs draws
+    them from the sidecar; a file:// page in a tweb pane or the brief in the office's frame posts
+    here). The page sends {qid, label | text, note?, seen?}; the answer goes through `answer`
+    above, so it is recorded and wakes whoever asked exactly as a press in the office does.
+    The page names its question: one it does not have is 404, not answer's "which question?"."""
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        return 400, {"ok": False, "error": "bad json"}
+    keys = ("qid", "label", "text", "note", "seen")
+    if not isinstance(body, dict) or not all(isinstance(body.get(k, ""), str) for k in keys):
+        return 400, {"ok": False, "error": "send {qid, label | text, note?, seen?} as strings"}
+    if not NAME.match(name or "") or not brief_path(os.path.join(root(), name)):
+        return 404, {"ok": False, "error": "no such brief"}
+    qid = body.get("qid", "")
+    if not any(q["id"] == qid for q in _decisions(_read_side(name, fresh=True))):
+        return 404, {"ok": False, "error": f"no question {qid!r} on this brief"}
+    code, out = answer(name, qid, body.get("label", ""), body.get("note", ""), inbox_put, body.get("text", ""), body.get("seen", ""), alive)
+    return code, {"ok": code == 200, **out}
+
+
 def live_coordinator(alive: set[str] | None = None) -> dict | None:
     """The coordinator a page's button goes to: alive, most recently active first."""
     leds = [d for d in coord.ledgers() if SID.match(d.get("sid") or "") and (alive is None or d["sid"] in alive)]
