@@ -78,12 +78,16 @@ class BriefsCase(unittest.TestCase):
         self.sent.append((sid, text))
         self.kept.append(keep)
 
-    def brief(self, name: str, decision: dict | None = None, sessions: tuple = (MAKER,), title: str = "제목") -> str:
+    def brief(self, name: str, decision: dict | None = None, sessions: tuple = (MAKER,), title: str = "제목", nonce: str | None = None, imported: bool = False) -> str:
         file = name + ".html"
         (self.repo / file).write_text(f"<html><head><title>{title}</title></head><body>x</body></html>")
         side = {"sessions": [{"id": s, "cwd": "/", "transcript": "", "added": "2026-11-08T00:00Z"} for s in sessions], "published": {}}
         if decision is not None:
             side["decision"] = {"question": "어느 쪽?", "options": [{"label": "A", "detail": "a"}, {"label": "B", "detail": "b"}], "recommended": 1, "coordinator": None, "worker": None, "asked": "2026-11-08T01:00Z", "answer": None, **decision}
+        if nonce:
+            side["answer_nonce"] = nonce
+        if imported:
+            side["imported"] = {"from": "https://claude.ai/artifact/x", "at": "2026-11-20T00:00Z"}
         (self.repo / (name + ".brief.json")).write_text(json.dumps(side, ensure_ascii=False))
         return file
 
@@ -273,12 +277,12 @@ class BriefFrameTest(BriefsCase):
     def test_an_answer_pressed_on_a_brief_page_is_recorded_and_wakes_the_coordinator(self):
         # The page in tweb's Electron (file://, no Origin): the same record and prompt as an
         # answer pressed in the office (command.answer).
-        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD})
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD}, nonce="tok-pick-0123456789abcdef")
         self.ledger([])
         base = self.serve()
         with mock.patch.object(office, "inbox_put", side_effect=self.put), \
                 mock.patch.object(office, "alive_sessions", return_value={COORD}):
-            code, out = self.answer_post(base, f, {"qid": "q1", "label": "B", "note": "빨리"})
+            code, out = self.answer_post(base, f, {"qid": "q1", "label": "B", "note": "빨리", "nonce": "tok-pick-0123456789abcdef"})
         self.assertEqual(code, 200, out)
         self.assertTrue(out["ok"])
         self.assertEqual(out["sent"], "B → cc-mods-d9")
@@ -289,39 +293,65 @@ class BriefFrameTest(BriefsCase):
 
     def test_a_free_answer_from_a_brief_page_in_the_office_frame(self):
         # The brief in the office's sandboxed frame: same origin as the office, Origin "null".
-        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD})
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD}, nonce="tok-pick-0123456789abcdef")
         base = self.serve()
         hdr = {"Content-Type": "text/plain", "Origin": "null", "Sec-Fetch-Site": "same-origin"}
         with mock.patch.object(office, "inbox_put", side_effect=self.put), \
                 mock.patch.object(office, "alive_sessions", return_value={COORD}):
-            code, out = self.answer_post(base, f, {"qid": "q1", "text": "둘 다 아님"}, hdr)
+            code, out = self.answer_post(base, f, {"qid": "q1", "text": "둘 다 아님", "nonce": "tok-pick-0123456789abcdef"}, hdr)
         self.assertEqual(code, 200, out)
         self.assertEqual(self.side(f)["decision"]["answer"]["choice"], "직접 답")
         self.assertEqual(self.sent, [(COORD, f"[brief answer] {f}: 직접 답 — 둘 다 아님")])
 
     def test_the_answer_route_refuses_other_sites_bad_bodies_unknown_questions_and_a_second_answer(self):
-        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD})
-        plain = self.brief("2026-11-20-plain")
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD}, nonce="tok-pick-0123456789abcdef")
+        plain = self.brief("2026-11-20-plain", nonce="tok-pick-0123456789abcdef")
         base = self.serve()
         evil = {"Content-Type": "text/plain", "Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
         with mock.patch.object(office, "inbox_put", side_effect=self.put), \
                 mock.patch.object(office, "alive_sessions", return_value={COORD}):
-            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A"}, evil)[0], 403)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A", "nonce": "tok-pick-0123456789abcdef"}, evil)[0], 403)
             # Claimed, not sent: the route refuses on Content-Length before reading the body.
             self.assertEqual(self.answer_post(base, f, b"{}", {"Content-Type": "text/plain", "Content-Length": "20001"})[0], 413)
             self.assertEqual(self.answer_post(base, f, b"{not json")[0], 400)
             self.assertEqual(self.answer_post(base, f, ["q1"])[0], 400)
-            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": 2})[0], 400)
-            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "Z"})[0], 400)  # not one of its options
-            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A", "text": "x"})[0], 400)
-            self.assertEqual(self.answer_post(base, f, {"qid": "q9", "label": "A"})[0], 404)
-            self.assertEqual(self.answer_post(base, plain, {"qid": "q1", "label": "A"})[0], 404)  # asks nothing
-            self.assertEqual(self.answer_post(base, "index.html", {"qid": "q1", "label": "A"})[0], 404)
-            self.assertEqual(self.answer_post(base, "2026-11-20-missing.html", {"qid": "q1", "label": "A"})[0], 404)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": 2, "nonce": "tok-pick-0123456789abcdef"})[0], 400)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "Z", "nonce": "tok-pick-0123456789abcdef"})[0], 400)  # not one of its options
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A", "text": "x", "nonce": "tok-pick-0123456789abcdef"})[0], 400)
+            self.assertEqual(self.answer_post(base, f, {"qid": "q9", "label": "A", "nonce": "tok-pick-0123456789abcdef"})[0], 404)
+            self.assertEqual(self.answer_post(base, plain, {"qid": "q1", "label": "A", "nonce": "tok-pick-0123456789abcdef"})[0], 404)  # asks nothing
+            self.assertEqual(self.answer_post(base, "index.html", {"qid": "q1", "label": "A", "nonce": "tok-pick-0123456789abcdef"})[0], 404)
+            self.assertEqual(self.answer_post(base, "2026-11-20-missing.html", {"qid": "q1", "label": "A", "nonce": "tok-pick-0123456789abcdef"})[0], 404)
             self.assertEqual(self.sent, [])
-            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A"})[0], 200)
-            code, out = self.answer_post(base, f, {"qid": "q1", "label": "B"})
+            self.assertEqual(self.answer_post(base, f, {"qid": "q1", "label": "A", "nonce": "tok-pick-0123456789abcdef"})[0], 200)
+            code, out = self.answer_post(base, f, {"qid": "q1", "label": "B", "nonce": "tok-pick-0123456789abcdef"})
         self.assertEqual((code, out["ok"], out["error"], out["answer"]["choice"]), (409, False, "already answered", "A"))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_the_answer_route_takes_only_this_briefs_own_token(self):
+        # Any file:// page reaches this route with Origin null or none, and ~/briefs holds pages
+        # other people wrote: an answer (maybe an approval) needs the token in this brief's sidecar.
+        f = self.brief("2026-11-20-pick", {"id": "q1", "coordinator": COORD}, nonce="tok-pick-0123456789abcdef")
+        other = self.brief("2026-11-20-other", {"id": "q1", "coordinator": COORD}, nonce="tok-other-0123456789abcd")
+        bare = self.brief("2026-11-20-bare", {"id": "q1", "coordinator": COORD})
+        imp = self.brief("2026-11-20-imp", {"id": "q1", "coordinator": COORD}, nonce="tok-imp-0123456789abcdefg", imported=True)
+        base = self.serve()
+        with mock.patch.object(office, "inbox_put", side_effect=self.put), \
+                mock.patch.object(office, "alive_sessions", return_value={COORD}):
+            for body in ({"qid": "q1", "label": "A"},                                             # no token
+                         {"qid": "q1", "label": "A", "nonce": ""},
+                         {"qid": "q1", "label": "A", "nonce": "tok-pick-0123456789abcdeX"},          # wrong
+                         {"qid": "q1", "label": "A", "nonce": "tok-other-0123456789abcd"}):         # another brief's
+                code, out = self.answer_post(base, f, body)
+                self.assertEqual(code, 403, (body, out))
+            # A sidecar with no token, and an imported page even with one, are never answerable here.
+            self.assertEqual(self.answer_post(base, bare, {"qid": "q1", "label": "A", "nonce": ""})[0], 403)
+            self.assertEqual(self.answer_post(base, imp, {"qid": "q1", "label": "A", "nonce": "tok-imp-0123456789abcdefg"})[0], 403)
+            # 403 comes before anything about the question: an unknown qid is not revealed either.
+            self.assertEqual(self.answer_post(base, f, {"qid": "q9", "label": "A"})[0], 403)
+            self.assertEqual(self.sent, [])
+            self.assertEqual(self.answer_post(base, other, {"qid": "q1", "label": "B", "nonce": "tok-other-0123456789abcd"})[0], 200)
+        self.assertIsNone(self.side(f)["decision"]["answer"])
         self.assertEqual(len(self.sent), 1)
 
     def test_annotation_post_refuses_other_sites_the_index_and_a_mismatch(self):
