@@ -1068,11 +1068,27 @@ def artifact_from_brief(name: str, inbox_put, alive: set[str] | None = None) -> 
     the page is in the office's frame, or a file:// page in a tweb pane that posts here). The
     page knows no coordinator, so this picks one: a coordinator whose session is alive, the most
     recently active first. Same fixed /brief-artifact prompt as the 📚 card (send_artifact)."""
-    leds = [d for d in coord.ledgers() if SID.match(d.get("sid") or "") and (alive is None or d["sid"] in alive)]
-    if not leds:
+    led = live_coordinator(alive)
+    if not led:
         return 409, {"ok": False, "error": "no coordinator is running"}
-    led = max(leds, key=lambda d: d.get("at") or 0)
     return send_artifact(name, led["sid"], inbox_put)
+
+
+def live_coordinator(alive: set[str] | None = None) -> dict | None:
+    """The coordinator a page's button goes to: alive, most recently active first."""
+    leds = [d for d in coord.ledgers() if SID.match(d.get("sid") or "") and (alive is None or d["sid"] in alive)]
+    return max(leds, key=lambda d: d.get("at") or 0) if leds else None
+
+
+def artifact_sync_all(inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:
+    """POST /briefs/artifact-sync: the root ⇅ Artifact button on the briefs index. The coordinator
+    runs /brief-artifact --sync: a round for every brief whose page or Artifact may have changed,
+    then the import of Artifacts that have no brief. The prompt is fixed; the page sends nothing."""
+    led = live_coordinator(alive)
+    if not led:
+        return 409, {"ok": False, "error": "no coordinator is running"}
+    inbox_put(led["sid"], "[office→coord] (re: briefs index) /brief-artifact --sync")
+    return 200, {"ok": True, "sent": f"Artifact 전체 동기화 → {led.get('name') or led['sid'][:8]}", "at": int(time.time() * 1000)}
 
 
 def act(body: dict, inbox_put, alive: set[str] | None = None) -> tuple[int, dict]:

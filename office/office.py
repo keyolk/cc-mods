@@ -2126,6 +2126,16 @@ class Handler(BaseHTTPRequestHandler):
             name = unquote(self.path[len("/briefs/"):-len("/open")])
             code, out = command.open_brief_session(name, self.rfile.read(size))
             return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
+        if self.local() and self.path == "/briefs/artifact-sync":
+            # The root ⇅ Artifact button on the briefs index (keyolk/briefs): same origin guard and
+            # size cap as the per-brief button below; the coordinator gets a fixed prompt.
+            site, origin = self.headers.get("Sec-Fetch-Site", ""), self.headers.get("Origin", "")
+            if site == "cross-site" and origin != "null":
+                return self.send(403, b"forbidden", "text/plain")
+            if int(self.headers.get("Content-Length") or 0) > 1000:
+                return self.send(413, b"too large", "text/plain")
+            code, out = command.artifact_sync_all(lambda s, t: inbox_put(s, t, keep=True), alive_sessions())
+            return self.send(code, json.dumps(out).encode(), "application/json", {"Access-Control-Allow-Origin": "null"})
         if self.local() and self.path.startswith("/briefs/") and self.path.endswith("/artifact"):
             # The ⇅ Artifact button on a brief's own page: from the office's frame (origin "null")
             # or a file:// brief in a tweb pane (also "null"). Same guard as /open; the page sends
