@@ -69,28 +69,39 @@ export const STATUS_TOOL = {
     'step: the phase, a few words. next: your next action. needs: what the person or the coordinator must give. progress: 0-100 when you know it. msg: one line. link: a PR URL or a brief path. ' +
     'With blocked:auth on a page in a tweb pane, also give pane (its id, %N), ask (otp: a code to type; click: a button to press; device: a passkey or fingerprint on the person\'s device) and, for otp and click, target (the CSS selector of the code input or of the button) and for otp optionally submit (the selector of the button that sends the code): the person then answers from the office without going to your pane. ' +
     'It does not replace your READY / QUESTION / BLOCKED message to the coordinator: send those as before.',
+  // Every optional field also accepts null. A gateway that rewrites a tool
+  // schema to strict mode (every property required, so the model must fill
+  // each one) can then fill the fields that do not apply with null instead of
+  // inventing a kind for `working` or a pane for `blocked:wait`
+  // (2026-11-25: fix-status-schema's status call was refused both ways).
+  // parseStatus reads null, '' and the placeholders in BLANK as "not given".
   inputSchema: {
     type: 'object',
     properties: {
       state: { type: 'string', enum: [...STATES] },
-      kind: { type: 'string', enum: [...KINDS] },
-      step: { type: 'string' },
-      next: { type: 'string' },
-      needs: { type: 'string' },
-      progress: { type: 'number' },
-      msg: { type: 'string' },
-      link: { type: 'string' },
-      pane: { type: 'string' },
-      ask: { type: 'string', enum: [...ASKS] },
-      target: { type: 'string' },
-      submit: { type: 'string' },
+      kind: { type: ['string', 'null'], enum: [...KINDS, null] },
+      step: { type: ['string', 'null'] },
+      next: { type: ['string', 'null'] },
+      needs: { type: ['string', 'null'] },
+      progress: { type: ['number', 'null'] },
+      msg: { type: ['string', 'null'] },
+      link: { type: ['string', 'null'] },
+      pane: { type: ['string', 'null'] },
+      ask: { type: ['string', 'null'], enum: [...ASKS, null] },
+      target: { type: ['string', 'null'] },
+      submit: { type: ['string', 'null'] },
     },
     required: ['state'],
   },
 }
 
+// Placeholders a model writes into a field that does not apply when its
+// schema made the field required: read as not given, not as a value.
+const BLANK = new Set(['', 'none', 'null', 'n/a', 'na', '-'])
+const given = (v: unknown): unknown => (v == null || (typeof v === 'string' && BLANK.has(v.trim().toLowerCase())) ? undefined : v)
+
 const one = (v: unknown, n: number): string | undefined => {
-  const s = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''
+  const s = typeof given(v) === 'string' ? (v as string).replace(/\s+/g, ' ').trim() : ''
   return s ? (s.length > n ? s.slice(0, n - 1) + '…' : s) : undefined
 }
 
@@ -100,12 +111,12 @@ const one = (v: unknown, n: number): string | undefined => {
 export function parseStatus(i: any, now: number): Status | string {
   const state = String(i?.state ?? '')
   if (!(STATES as readonly string[]).includes(state)) return 'state must be one of ' + STATES.join(', ')
-  const kind = i?.kind == null || i.kind === '' ? undefined : String(i.kind)
+  const kind = given(i?.kind) === undefined ? undefined : String(i.kind).trim()
   if (kind !== undefined && !(KINDS as readonly string[]).includes(kind)) return 'kind must be one of ' + KINDS.join(', ')
   if (kind && state !== 'blocked') return 'kind goes only with state blocked'
   if (state === 'blocked' && !kind) return 'blocked needs a kind: ' + KINDS.join(', ')
   let progress: number | undefined
-  if (i?.progress != null && i.progress !== '') {
+  if (given(i?.progress) !== undefined) {
     const p = Number(i.progress)
     if (!Number.isFinite(p) || p < 0 || p > 100) return 'progress is 0 to 100'
     progress = Math.round(p)
@@ -127,7 +138,7 @@ export function parseStatus(i: any, now: number): Status | string {
 // are refused. They mean something only with blocked:auth; a pane is a tmux
 // pane id, and otp/click name the element the office acts on.
 function parseRelay(i: any, s: Status): Pick<Status, 'pane' | 'ask' | 'target' | 'submit'> | string {
-  const pane = one(i?.pane, 16), ask = one(i?.ask, 16), target = one(i?.target, CAP.target), submit = one(i?.submit, CAP.submit)
+  const pane = one(i?.pane, 16), ask = one(i?.ask, 16), target = one(i?.target, CAP.target), submit = one(i?.submit, CAP.submit) // one() drops BLANK
   if (!pane && !ask && !target && !submit) return {}
   if (s.state !== 'blocked' || s.kind !== 'auth') return 'pane, ask, target and submit go only with state blocked, kind auth'
   if (!pane || !/^%\d+$/.test(pane)) return 'pane is a tmux pane id such as %601'
