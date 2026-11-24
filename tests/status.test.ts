@@ -10,7 +10,7 @@ const NOW = 1_800_000_000_000
 
 test('status: the tool takes Rex\'s states and kinds, refuses what it does not know, and caps the text', () => {
   expect(STATUS_TOOL.inputSchema.properties.state.enum).toEqual([...STATES])
-  expect(STATUS_TOOL.inputSchema.properties.kind.enum).toEqual([...KINDS])
+  expect(STATUS_TOOL.inputSchema.properties.kind.enum).toEqual([...KINDS, null])
   const s = parseStatus({ state: 'blocked', kind: 'question', step: '  brief\n대기 ', needs: '~/briefs/x.html', progress: '59.6', extra: 1 }, NOW) as Status
   expect(s).toEqual({ state: 'blocked', kind: 'question', step: 'brief 대기', needs: '~/briefs/x.html', progress: 60, at: NOW })
   // An unknown state is refused, not stored as something else (Rex: never read a new state as idle).
@@ -28,7 +28,7 @@ test('status: the tool takes Rex\'s states and kinds, refuses what it does not k
 })
 
 test('status: a login wait names its pane, what it asks and the element, and only with blocked:auth', () => {
-  expect(STATUS_TOOL.inputSchema.properties.ask.enum).toEqual([...ASKS])
+  expect(STATUS_TOOL.inputSchema.properties.ask.enum).toEqual([...ASKS, null])
   const otp = parseStatus({ state: 'blocked', kind: 'auth', needs: 'GitHub 2FA', pane: '%601', ask: 'otp', target: '#app_totp', submit: 'button[type=submit]' }, NOW) as Status
   expect(otp).toEqual({ state: 'blocked', kind: 'auth', needs: 'GitHub 2FA', pane: '%601', ask: 'otp', target: '#app_totp', submit: 'button[type=submit]', at: NOW })
   expect(statusLine(otp)).toContain('relay otp %601')
@@ -46,6 +46,28 @@ test('status: a login wait names its pane, what it asks and the element, and onl
   // The worker is told to declare it and never to ask for the code in a message.
   expect(STATUS_RULE).toContain('ask (otp|click|device)')
   expect(STATUS_RULE).toContain('never ask for the code in a message')
+})
+
+test('status: a strict-mode schema fills every field; the ones that do not apply are not given, not refused', () => {
+  // Repro (2026-11-25): a gateway made every property required, so the model
+  // sent kind/ask/pane/target/submit on every call. working was refused for
+  // the kind, blocked:wait for the auth-only fields.
+  const props = STATUS_TOOL.inputSchema.properties as Record<string, { type: unknown }>
+  // Each optional field can be null, so a required-everything schema can say "not given".
+  for (const k of Object.keys(props)) if (k !== 'state') expect(props[k]!.type).toContain('null')
+  expect(STATUS_TOOL.inputSchema.required).toEqual(['state'])
+  const nulls = { kind: null, step: null, next: null, needs: null, progress: null, msg: null, link: null, pane: null, ask: null, target: null, submit: null }
+  expect(parseStatus({ state: 'working', ...nulls, step: 'fix' }, NOW)).toEqual({ state: 'working', step: 'fix', at: NOW })
+  expect(parseStatus({ state: 'blocked', ...nulls, kind: 'wait', needs: 'CI' }, NOW)).toEqual({ state: 'blocked', kind: 'wait', needs: 'CI', at: NOW })
+  // The same with empty strings and placeholders in place of null.
+  const filler = { kind: '', ask: 'none', pane: 'n/a', target: '', submit: '-', progress: '' }
+  expect(parseStatus({ state: 'working', ...filler }, NOW)).toEqual({ state: 'working', at: NOW })
+  expect(parseStatus({ state: 'blocked', ...filler, kind: 'wait', needs: 'CI' }, NOW)).toEqual({ state: 'blocked', kind: 'wait', needs: 'CI', at: NOW })
+  // A real value on the wrong state is still refused.
+  expect(parseStatus({ state: 'working', kind: 'wait' }, NOW)).toContain('only with state blocked')
+  expect(parseStatus({ state: 'blocked', kind: 'wait', pane: '%1', ask: 'otp', target: '#x' }, NOW)).toContain('only with state blocked, kind auth')
+  // A login wait with every field filled still works.
+  expect(parseStatus({ state: 'blocked', ...nulls, kind: 'auth', pane: '%2', ask: 'otp', target: '#c' }, NOW)).toEqual({ state: 'blocked', kind: 'auth', pane: '%2', ask: 'otp', target: '#c', at: NOW })
 })
 
 test('status: a file is read back as written, and a broken one is none', () => {
