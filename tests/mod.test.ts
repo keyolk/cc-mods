@@ -3776,7 +3776,7 @@ test('coordinator: /coord on makes it god with no end and no question; /god off 
   box.json = JSON.stringify({ mode: 'custom', capabilities: Object.fromEntries(['gh_merge', 'prod_eks_access', 'prod_eks_write', 'slack_send', 'auto_continue', 'auto_effort', 'auto_model', 'tmux_window_escape'].map((c) => [c, 'allow'])) })
   // No end: hours later it is still on.
   const n0 = policyRuns().length
-  // Past any timed god's longest end (2 × GOD_MS).
+  // Past the old timed god's longest end (1h); the coordinator's god has none.
   for (let i = 0; i < 13; i++) await clock.advance(5 * 60_000)
   expect(policyRuns().slice(n0)).toEqual([])
   // /god with minutes does not give it an end.

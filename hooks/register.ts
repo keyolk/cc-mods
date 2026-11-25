@@ -49,7 +49,7 @@ import { agentFlow, flowOf } from './lib/flow'
 import { HELD_PREFIX, firstLine, heldNotification, holdDeadline, isWrite, parseExpiry, parseMonitor, shouldRearm, splitLines, startedTaskId, turnMattered, watchInput, weigh, type MonitorState, type WatchInput, type Weight } from './lib/monitor'
 import { K, PANES, PANE_TITLES, paneKey, paneOf, type PaneId } from './lib/keys'
 import { BYPASS_DENY, SLACK_SENDS, heldDeny, noGrantText, officeBypass, officeTokenPath, parseRedeem, redeemRequest } from './lib/grant'
-import { CAPS, GOD_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
+import { CAPS, GOD_MAX_MS, godArgvs, godExtended, isGod, parseGodMinutes, slackDefaultTargets, isProdContext, parseChannelSearch, parseUserSearch, slackTargetKind, badge, hintsFromBlock, hintsFromCommand, isSelfGrant, parsePolicy, parsePolicyArgs, scopeHints, shortName, type Cap, type CapValue, type Policy, type ScopeHint } from './lib/policy'
 import { ghAccountFor, ghAsAccount, ghAsAccountDeny, gitopsCommentsArgv, gitopsFromComments, graphqlQuery, needsAttention, parseGraphql, parsePrKey, repoFromGh, repoFromRemote, setIacWindows, type PrStatus } from './lib/prs'
 import { compareArgv, ghLogins, mergeDeny, mergeProblems, parseMerge, readMergeFacts, readOrder, REPO_LITERAL_HINT, validRepo, type MergeCall } from './lib/mergegate'
 import { parseWindows } from './lib/iac'
@@ -1124,7 +1124,7 @@ async function startGod($: any, minutes: number, asked = false) {
   const prior = god?.before ?? before
   god?.timer?.cancel()
   for (const argv of godArgvs()) await runPolicy($, argv)
-  const until = Date.now() + Math.min(minutes * 60_000, 2 * GOD_MS)
+  const until = Date.now() + Math.min(minutes * 60_000, GOD_MAX_MS)
   await godSecrets($, until)
   god = { until, before: prior, timer: $.clock.after(until - Date.now(), () => void endGod($, 'time is up')) }
   await $.store.set(K.god(sid), { until, before: prior })
@@ -1134,7 +1134,7 @@ async function startGod($: any, minutes: number, asked = false) {
 }
 
 // More time on a running god mode, one press: the person already agreed to
-// it when it started. Still never more than 2 × GOD_MS ahead of now. A
+// it when it started. Still never more than GOD_MAX_MS ahead of now. A
 // capability someone set back meanwhile is allowed again.
 async function extendGod($: any, minutes: number) {
   // The coordinator's god has no end to move.
@@ -4856,7 +4856,7 @@ export function register(on: any, options: Record<string, unknown> = {}) {
       return { text: 'god mode ended: policy put back' }
     }
     const minutes = parseGodMinutes(arg)
-    if (minutes === undefined) return { text: 'usage: /god [15|30|60 | 45m | off]' }
+    if (minutes === undefined) return { text: 'usage: /god [15|30|60 | 45m | 8h | off] (at most 8h)' }
     if (god?.coord) return { text: '⚡ god mode is on as the coordinator default, with no end · /god off ends it' }
     if (god) await extendGod($, minutes)
     else await startGod($, minutes, true)
