@@ -144,7 +144,7 @@ export function renderPolicy(els: Els, v: PolicyView): Node {
                   Button({ key: 'god-off', label: 'end god mode', onPress: () => v.onGod!(), variant: 'primary', children: [Text({ children: ['✕ end now'] })] }),
                 ],
               }),
-              Text({ color: C.muted, children: [v.godCoord ? 'on while coordinator mode is on · ends with /god off or /coord off; the coordinator policy comes back' : '+ adds time without asking (at most 60m ahead) · the policy from before comes back when it ends · /god off'] }),
+              Text({ color: C.muted, children: [v.godCoord ? 'on while coordinator mode is on · ends with /god off or /coord off; the coordinator policy comes back' : '+ adds time without asking (at most 8h ahead) · the policy from before comes back when it ends · /god off'] }),
             ]
           : [
               Box({
@@ -156,7 +156,7 @@ export function renderPolicy(els: Els, v: PolicyView): Node {
                   ...GOD_MINUTES.map((m) => Button({ key: 'god-' + m, label: 'god ' + m + 'm', onPress: () => v.onGod!(m), children: [Text({ bold: true, children: [' ' + m + 'm '] })] })),
                 ],
               }),
-              Text({ color: C.muted, children: ['allow every capability for a while; asks first, then puts the policy back · or /god [minutes]'] }),
+              Text({ color: C.muted, children: ['allow every capability for a while; asks first, then puts the policy back · or /god [minutes | 8h], at most 8h'] }),
             ],
       })
     : undefined
