@@ -155,8 +155,16 @@ export function parseTtl(s: string): number | undefined {
 // step; tests on both sides pin the same cases): match an invocation in
 // command position, after dropping heredoc bodies that do not feed a shell, so
 // a heredoc or echo that merely *mentions* the command is not refused.
-const CMD_POS = String.raw`(?:^|[;&|(\x60]|\b(?:bash|sh|zsh|fish)\s+-c\s+['"]?)\s*(?:exec\s+)?(?:\w+=\S+\s+)*(?:python3?\s+)?\S*`
+//
+// Wrappers in front of the script still run it: `env -u CLAUDECODE ...`
+// passed both guards (seen 2026-11-26), and so would nohup, timeout or sudo.
+// The shared Go CLI (keyolk/session-policy, `sp`) writes the same state file,
+// so `sp allow|block|inherit|mode|clear` is a self-grant too.
+const CMD_WRAP = String.raw`(?:(?:exec|env|command|nohup|nice|time|timeout|sudo|doas)\b(?:\s+(?:-{1,2}[\w-]+(?:=\S+|\s+(?!-)\S+)?|\d\S*|\w+=\S+))*\s+|\w+=\S+\s+)*`
+const CMD_LEAD = String.raw`(?:^|[;&|(\x60]|\b(?:bash|sh|zsh|fish)\s+-c\s+['"]?)\s*` + CMD_WRAP
+const CMD_POS = CMD_LEAD + String.raw`(?:python3?\s+)?\S*`
 const POLICY_RE = new RegExp(CMD_POS + String.raw`session_policy\.py\s+(?:allow|block|inherit|mode|clear)\b`, 'm')
+const SP_RE = new RegExp(CMD_LEAD + String.raw`(?:\S*\/)?sp(?:\s+--session(?:=|\s+)\S+)?\s+(?:allow|block|inherit|mode|clear)\b`, 'm')
 const UNLOCK_RE = new RegExp(CMD_POS + String.raw`((?:secret_read|kubectl_prod|ecr_push)_unlock\.py)\b(?![^;&|\n]*--(?:status|revoke))`, 'm')
 const HEREDOC_RE = /^([^\n]*?)<<-?\s*['"]?(\w+)['"]?[^\n]*\n[\s\S]*?^\s*\2\s*$/gm
 
@@ -167,6 +175,7 @@ export function executedText(command: string): string {
 export function isSelfGrant(command: string): string | undefined {
   const text = executedText(command)
   if (POLICY_RE.test(text)) return 'session_policy.py'
+  if (SP_RE.test(text)) return 'sp'
   return UNLOCK_RE.exec(text)?.[1]
 }
 
