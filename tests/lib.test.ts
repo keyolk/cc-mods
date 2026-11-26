@@ -75,6 +75,22 @@ test('self-grant: mutating session_policy calls are caught, reads are not', asyn
   expect(isSelfGrant(`python3 - <<'EOF'\ns = '${CLI} allow gh_merge'\nEOF`)).toBeUndefined()
   expect(isSelfGrant("grep -n 'session_policy.py allow' SKILL.md")).toBeUndefined()
   expect(isSelfGrant("echo 'type: session_policy.py mode release'")).toBeUndefined()
+  // Wrappers still run the script (env -u CLAUDECODE passed before).
+  expect(isSelfGrant(`env -u CLAUDECODE ${CLI} allow gh_merge`)).toBe('session_policy.py')
+  expect(isSelfGrant(`env -i HOME=/tmp ${CLI} mode release`)).toBe('session_policy.py')
+  expect(isSelfGrant(`nohup ${CLI} allow prod_eks_write &`)).toBe('session_policy.py')
+  expect(isSelfGrant(`timeout 5 ${CLI} clear`)).toBe('session_policy.py')
+  expect(isSelfGrant('env -u CLAUDECODE python3 ~/.claude/hooks/kubectl_prod_unlock.py prod-main')).toBe('kubectl_prod_unlock.py')
+  // The shared Go CLI writes the same state.
+  expect(isSelfGrant('sp allow gh_merge')).toBe('sp')
+  expect(isSelfGrant('~/.local/bin/sp mode pr-merge')).toBe('sp')
+  expect(isSelfGrant('sp --session abc allow gh_merge')).toBe('sp')
+  expect(isSelfGrant('env -u CLAUDECODE sp inherit prod_eks_write')).toBe('sp')
+  expect(isSelfGrant('cd /tmp && sp clear')).toBe('sp')
+  expect(isSelfGrant('sp show')).toBeUndefined()
+  expect(isSelfGrant('sp check gh_merge --target a/b')).toBeUndefined()
+  expect(isSelfGrant("echo 'run: sp allow gh_merge'")).toBeUndefined()
+  expect(isSelfGrant('grasp allow x')).toBeUndefined()
 })
 
 test('policy: parse file, badge, and /policy arguments', async () => {
